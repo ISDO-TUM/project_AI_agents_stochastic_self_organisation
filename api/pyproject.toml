@@ -1,0 +1,32 @@
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+# Rule sets — aligned with Google Python Style Guide and SAP Clean Code standards:
+#   E/W  pycodestyle   — PEP 8 style errors and warnings
+#   F    pyflakes      — undefined names, unused imports
+#   I    isort         — import ordering
+#   N    pep8-naming   — naming conventions
+#   UP   pyupgrade     — keep syntax up to date with target Python version
+#   B    bugbear       — common bugs and design issues
+#   S    bandit        — security checks
+#   C4   comprehensions — idiomatic list/dict/set comprehensions
+#   RUF  ruff-specific — additional opinionated rules
+select = ["E", "W", "F", "I", "N", "UP", "B", "S", "C4", "RUF"]
+ignore = [
+    "S101",  # use of assert — acceptable in test files
+]
+
+[tool.ruff.lint.per-file-ignores]
+"**/__init__.py" = ["F401"]  # re-exports in __init__ are intentional
+
+[tool.ruff.lint.isort]
+known-first-party = ["api"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+ignore_missing_imports = true
+# FastAPI decorators use complex generics; relax untyped decorator checks
+disallow_untyped_decorators = false

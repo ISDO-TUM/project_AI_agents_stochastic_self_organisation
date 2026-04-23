@@ -1,0 +1,6 @@
+# Includes all production dependencies
+-r requirements.txt
+
+# Development & CI tooling
+pre-commit
+mypy

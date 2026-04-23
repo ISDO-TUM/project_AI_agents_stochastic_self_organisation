@@ -1,0 +1,59 @@
+fail_fast: false
+
+repos:
+  # --- Basic file hygiene ---
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v6.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=500']
+      - id: no-commit-to-branch
+        args: ['--branch', 'main']
+
+  # --- Python: linting & formatting ---
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.15.11
+    hooks:
+      - id: ruff
+        args: [--fix]
+      - id: ruff-format
+
+  # --- Python: type checking ---
+  - repo: local
+    hooks:
+      - id: mypy
+        name: mypy
+        entry: bash -c 'cd api && uv run mypy .'
+        language: system
+        types: [python]
+        pass_filenames: false
+
+  # --- JS/TS: formatting ---
+  - repo: https://github.com/pre-commit/mirrors-prettier
+    rev: v3.1.0
+    hooks:
+      - id: prettier
+        types_or: [javascript, jsx, ts, tsx, json, css, markdown]
+
+  # --- JS/TS: type checking ---
+  - repo: local
+    hooks:
+      - id: tsc
+        name: TypeScript type check
+        entry: bash -c 'pnpm --filter app typecheck'
+        language: system
+        types_or: [ts, tsx]
+        pass_filenames: false
+
+  # --- Commit message convention ---
+  - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
+    rev: v9.24.0
+    hooks:
+      - id: commitlint
+        stages: [commit-msg]
+        additional_dependencies: ['@commitlint/config-conventional']

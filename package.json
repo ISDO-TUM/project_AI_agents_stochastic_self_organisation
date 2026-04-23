@@ -1,0 +1,16 @@
+{
+  "name": "sap-agent",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -c \"green,blue\" -n \"UI,API\" \"pnpm --filter app run dev\" \"cd api && uv run uvicorn index:app --reload --port 8000\"",
+    "clean": "rm -rf node_modules app/node_modules api/.venv api/__pycache__"
+  },
+  "devDependencies": {
+    "concurrently": "^8.2.2"
+  },
+  "commitlint": {
+    "extends": [
+      "@commitlint/config-conventional"
+    ]
+  }
+}
