@@ -1,5 +1,6 @@
 import asyncio
 import json
+from collections.abc import AsyncGenerator
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
@@ -8,7 +9,7 @@ from fastapi.responses import StreamingResponse
 app = FastAPI()
 
 
-async def mock_agent_stream():
+async def mock_agent_stream() -> AsyncGenerator[str, None]:
     """A mock stream to test your frontend-backend connection."""
     yield f"data: {json.dumps({'status': 'Backend connected. Agents standing by.'})}\n\n"
     await asyncio.sleep(1)
@@ -16,5 +17,5 @@ async def mock_agent_stream():
 
 
 @app.get("/api/test-stream")
-async def test_stream():
+async def test_stream() -> StreamingResponse:
     return StreamingResponse(mock_agent_stream(), media_type="text/event-stream")
