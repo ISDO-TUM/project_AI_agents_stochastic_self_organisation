@@ -6,7 +6,7 @@
     "clean": "rm -rf node_modules app/node_modules api/.venv api/__pycache__"
   },
   "devDependencies": {
-    "concurrently": "^8.2.2"
+    "concurrently": "^9.2.1"
   },
   "commitlint": {
     "extends": [
