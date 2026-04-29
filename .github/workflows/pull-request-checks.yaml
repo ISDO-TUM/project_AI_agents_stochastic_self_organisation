@@ -8,6 +8,11 @@ jobs:
     steps:
       - name: Validate branch name
         run: |
+          # Dependabot is exempt — its branch names follow its own convention
+          if [[ "${{ github.actor }}" == "dependabot[bot]" ]]; then
+            echo "✅ Dependabot branch — skipping name convention check."
+            exit 0
+          fi
           BRANCH="${{ github.head_ref }}"
           PATTERN="^(feat|fix|docs|refactor|test|ci|chore|perf)/[0-9]+-[a-z0-9-]+$"
           if [[ ! "$BRANCH" =~ $PATTERN ]]; then
