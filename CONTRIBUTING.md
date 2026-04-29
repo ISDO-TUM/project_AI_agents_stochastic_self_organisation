@@ -1,10 +1,22 @@
 # Contributing to SAP AI Agent
 
-Welcome to the team. This guide is the single source of truth for how we work together — branches, commits, code style, and the automated checks that keep everything consistent. Read it once and you'll rarely need to think about it again.
+Welcome to the team! This guide is the single source of truth for how we work together — branches, commits, code style, and the automated checks that keep everything consistent.
+
+> **tl;dr** — Branch from `main`, name it `feat/42-my-feature`, write [Conventional Commits](https://www.conventionalcommits.org/), and let the hooks handle formatting. That's 90% of it.
 
 ---
 
-## The golden rules
+## 📋 Quick reference
+
+| What          | Pattern                                       | Example                       |
+| ------------- | --------------------------------------------- | ----------------------------- |
+| Branch        | `<type>/<issue-number>-<description>`         | `feat/42-agent-streaming`     |
+| Commit        | `<type>(<scope>): <summary>`                  | `feat(api): add SSE endpoint` |
+| Run all hooks | `cd api && uv run pre-commit run --all-files` |                               |
+
+---
+
+## 📜 The golden rules
 
 1. **Every branch ties to a GitHub issue** — no issue, no branch
 2. **Every commit is self-describing** — future-you will thank present-you
@@ -12,7 +24,7 @@ Welcome to the team. This guide is the single source of truth for how we work to
 
 ---
 
-## Branch naming
+## 🌿 Branch naming
 
 ```
 <type>/<issue-number>-<short-description>
@@ -30,13 +42,13 @@ Welcome to the team. This guide is the single source of truth for how we work to
 | `perf`     | Making something faster       |
 
 ```bash
-# Good
+# ✅ Good
 feat/42-sap-agent-streaming
 fix/17-hydration-mismatch
 chore/5-pre-commit-setup
 
-# Will be rejected by CI
-my-feature          # no type, no issue
+# ❌ Will be rejected by CI
+my-feature          # no type, no issue number
 feature/new-thing   # missing issue number
 ```
 
@@ -44,7 +56,7 @@ feature/new-thing   # missing issue number
 
 ---
 
-## Commit messages
+## 💬 Commit messages
 
 We use [Conventional Commits](https://www.conventionalcommits.org/). `commitlint` enforces this automatically on every `git commit`.
 
@@ -57,12 +69,12 @@ Closes #<issue-number>
 ```
 
 ```bash
-# Good
+# ✅ Good
 feat(api): add SSE streaming endpoint for agent responses
 fix(ui): suppress hydration warning caused by browser extensions
 chore: bump ruff to v0.15.11
 
-# Will be rejected
+# ❌ Will be rejected
 added new feature       # no type
 feat: updated stuff     # vague summary
 ```
@@ -73,11 +85,17 @@ feat: updated stuff     # vague summary
 - Keep the subject line under 72 characters
 - Always close the issue in the footer: `Closes #42`
 
+> **Why bother?** Good commit history is searchable. When something breaks at 2am, `git log --oneline` is your best friend — but only if the messages actually mean something.
+
+<!-- 💡 IMAGE SUGGESTION: A "write good commit messages" meme goes well here.
+     Drop the image in docs/assets/ and uncomment the line below.
+     Example: ![commit messages matter](docs/assets/commit-meme.jpg) -->
+
 ---
 
-## Before you push: pre-commit hooks
+## 🪝 Before you push: pre-commit hooks
 
-The hooks run automatically on `git commit` — you don't need to do anything to enable them after setup. Here's what runs and why:
+The hooks run automatically on `git commit` — you don't need to enable anything after `setup.sh`. Here's what runs and why:
 
 | Hook                        | What it does for you                           |
 | --------------------------- | ---------------------------------------------- |
@@ -94,45 +112,104 @@ The hooks run automatically on `git commit` — you don't need to do anything to
 | `tsc`                       | Type-checks TypeScript                         |
 | `commitlint`                | Validates your commit message format           |
 
-If a hook fails and you want to dig in or run something manually:
+Most hooks that touch files (formatters) are **auto-fixing** — they'll modify the file and you just `git add` and commit again. Only type errors (`mypy`, `tsc`) require a manual fix.
+
+### 🔧 Running hooks manually
 
 ```bash
 cd api && uv run pre-commit run --all-files          # run everything
-cd api && uv run pre-commit run ruff --all-files     # run just ruff
-cd api && uv run pre-commit run tsc --all-files      # run just tsc
+cd api && uv run pre-commit run ruff --all-files     # just ruff
+cd api && uv run pre-commit run mypy --all-files     # just mypy
+cd api && uv run pre-commit run tsc --all-files      # just tsc
+cd api && uv run pre-commit run prettier --all-files # just prettier
 ```
+
+### 🚨 Hook failed? Here's what to do
+
+<details>
+<summary>🔧 A formatter modified my files (ruff-format, prettier)</summary>
+
+The hook auto-fixed your files. Stage the changes and commit again:
+
+```bash
+git add -A
+git commit -m "your original message"
+```
+
+</details>
+
+<details>
+<summary>🔴 mypy or tsc type error</summary>
+
+This requires a manual fix — add the missing type annotation or resolve the type mismatch. Run the hook again to confirm it passes:
+
+```bash
+cd api && uv run pre-commit run mypy --all-files
+# or
+cd api && uv run pre-commit run tsc --all-files
+```
+
+</details>
+
+<details>
+<summary>🔴 commitlint rejected my commit message</summary>
+
+Your message doesn't match the [Conventional Commits](https://www.conventionalcommits.org/) format. Common culprits:
+
+- Missing type prefix: `added thing` → `feat: add thing`
+- Uppercase subject: `feat: Add thing` → `feat: add thing`
+- Past tense: `feat: added thing` → `feat: add thing`
+
+Amend the last commit message with:
+
+```bash
+git commit --amend
+```
+
+</details>
+
+<details>
+<summary>😶 Hooks aren't running at all</summary>
+
+Re-run the setup script — the git hooks may not have been installed:
+
+```bash
+./scripts/setup.sh
+```
+
+</details>
 
 ---
 
-## Python code style
+## 🐍 Python code style
 
-Configured in `api/pyproject.toml`. Enforced by **ruff** and **mypy**.
+Configured in `api/pyproject.toml`. Enforced automatically by **ruff** and **mypy**.
 
 - **Line length:** 100 characters
 - **Python version:** 3.12
 - **Imports:** stdlib → third-party → first-party (sorted automatically by ruff)
-- **Types:** All public functions and classes need type annotations — `mypy --strict` will catch any missing ones
+- **Types:** All public functions and classes need type annotations — `mypy --strict` will catch missing ones
 - **Async:** Use `async`/`await` for all I/O-bound work (every FastAPI endpoint)
-- **Naming:** `snake_case` variables and functions · `PascalCase` classes · `UPPER_SNAKE_CASE` constants
+- **Naming:** `snake_case` variables/functions · `PascalCase` classes · `UPPER_SNAKE_CASE` constants
 
 Active lint rules: `E/W` pycodestyle · `F` pyflakes · `I` isort · `N` pep8-naming · `UP` pyupgrade · `B` bugbear · `S` security · `C4` comprehensions · `RUF` ruff-specific.
 
 ---
 
-## TypeScript code style
+## 🟦 TypeScript code style
 
 Configured in `app/tsconfig.json` (strict mode) and enforced by **ESLint** + **Prettier** + **tsc**.
 
 - **Line length:** 80 characters
 - **Quotes:** double · **Semicolons:** yes
-- **No `any`** — if you find yourself reaching for it, there's a better way
-- **`const` by default** — only use `let` when you genuinely reassign
+- **No `any`** — if you find yourself reaching for it, there's almost always a better way
+- **`const` by default** — only use `let` when you genuinely need to reassign
 - **Named exports** preferred over default exports (except for pages and layouts, which Next.js requires as default)
 - **Styling:** Tailwind utility classes directly on elements — avoid inline `style` props except for truly dynamic values
 
 ---
 
-## Branch protection on `main`
+## 🔒 Branch protection on `main`
 
 The following rules are active on GitHub (Settings → Branches):
 
