@@ -13,7 +13,7 @@ async def mock_agent_stream() -> AsyncGenerator[str, None]:
     """A mock stream to test your frontend-backend connection."""
     yield f"data: {json.dumps({'status': 'Backend connected. Agents standing by.'})}\n\n"
     await asyncio.sleep(1)
-    yield f"data: {json.dumps({'status': 'Ready for SAP integration.'})}\n\n"
+    yield f"data: {json.dumps({'status': 'Ready for agent integration.'})}\n\n"
 
 
 @app.get("/api/test-stream")

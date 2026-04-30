@@ -18,7 +18,7 @@ jobs:
           if [[ ! "$BRANCH" =~ $PATTERN ]]; then
             echo "❌ Branch name '$BRANCH' does not follow the convention."
             echo "   Expected: <type>/<issue-number>-<short-description>"
-            echo "   Example:  feat/42-sap-agent-streaming"
+            echo "   Example:  feat/42-agent-streaming"
             exit 1
           fi
           echo "✅ Branch name '$BRANCH' is valid."

@@ -33,12 +33,12 @@ Validates the source branch against the naming convention before anything else r
 <type>/<issue-number>-<short-description>
 ```
 
-| Example                       | Result                             |
-| ----------------------------- | ---------------------------------- |
-| `feat/42-sap-agent-streaming` | ✅ OK                              |
-| `fix/17-hydration-mismatch`   | ✅ OK                              |
-| `my-feature`                  | ❌ FAIL — no type, no issue number |
-| `feature/new-endpoint`        | ❌ FAIL — missing issue number     |
+| Example                     | Result                             |
+| --------------------------- | ---------------------------------- |
+| `feat/42-agent-streaming`   | ✅ OK                              |
+| `fix/17-hydration-mismatch` | ✅ OK                              |
+| `my-feature`                | ❌ FAIL — no type, no issue number |
+| `feature/new-endpoint`      | ❌ FAIL — missing issue number     |
 
 Valid types: `feat` `fix` `docs` `refactor` `test` `ci` `chore` `perf`
 

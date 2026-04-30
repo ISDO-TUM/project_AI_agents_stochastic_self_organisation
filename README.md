@@ -1,6 +1,6 @@
 <div align="center">
 
-# 🤖 SAP AI Agent — Stochastic Self-Organisation
+# 🤖 Self-Organising Agentic System
 
 [![CI](https://github.com/ISDO-TUM/project_AI_agents_stochastic_self_organisation/actions/workflows/pull-request-checks.yaml/badge.svg)](https://github.com/ISDO-TUM/project_AI_agents_stochastic_self_organisation/actions)
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)

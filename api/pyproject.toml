@@ -8,7 +8,7 @@ line-length = 100
 target-version = "py312"
 
 [tool.ruff.lint]
-# Rule sets — aligned with Google Python Style Guide and SAP Clean Code standards:
+# Rule sets — aligned with Google Python Style Guide and clean code standards:
 #   E/W  pycodestyle   — PEP 8 style errors and warnings
 #   F    pyflakes      — undefined names, unused imports
 #   I    isort         — import ordering
