@@ -13,8 +13,8 @@ const geistMono = Geist_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "SAP AI Agent",
-  description: "Stochastic self-organisation AI agents for SAP",
+  title: "Self-Organising Agentic System",
+  description: "Stochastic self-organisation AI agents",
 };
 
 export default function RootLayout({

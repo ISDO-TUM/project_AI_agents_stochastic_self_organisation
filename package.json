@@ -1,5 +1,5 @@
 {
-  "name": "sap-agent",
+  "name": "self-organising-agentic-system",
   "private": true,
   "scripts": {
     "dev": "concurrently -c \"green,blue\" -n \"UI,API\" \"pnpm --filter app run dev\" \"cd api && uv run uvicorn index:app --reload --port 8000\"",
