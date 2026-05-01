@@ -1,22 +1,50 @@
 import asyncio
 import json
-from collections.abc import AsyncGenerator
+import os
+from collections.abc import AsyncGenerator, AsyncIterator
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
-# Initialize the FastAPI app
+from api.db import close_db, init_db
+from api.routes import agents_router, knowledge_files_router
+
+
+@asynccontextmanager
+async def lifespan(app: FastAPI) -> AsyncIterator[None]:
+    """Initialise the session database on startup and close it on shutdown."""
+    await init_db()
+    yield
+    await close_db()
+
+
 app = FastAPI(
-    title="SAP AI Agents API",
+    title="AI Agents API",
     description=(
-        "API for SAP AI Agent orchestration and integration with "
+        "API for AI Agent orchestration and integration with "
         "stochastic self-organization capabilities."
     ),
     version="0.1.0",
     openapi_url="/api/openapi.json",
     docs_url="/api/docs",
     redoc_url="/api/redoc",
+    lifespan=lifespan,
 )
+
+_allowed_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:3000").split(",")
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=_allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+app.include_router(agents_router)
+app.include_router(knowledge_files_router)
 
 
 async def mock_agent_stream() -> AsyncGenerator[str, None]:
@@ -41,7 +69,7 @@ async def mock_agent_stream() -> AsyncGenerator[str, None]:
                     "example": (
                         'data: {"status": "Backend connected. '
                         'Agents standing by."}\n\ndata: {"status": '
-                        '"Ready for SAP integration."}\n\n'
+                        '"Ready for integration."}\n\n'
                     )
                 }
             },
@@ -53,7 +81,8 @@ async def test_stream() -> StreamingResponse:
     Test the backend connection with a streaming response.
 
     This endpoint returns server-sent events (SSE) to verify that the frontend-backend
-    connection is working properly. It sends status updates at 1-second intervals.
+    connection is working properly. It sends two status messages with a 1-second delay
+    between them, then closes the stream.
 
     Returns:
         StreamingResponse: A stream of JSON status messages in SSE format.

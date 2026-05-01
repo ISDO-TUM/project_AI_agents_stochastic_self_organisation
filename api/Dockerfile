@@ -25,12 +25,17 @@ ENV PATH="/opt/venv/bin:$PATH" \
     PYTHONUNBUFFERED=1
 
 # Non-root user
-RUN useradd --system --uid 1001 --no-create-home appuser
+RUN useradd --system --uid 1001 --no-create-home appuser && \
+    apt-get update && apt-get install -y --no-install-recommends curl && \
+    rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY . .
+COPY --chown=appuser:appuser . .
 
 USER appuser
 EXPOSE 8000
+
+HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
+    CMD curl -f http://localhost:8000/api/docs || exit 1
 
 CMD ["uvicorn", "index:app", "--host", "0.0.0.0", "--port", "8000"]
