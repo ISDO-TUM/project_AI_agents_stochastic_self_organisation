@@ -193,6 +193,98 @@ def _commit_error_block(first_line: str) -> None:
     print()
 
 
+def _coverage_colour(pct_str: str) -> str:
+    """Return an ANSI colour for a coverage percentage string like '78%'."""
+    try:
+        val = int(pct_str.rstrip("%"))
+    except ValueError:
+        return WHITE
+    if val >= 80:
+        return GREEN
+    if val >= 60:
+        return YELLOW
+    return RED
+
+
+def _render_coverage_table(detail: str) -> None:
+    """Parse pytest-cov terminal output and re-render it with ANSI colours."""
+    lines = detail.splitlines()
+
+    # Locate the header row: "Name   Stmts   Miss   Cover   [Missing]"
+    header_idx = next(
+        (
+            i
+            for i, ln in enumerate(lines)
+            if re.match(r"\s*Name\s+Stmts\s+Miss\s+Cover", ln)
+        ),
+        None,
+    )
+    if header_idx is None:
+        return
+
+    # Row after header is a separator line — data starts two lines down
+    data_rows: list[tuple[str, str, str, str, str]] = []
+    total_row: tuple[str, str, str] | None = None
+
+    for ln in lines[header_idx + 2 :]:
+        stripped = ln.strip()
+        if not stripped:
+            continue
+        # Separator lines (pure dashes or "--- coverage: … ---") → skip
+        if re.match(r"-{5,}", stripped):
+            continue
+        parts = stripped.split()
+        if len(parts) < 4:
+            continue
+        if parts[0] == "TOTAL":
+            total_row = (parts[1], parts[2], parts[3])
+        else:
+            missing = " ".join(parts[4:]) if len(parts) > 4 else ""
+            data_rows.append((parts[0], parts[1], parts[2], parts[3], missing))
+
+    if not data_rows and total_row is None:
+        return
+
+    has_missing_col = any(r[4] for r in data_rows)
+    name_w = max((len(r[0]) for r in data_rows), default=5)
+    name_w = max(name_w, 5)  # at least as wide as "TOTAL"
+    divider_w = name_w + 28 + (9 if has_missing_col else 0)
+
+    # Header
+    missing_hdr = f"  {'Missing'}" if has_missing_col else ""
+    print(
+        f"    {BOLD}{GRAY}"
+        f"{'Name':<{name_w}}  {'Stmts':>6}  {'Miss':>5}  {'Cover':>6}"
+        f"{missing_hdr}{RESET}"
+    )
+    print(f"    {GRAY}{'─' * divider_w}{RESET}")
+
+    for name, stmts, miss, cover, missing in data_rows:
+        cov_col = _coverage_colour(cover)
+        miss_col = RED if miss != "0" else GREEN
+        row = (
+            f"    {CYAN}{name:<{name_w}}{RESET}"
+            f"  {GRAY}{stmts:>6}{RESET}"
+            f"  {miss_col}{miss:>5}{RESET}"
+            f"  {cov_col}{BOLD}{cover:>6}{RESET}"
+        )
+        if missing:
+            row += f"  {GRAY}{missing}{RESET}"
+        print(row)
+
+    if total_row:
+        stmts, miss, cover = total_row
+        cov_col = _coverage_colour(cover)
+        print(f"    {GRAY}{'─' * divider_w}{RESET}")
+        print(
+            f"    {BOLD}{'TOTAL':<{name_w}}{RESET}"
+            f"  {BOLD}{stmts:>6}{RESET}"
+            f"  {BOLD}{miss:>5}{RESET}"
+            f"  {cov_col}{BOLD}{cover:>6}{RESET}"
+        )
+    print()
+
+
 def _find_uv() -> str:
     import shutil
 
@@ -258,18 +350,33 @@ def _run_tests(repo_root: str, uv: str) -> tuple[bool, str, str]:
 def _print_tests_section(passed: bool, coverage_pct: str, detail: str) -> None:
     print(_divider("Python · Tests"))
     if passed:
-        cov_label = f"  {GRAY}coverage: {coverage_pct}{RESET}" if coverage_pct else ""
+        cov_col = _coverage_colour(coverage_pct) if coverage_pct else GREEN
+        cov_label = (
+            f"  {GRAY}coverage: {cov_col}{BOLD}{coverage_pct}{RESET}"
+            if coverage_pct
+            else ""
+        )
         print(f"  {GREEN}✓{RESET}  All tests passed{cov_label}")
     else:
         print(f"  {RED}✗{RESET}  {BOLD}{RED}Tests failed{RESET}")
         if coverage_pct:
-            print(f"  {GRAY}coverage: {coverage_pct}{RESET}")
-        # Print the relevant failure output, indented
-        relevant = [
-            line
-            for line in detail.splitlines()
-            if line.strip() and not line.startswith("=== passed")
-        ]
+            cov_col = _coverage_colour(coverage_pct)
+            print(f"  {GRAY}coverage: {cov_col}{BOLD}{coverage_pct}{RESET}")
+
+        # Print test failure details (skip coverage-table lines to avoid duplication)
+        in_cov_table = False
+        relevant: list[str] = []
+        for line in detail.splitlines():
+            stripped = line.strip()
+            if re.match(r"\s*Name\s+Stmts\s+Miss\s+Cover", line):
+                in_cov_table = True
+            if in_cov_table:
+                if stripped.startswith("TOTAL"):
+                    in_cov_table = False
+                continue
+            if stripped and not line.startswith("=== passed"):
+                relevant.append(line)
+
         if relevant:
             print()
             for line in relevant:
@@ -279,7 +386,9 @@ def _print_tests_section(passed: bool, coverage_pct: str, detail: str) -> None:
                     line,
                 )
                 print(f"    {coloured}")
+
     print()
+    _render_coverage_table(detail)
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
