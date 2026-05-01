@@ -1,4 +1,3 @@
-#!/usr/bin/env python3
 """
 Runs pre-commit and reformats its output into a clean, developer-friendly
 terminal experience grouped by category with colour-coded results.
@@ -194,7 +193,6 @@ def _commit_error_block(first_line: str) -> None:
     print()
 
 
-# ── Tool finder ────────────────────────────────────────────────────────────────
 def _find_uv() -> str:
     import shutil
 
@@ -216,6 +214,72 @@ def _fallback(raw: str, returncode: int) -> None:
     else:
         print(f"{RED}{BOLD}Pre-commit checks failed (no output captured).{RESET}")
     sys.exit(returncode)
+
+
+def _run_tests(repo_root: str, uv: str) -> tuple[bool, str, str]:
+    """Run pytest with coverage for the API and return (passed, coverage_pct, detail)."""
+    api_dir = os.path.join(repo_root, "api")
+    # Skip entirely when no test files exist yet
+    test_dir = os.path.join(api_dir, "tests")
+    if not os.path.isdir(test_dir) or not any(
+        f.startswith("test_") and f.endswith(".py") for f in os.listdir(test_dir)
+    ):
+        return True, "", ""
+
+    proc = subprocess.run(
+        [
+            uv,
+            "run",
+            "pytest",
+            "--tb=short",
+            "--cov=.",
+            "--cov-report=term-missing:skip-covered",
+            "-q",
+        ],
+        cwd=api_dir,
+        capture_output=True,
+        text=True,
+    )
+
+    passed = proc.returncode == 0
+
+    # Extract the "TOTAL … X%" coverage line from the output
+    coverage_pct = ""
+    for line in (proc.stdout + proc.stderr).splitlines():
+        if line.startswith("TOTAL"):
+            parts = line.split()
+            coverage_pct = parts[-1] if parts else ""
+            break
+
+    detail = proc.stdout + proc.stderr
+    return passed, coverage_pct, detail
+
+
+def _print_tests_section(passed: bool, coverage_pct: str, detail: str) -> None:
+    print(_divider("Python · Tests"))
+    if passed:
+        cov_label = f"  {GRAY}coverage: {coverage_pct}{RESET}" if coverage_pct else ""
+        print(f"  {GREEN}✓{RESET}  All tests passed{cov_label}")
+    else:
+        print(f"  {RED}✗{RESET}  {BOLD}{RED}Tests failed{RESET}")
+        if coverage_pct:
+            print(f"  {GRAY}coverage: {coverage_pct}{RESET}")
+        # Print the relevant failure output, indented
+        relevant = [
+            line
+            for line in detail.splitlines()
+            if line.strip() and not line.startswith("=== passed")
+        ]
+        if relevant:
+            print()
+            for line in relevant:
+                coloured = re.sub(
+                    r"([^\s]+\.py):(\d+)",
+                    lambda mo: f"{CYAN}{mo.group(1)}{RESET}:{BOLD}{mo.group(2)}{RESET}",
+                    line,
+                )
+                print(f"    {coloured}")
+    print()
 
 
 # ── Main ───────────────────────────────────────────────────────────────────────
@@ -257,6 +321,11 @@ def main() -> None:
         _, group = _HOOKS.get(result[0].lower(), (result[0], "Other"))
         groups[group].append(result)
 
+    # ── Run server-side tests ──────────────────────────────────────────────────
+    tests_passed, coverage_pct, test_detail = _run_tests(repo_root, uv)
+    # _run_tests returns empty strings for both when no tests exist
+    tests_available = bool(coverage_pct or test_detail or not tests_passed)
+
     # ── Header ─────────────────────────────────────────────────────────────────
     print(f"\n  {BOLD}{CYAN}Pre-commit checks{RESET}\n")
 
@@ -278,6 +347,10 @@ def main() -> None:
             print(_row(label, status, auto_fixed))
         print()
 
+    # ── Test results ───────────────────────────────────────────────────────────
+    if tests_available:
+        _print_tests_section(tests_passed, coverage_pct, test_detail)
+
     # ── Categorise failures ────────────────────────────────────────────────────
     real_failures = [(n, e) for n, s, e, m in results if s == "failed" and not m]
     auto_fixed_names = [n for n, s, e, m in results if s == "failed" and m]
@@ -291,7 +364,9 @@ def main() -> None:
     ]
     commit_blocked = show_commit and not commit_valid
 
-    total_issues = len(real_failures) + (1 if commit_blocked else 0)
+    total_issues = (
+        len(real_failures) + (1 if commit_blocked else 0) + (0 if tests_passed else 1)
+    )
 
     if total_issues > 0:
         print(f"  {GRAY}{'─' * _W}{RESET}")

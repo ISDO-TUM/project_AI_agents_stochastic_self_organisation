@@ -2,6 +2,11 @@
 name = "api"
 version = "0.1.0"
 requires-python = ">=3.12"
+dependencies = [
+    "fastapi==0.136.1",
+    "uvicorn==0.46.0",
+    "aiosqlite==0.22.1",
+]
 
 [tool.ruff]
 line-length = 100
@@ -19,12 +24,11 @@ target-version = "py312"
 #   C4   comprehensions — idiomatic list/dict/set comprehensions
 #   RUF  ruff-specific — additional opinionated rules
 select = ["E", "W", "F", "I", "N", "UP", "B", "S", "C4", "RUF"]
-ignore = [
-    "S101",  # use of assert — acceptable in test files
-]
+ignore = []
 
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = ["F401"]  # re-exports in __init__ are intentional
+"**/test_*.py" = ["S101"]   # assert is acceptable in test files
 
 [tool.ruff.lint.isort]
 known-first-party = ["api"]
@@ -35,3 +39,8 @@ strict = true
 ignore_missing_imports = true
 # FastAPI decorators use complex generics; relax untyped decorator checks
 disallow_untyped_decorators = false
+
+[tool.pytest.ini_options]
+asyncio_mode = "auto"
+testpaths = ["tests"]
+pythonpath = [".."]
