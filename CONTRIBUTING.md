@@ -1,4 +1,4 @@
-# Contributing to SAP AI Agent
+# Contributing to Self-Organising Agentic System
 
 Welcome to the team! This guide is the single source of truth for how we work together — branches, commits, code style, and the automated checks that keep everything consistent.
 
@@ -43,7 +43,7 @@ Welcome to the team! This guide is the single source of truth for how we work to
 
 ```bash
 # ✅ Good
-feat/42-sap-agent-streaming
+feat/42-agent-streaming
 fix/17-hydration-mismatch
 chore/5-pre-commit-setup
 
