@@ -87,32 +87,29 @@ feat: updated stuff     # vague summary
 
 > **Why bother?** Good commit history is searchable. When something breaks at 2am, `git log --oneline` is your best friend — but only if the messages actually mean something.
 
-<!-- 💡 IMAGE SUGGESTION: A "write good commit messages" meme goes well here.
-     Drop the image in docs/assets/ and uncomment the line below.
-     Example: ![commit messages matter](docs/assets/commit-meme.jpg) -->
-
 ---
 
 ## 🪝 Before you push: pre-commit hooks
 
 The hooks run automatically on `git commit` — you don't need to enable anything after `setup.sh`. Here's what runs and why:
 
-| Hook                        | What it does for you                           |
-| --------------------------- | ---------------------------------------------- |
-| `trailing-whitespace`       | Strips invisible clutter                       |
-| `end-of-file-fixer`         | Ensures every file ends with a newline         |
-| `check-yaml` / `check-json` | Catches syntax errors before they hit CI       |
-| `check-merge-conflict`      | Stops `<<<<<<` markers sneaking into commits   |
-| `check-added-large-files`   | Blocks files > 500 KB (use Git LFS for assets) |
-| `no-commit-to-branch`       | Prevents accidental direct commits to `main`   |
-| `ruff`                      | Lints Python and auto-fixes what it can        |
-| `ruff-format`               | Formats Python code                            |
-| `mypy`                      | Type-checks Python (`--strict`)                |
-| `prettier`                  | Formats JS, TS, CSS, JSON, and Markdown        |
-| `tsc`                       | Type-checks TypeScript                         |
-| `commitlint`                | Validates your commit message format           |
+| Hook                        | What it does for you                               |
+| --------------------------- | -------------------------------------------------- |
+| `trailing-whitespace`       | Strips invisible clutter                           |
+| `end-of-file-fixer`         | Ensures every file ends with a newline             |
+| `check-yaml` / `check-json` | Catches syntax errors before they hit CI           |
+| `check-merge-conflict`      | Stops `<<<<<<` markers sneaking into commits       |
+| `check-added-large-files`   | Blocks files > 500 KB (use Git LFS for assets)     |
+| `no-commit-to-branch`       | Prevents accidental direct commits to `main`       |
+| `ruff`                      | Lints Python and auto-fixes what it can            |
+| `ruff-format`               | Formats Python code                                |
+| `mypy`                      | Type-checks Python (`--strict`)                    |
+| `prettier`                  | Formats JS, TS, CSS, JSON, and Markdown            |
+| `tsc`                       | Type-checks TypeScript                             |
+| `commitlint`                | Validates your commit message format               |
+| **pytest + coverage**       | Runs the API test suite and reports total coverage |
 
-Most hooks that touch files (formatters) are **auto-fixing** — they'll modify the file and you just `git add` and commit again. Only type errors (`mypy`, `tsc`) require a manual fix.
+Most hooks that touch files (formatters) are **auto-fixing** — they'll modify the file and you just `git add` and commit again. Type errors (`mypy`, `tsc`) and failing tests require a manual fix.
 
 ### 🔧 Running hooks manually
 
@@ -122,12 +119,14 @@ cd api && uv run pre-commit run ruff --all-files     # just ruff
 cd api && uv run pre-commit run mypy --all-files     # just mypy
 cd api && uv run pre-commit run tsc --all-files      # just tsc
 cd api && uv run pre-commit run prettier --all-files # just prettier
+
+# Run tests + coverage separately (same command the hook uses)
+cd api && uv run pytest --tb=short --cov=. --cov-report=term-missing:skip-covered -q
 ```
 
-### 🚨 Hook failed? Here's what to do
+### 🚨 Hook failed? Here’s what to do
 
-<details>
-<summary>🔧 A formatter modified my files (ruff-format, prettier)</summary>
+#### 🔧 A formatter modified my files (ruff-format, prettier)
 
 The hook auto-fixed your files. Stage the changes and commit again:
 
@@ -136,10 +135,7 @@ git add -A
 git commit -m "your original message"
 ```
 
-</details>
-
-<details>
-<summary>🔴 mypy or tsc type error</summary>
+#### 🔴 mypy or tsc type error
 
 This requires a manual fix — add the missing type annotation or resolve the type mismatch. Run the hook again to confirm it passes:
 
@@ -149,12 +145,9 @@ cd api && uv run pre-commit run mypy --all-files
 cd api && uv run pre-commit run tsc --all-files
 ```
 
-</details>
+#### 🔴 commitlint rejected my commit message
 
-<details>
-<summary>🔴 commitlint rejected my commit message</summary>
-
-Your message doesn't match the [Conventional Commits](https://www.conventionalcommits.org/) format. Common culprits:
+Your message doesn’t match the [Conventional Commits](https://www.conventionalcommits.org/) format. Common culprits:
 
 - Missing type prefix: `added thing` → `feat: add thing`
 - Uppercase subject: `feat: Add thing` → `feat: add thing`
@@ -166,18 +159,25 @@ Amend the last commit message with:
 git commit --amend
 ```
 
-</details>
+#### 🔴 A test failed
 
-<details>
-<summary>😶 Hooks aren't running at all</summary>
+The hook shows which test failed and the short traceback. Fix the test or the code, then commit again.
+
+To iterate quickly without running the full hook suite:
+
+```bash
+cd api && uv run pytest --tb=short -q
+```
+
+Coverage is shown automatically — no separate command needed.
+
+#### 😶 Hooks aren’t running at all
 
 Re-run the setup script — the git hooks may not have been installed:
 
 ```bash
 ./scripts/setup.sh
 ```
-
-</details>
 
 ---
 
