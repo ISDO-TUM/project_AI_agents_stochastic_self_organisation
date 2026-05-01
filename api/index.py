@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from api.db import close_db, init_db
-from api.routes import router as agents_router
+from api.routes import agents_router, knowledge_files_router
 
 
 @asynccontextmanager
@@ -44,6 +44,7 @@ app.add_middleware(
 )
 
 app.include_router(agents_router)
+app.include_router(knowledge_files_router)
 
 
 async def mock_agent_stream() -> AsyncGenerator[str, None]:

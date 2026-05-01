@@ -44,3 +44,27 @@ class AgentResponse(AgentBase):
     """Agent representation returned by the API, including its generated id."""
 
     id: str
+
+
+class KnowledgeFileBase(BaseModel):
+    """Shared knowledge-file fields used by create and response schemas."""
+
+    name: str = Field(description="Human-readable filename.")
+    content: str = Field(description="Full text content of the file.")
+
+
+class KnowledgeFileCreate(KnowledgeFileBase):
+    """Request body for creating a knowledge file."""
+
+
+class KnowledgeFileUpdate(BaseModel):
+    """Partial update body; only supplied fields are written to the database."""
+
+    name: str | None = None
+    content: str | None = None
+
+
+class KnowledgeFileResponse(KnowledgeFileBase):
+    """Knowledge-file representation returned by the API, including its generated id."""
+
+    id: str

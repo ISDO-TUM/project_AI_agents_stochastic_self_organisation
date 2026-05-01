@@ -25,6 +25,22 @@ CREATE TABLE IF NOT EXISTS agents (
 );
 """
 
+_CREATE_KNOWLEDGE_FILES_TABLE = """
+CREATE TABLE IF NOT EXISTS knowledge_files (
+    id      TEXT PRIMARY KEY,
+    name    TEXT NOT NULL,
+    content TEXT NOT NULL
+);
+"""
+
+_CREATE_AGENT_FILES_TABLE = """
+CREATE TABLE IF NOT EXISTS agent_files (
+    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+    file_id  TEXT NOT NULL REFERENCES knowledge_files(id) ON DELETE CASCADE,
+    PRIMARY KEY (agent_id, file_id)
+);
+"""
+
 _db: aiosqlite.Connection | None = None
 
 
@@ -33,7 +49,10 @@ async def init_db() -> None:
     global _db
     _db = await aiosqlite.connect(":memory:")
     _db.row_factory = aiosqlite.Row
+    await _db.execute("PRAGMA foreign_keys = ON;")
     await _db.execute(_CREATE_AGENTS_TABLE)
+    await _db.execute(_CREATE_KNOWLEDGE_FILES_TABLE)
+    await _db.execute(_CREATE_AGENT_FILES_TABLE)
     await _db.commit()
 
 
@@ -62,3 +81,8 @@ def deserialise_agent_row(row: aiosqlite.Row) -> dict[str, Any]:
     data["tools"] = json.loads(data["tools"])
     data["connections"] = json.loads(data["connections"])
     return data
+
+
+def deserialise_knowledge_file_row(row: aiosqlite.Row) -> dict[str, Any]:
+    """Convert a knowledge_files table row to a plain dict."""
+    return dict(row)
