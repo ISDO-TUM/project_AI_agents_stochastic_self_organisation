@@ -66,8 +66,8 @@ async def test_groq_missing_prompt(client: AsyncClient) -> None:
 
 async def test_error_detail_does_not_leak_internal_message(client: AsyncClient) -> None:
     """502 responses must not expose raw exception messages to the client."""
-    secret_message = "sk-secret-key-exposed"
-    with patch("api.routes.test.call_openai", side_effect=RuntimeError(secret_message)):
+    internal_message = "internal-error-detail-not-for-clients"
+    with patch("api.routes.test.call_openai", side_effect=RuntimeError(internal_message)):
         response = await client.post("/api/test/openai", json={"prompt": "Hello"})
     assert response.status_code == 502
-    assert secret_message not in response.json()["detail"]
+    assert internal_message not in response.json()["detail"]
