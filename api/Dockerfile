@@ -22,7 +22,8 @@ COPY --from=builder /opt/venv /opt/venv
 ENV PATH="/opt/venv/bin:$PATH" \
     VIRTUAL_ENV="/opt/venv" \
     PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONPATH="/app"
 
 # Non-root user
 RUN useradd --system --uid 1001 --no-create-home appuser && \
@@ -30,7 +31,7 @@ RUN useradd --system --uid 1001 --no-create-home appuser && \
     rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app
-COPY --chown=appuser:appuser . .
+COPY --chown=appuser:appuser . api/
 
 USER appuser
 EXPOSE 8000
@@ -38,4 +39,4 @@ EXPOSE 8000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=10s \
     CMD curl -f http://localhost:8000/api/docs || exit 1
 
-CMD ["uvicorn", "index:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "api.index:app", "--host", "0.0.0.0", "--port", "8000"]

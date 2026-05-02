@@ -2,12 +2,17 @@
 
 from __future__ import annotations
 
+import logging
+
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
+from starlette.concurrency import run_in_threadpool
 
 from api.llm.anthropic_provider import call_anthropic
 from api.llm.groq_provider import call_groq
 from api.llm.openai_provider import call_openai
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/test", tags=["Testing"])
 
@@ -42,9 +47,11 @@ class PromptResponse(BaseModel):
 )
 async def test_openai(body: OpenAIPromptRequest) -> PromptResponse:
     try:
-        return PromptResponse(response=call_openai(body.prompt, model=body.model))
+        result = await run_in_threadpool(call_openai, body.prompt, model=body.model)
+        return PromptResponse(response=result)
     except Exception as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+        logger.exception("OpenAI provider error")
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "LLM provider unavailable") from exc
 
 
 @router.post(
@@ -54,9 +61,11 @@ async def test_openai(body: OpenAIPromptRequest) -> PromptResponse:
 )
 async def test_anthropic(body: AnthropicPromptRequest) -> PromptResponse:
     try:
-        return PromptResponse(response=call_anthropic(body.prompt, model=body.model))
+        result = await run_in_threadpool(call_anthropic, body.prompt, model=body.model)
+        return PromptResponse(response=result)
     except Exception as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+        logger.exception("Anthropic provider error")
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "LLM provider unavailable") from exc
 
 
 @router.post(
@@ -66,6 +75,8 @@ async def test_anthropic(body: AnthropicPromptRequest) -> PromptResponse:
 )
 async def test_groq(body: GroqPromptRequest) -> PromptResponse:
     try:
-        return PromptResponse(response=call_groq(body.prompt, model=body.model))
+        result = await run_in_threadpool(call_groq, body.prompt, model=body.model)
+        return PromptResponse(response=result)
     except Exception as exc:
-        raise HTTPException(status.HTTP_502_BAD_GATEWAY, str(exc)) from exc
+        logger.exception("Groq provider error")
+        raise HTTPException(status.HTTP_502_BAD_GATEWAY, "LLM provider unavailable") from exc

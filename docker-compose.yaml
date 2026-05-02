@@ -11,7 +11,7 @@ services:
       watch:
         - action: sync
           path: ./api
-          target: /app
+          target: /app/api
 
   app:
     build:
