@@ -2,19 +2,19 @@ import json
 import os
 from typing import Any
 
-from groq import Groq
+from groq import AsyncGroq
 
-_client: Groq | None = None
+_client: AsyncGroq | None = None
 
 
-def _get_client() -> Groq:
+def _get_client() -> AsyncGroq:
     global _client
     if _client is None:
-        _client = Groq(api_key=os.environ["GROQ_API_KEY"])
+        _client = AsyncGroq(api_key=os.environ["GROQ_API_KEY"])
     return _client
 
 
-def call_groq(
+async def call_groq(
     prompt: str,
     model: str = "llama-3.3-70b-versatile",
     system_prompt: str | None = None,
@@ -32,7 +32,7 @@ def call_groq(
 
     max_iterations = 10
     for _ in range(max_iterations):
-        response = _get_client().chat.completions.create(**kwargs)
+        response = await _get_client().chat.completions.create(**kwargs)
         message = response.choices[0].message
 
         if not message.tool_calls:

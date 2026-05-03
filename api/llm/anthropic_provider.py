@@ -2,19 +2,19 @@ import json
 import os
 from typing import Any
 
-from anthropic import Anthropic
+from anthropic import AsyncAnthropic
 
-_client: Anthropic | None = None
+_client: AsyncAnthropic | None = None
 
 
-def _get_client() -> Anthropic:
+def _get_client() -> AsyncAnthropic:
     global _client
     if _client is None:
-        _client = Anthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        _client = AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
     return _client
 
 
-def call_anthropic(
+async def call_anthropic(
     prompt: str,
     model: str = "claude-haiku-4-5-20251001",
     system_prompt: str | None = None,
@@ -35,7 +35,7 @@ def call_anthropic(
 
     max_iterations = 10
     for _ in range(max_iterations):
-        response = _get_client().messages.create(**kwargs)
+        response = await _get_client().messages.create(**kwargs)
 
         tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
 

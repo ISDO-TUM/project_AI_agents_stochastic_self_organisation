@@ -2,19 +2,19 @@ import json
 import os
 from typing import Any
 
-from openai import OpenAI
+from openai import AsyncOpenAI
 
-_client: OpenAI | None = None
+_client: AsyncOpenAI | None = None
 
 
-def _get_client() -> OpenAI:
+def _get_client() -> AsyncOpenAI:
     global _client
     if _client is None:
-        _client = OpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        _client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
     return _client
 
 
-def call_openai(
+async def call_openai(
     prompt: str,
     model: str = "gpt-4o-mini",
     system_prompt: str | None = None,
@@ -32,7 +32,7 @@ def call_openai(
 
     max_iterations = 10
     for _ in range(max_iterations):
-        response = _get_client().chat.completions.create(**kwargs)
+        response = await _get_client().chat.completions.create(**kwargs)
         message = response.choices[0].message
 
         if not message.tool_calls:

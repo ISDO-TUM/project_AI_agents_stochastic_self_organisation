@@ -7,7 +7,6 @@ from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
-from starlette.concurrency import run_in_threadpool
 
 from api.llm.anthropic_provider import call_anthropic
 from api.llm.groq_provider import call_groq
@@ -56,7 +55,7 @@ class ToolInfo(BaseModel):
 )
 async def test_openai(body: OpenAIPromptRequest) -> PromptResponse:
     try:
-        result = await run_in_threadpool(call_openai, body.prompt, model=body.model)
+        result = await call_openai(body.prompt, model=body.model)
         return PromptResponse(response=result)
     except Exception as exc:
         logger.exception("OpenAI provider error")
@@ -70,7 +69,7 @@ async def test_openai(body: OpenAIPromptRequest) -> PromptResponse:
 )
 async def test_anthropic(body: AnthropicPromptRequest) -> PromptResponse:
     try:
-        result = await run_in_threadpool(call_anthropic, body.prompt, model=body.model)
+        result = await call_anthropic(body.prompt, model=body.model)
         return PromptResponse(response=result)
     except Exception as exc:
         logger.exception("Anthropic provider error")
@@ -84,7 +83,7 @@ async def test_anthropic(body: AnthropicPromptRequest) -> PromptResponse:
 )
 async def test_groq(body: GroqPromptRequest) -> PromptResponse:
     try:
-        result = await run_in_threadpool(call_groq, body.prompt, model=body.model)
+        result = await call_groq(body.prompt, model=body.model)
         return PromptResponse(response=result)
     except Exception as exc:
         logger.exception("Groq provider error")
@@ -103,7 +102,7 @@ async def get_tools() -> list[ToolInfo]:
 
 class FileAccessRequest(BaseModel):
     file_name: str = Field(..., description="Name of the file to read.")
-    files: dict[str, str] = Field(..., description="Mock file store: name → content.")
+    files: dict[str, str] = Field(..., description="Mock file store: name -> content.")
 
 
 class FileAccessResponse(BaseModel):

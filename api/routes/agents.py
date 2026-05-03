@@ -9,7 +9,6 @@ from typing import Annotated
 
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, status
-from starlette.concurrency import run_in_threadpool
 
 from api.db import deserialise_agent_row, deserialise_knowledge_file_row, get_db
 from api.llm import call_agent
@@ -201,8 +200,7 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
     files = {row["name"]: row["content"] for row in file_rows} or None
 
     try:
-        response = await run_in_threadpool(
-            call_agent,
+        response = await call_agent(
             body.prompt,
             provider=agent["provider"],
             model=agent["model"],

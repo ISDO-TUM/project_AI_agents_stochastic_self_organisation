@@ -1,4 +1,4 @@
-"""LLM package unified call interface with tool support."""
+"""LLM package - unified async call interface with tool support."""
 
 from __future__ import annotations
 
@@ -11,7 +11,7 @@ from .groq_provider import call_groq
 from .openai_provider import call_openai
 
 
-def call_agent(
+async def call_agent(
     prompt: str,
     provider: str,
     model: str,
@@ -25,7 +25,7 @@ def call_agent(
 
     if provider == "openai":
         tools = get_openai_tools(tool_names) if tool_names else None
-        return call_openai(
+        return await call_openai(
             prompt,
             model=model,
             system_prompt=system_prompt,
@@ -34,7 +34,7 @@ def call_agent(
         )
     elif provider == "groq":
         tools = get_openai_tools(tool_names) if tool_names else None
-        return call_groq(
+        return await call_groq(
             prompt,
             model=model,
             system_prompt=system_prompt,
@@ -43,7 +43,7 @@ def call_agent(
         )
     elif provider == "anthropic":
         tools = get_anthropic_tools(tool_names) if tool_names else None
-        return call_anthropic(
+        return await call_anthropic(
             prompt,
             model=model,
             system_prompt=system_prompt,
