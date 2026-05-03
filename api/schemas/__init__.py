@@ -13,7 +13,7 @@ class AgentBase(BaseModel):
     name: str
     description: str = Field(description="Role description, e.g. 'Sales agent'.")
     system_prompt: str = Field(description="System prompt prepended to every LLM call.")
-    provider: Literal["openai", "anthropic"]
+    provider: Literal["openai", "anthropic", "groq"]
     model: str = Field(description="Model identifier, e.g. 'gpt-4o'.")
     tools: list[str] = Field(
         default_factory=list, description="Tool names available to this agent."
@@ -34,7 +34,7 @@ class AgentUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     system_prompt: str | None = None
-    provider: Literal["openai", "anthropic"] | None = None
+    provider: Literal["openai", "anthropic", "groq"] | None = None
     model: str | None = None
     tools: list[str] | None = None
     connections: list[str] | None = None
@@ -44,6 +44,19 @@ class AgentResponse(AgentBase):
     """Agent representation returned by the API, including its generated id."""
 
     id: str
+
+
+class AgentRunRequest(BaseModel):
+    """Request body for running an agent."""
+
+    prompt: str = Field(description="The user message to send to the agent.")
+
+
+class AgentRunResponse(BaseModel):
+    """Response from an agent run."""
+
+    agent_id: str
+    response: str
 
 
 class KnowledgeFileBase(BaseModel):
