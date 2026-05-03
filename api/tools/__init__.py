@@ -1,4 +1,4 @@
-"""Tools package – exposes the registry and a unified dispatch helper."""
+"""Tools package - exposes the registry and a unified dispatch helper."""
 
 from api.tools.registry import (
     get_anthropic_tools,

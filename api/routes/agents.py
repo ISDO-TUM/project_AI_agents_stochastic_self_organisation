@@ -214,7 +214,7 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail=str(exc),
-        )
+        ) from exc
 
     return AgentRunResponse(agent_id=agent_id, response=response, tools_used=tools_used)
 

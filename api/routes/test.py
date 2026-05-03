@@ -6,46 +6,25 @@ import logging
 from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
-from pydantic import BaseModel, Field
 
 from api.llm.anthropic_provider import call_anthropic
 from api.llm.groq_provider import call_groq
 from api.llm.openai_provider import call_openai
+from api.schemas import (
+    AnthropicPromptRequest,
+    FilesToolRequest,
+    FilesToolResponse,
+    GroqPromptRequest,
+    OpenAIPromptRequest,
+    PromptResponse,
+    ToolInfo,
+)
 from api.tools.builtin.files import handle as files_handle
 from api.tools.registry import list_tools
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/test", tags=["Testing"])
-
-OPENAI_DEFAULT_MODEL = "gpt-4.1-nano"
-ANTHROPIC_DEFAULT_MODEL = "claude-haiku-4-5-20251001"
-GROQ_DEFAULT_MODEL = "llama-3.1-8b-instant"
-
-
-class OpenAIPromptRequest(BaseModel):
-    prompt: str = Field(..., examples=["Hello"])
-    model: str = Field(OPENAI_DEFAULT_MODEL, examples=[OPENAI_DEFAULT_MODEL])
-
-
-class AnthropicPromptRequest(BaseModel):
-    prompt: str = Field(..., examples=["Hello"])
-    model: str = Field(ANTHROPIC_DEFAULT_MODEL, examples=[ANTHROPIC_DEFAULT_MODEL])
-
-
-class GroqPromptRequest(BaseModel):
-    prompt: str = Field(..., examples=["Hello"])
-    model: str = Field(GROQ_DEFAULT_MODEL, examples=[GROQ_DEFAULT_MODEL])
-
-
-class PromptResponse(BaseModel):
-    response: str
-
-
-class ToolInfo(BaseModel):
-    name: str
-    description: str
-    parameters: dict[str, Any]
 
 
 @router.post(
@@ -98,16 +77,6 @@ async def test_groq(body: GroqPromptRequest) -> PromptResponse:
 )
 async def get_tools() -> list[ToolInfo]:
     return [ToolInfo(**t) for t in list_tools()]
-
-
-class FilesToolRequest(BaseModel):
-    action: str = Field(..., description="'list' or 'read'.")
-    file_name: str | None = Field(None, description="Required when action is 'read'.")
-    files: dict[str, str] = Field(..., description="Mock file store: name -> content.")
-
-
-class FilesToolResponse(BaseModel):
-    result: str
 
 
 @router.post(

@@ -1,4 +1,4 @@
-"""Tool registry – maps tool names to their schemas and handlers.
+"""Tool registry - maps tool names to their schemas and handlers.
 
 Each provider has a different format for tool definitions.  The registry
 exposes helpers that return the correct shape for OpenAI/Groq and Anthropic.

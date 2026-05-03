@@ -1,4 +1,4 @@
-"""File access tool – stub implementation.
+"""File access tool - stub implementation.
 
 The actual file-reading logic will be connected later.  For now the handler
 returns a placeholder message so that the tool-use loop can be exercised

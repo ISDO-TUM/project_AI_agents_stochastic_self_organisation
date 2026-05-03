@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -84,3 +84,57 @@ class KnowledgeFileResponse(KnowledgeFileBase):
     """Knowledge-file representation returned by the API, including its generated id."""
 
     id: str
+
+
+_OPENAI_DEFAULT_MODEL = "gpt-4.1-nano"
+_ANTHROPIC_DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+_GROQ_DEFAULT_MODEL = "llama-3.1-8b-instant"
+
+
+class OpenAIPromptRequest(BaseModel):
+    """Request body for testing OpenAI connectivity."""
+
+    prompt: str = Field(..., examples=["Hello"])
+    model: str = Field(_OPENAI_DEFAULT_MODEL, examples=[_OPENAI_DEFAULT_MODEL])
+
+
+class AnthropicPromptRequest(BaseModel):
+    """Request body for testing Anthropic connectivity."""
+
+    prompt: str = Field(..., examples=["Hello"])
+    model: str = Field(_ANTHROPIC_DEFAULT_MODEL, examples=[_ANTHROPIC_DEFAULT_MODEL])
+
+
+class GroqPromptRequest(BaseModel):
+    """Request body for testing Groq connectivity."""
+
+    prompt: str = Field(..., examples=["Hello"])
+    model: str = Field(_GROQ_DEFAULT_MODEL, examples=[_GROQ_DEFAULT_MODEL])
+
+
+class PromptResponse(BaseModel):
+    """Response from a provider connectivity test."""
+
+    response: str
+
+
+class ToolInfo(BaseModel):
+    """Schema for a single tool entry returned by the tool registry."""
+
+    name: str
+    description: str
+    parameters: dict[str, Any]
+
+
+class FilesToolRequest(BaseModel):
+    """Request body for directly invoking the files tool handler."""
+
+    action: str = Field(..., description="'list' or 'read'.")
+    file_name: str | None = Field(None, description="Required when action is 'read'.")
+    files: dict[str, str] = Field(..., description="Mock file store: name -> content.")
+
+
+class FilesToolResponse(BaseModel):
+    """Response from the files tool handler."""
+
+    result: str
