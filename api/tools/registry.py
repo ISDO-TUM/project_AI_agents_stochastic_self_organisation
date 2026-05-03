@@ -7,7 +7,7 @@ exposes helpers that return the correct shape for OpenAI/Groq and Anthropic.
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any, cast
+from typing import Any
 
 from api.schemas import ToolCall
 from api.tools.builtin.files import (
@@ -21,6 +21,9 @@ from api.tools.builtin.files import (
 from api.tools.builtin.files import (
     handle as files_handle,
 )
+from api.tools.builtin.files import (
+    load_context as files_load_context,
+)
 
 _TOOLS: dict[str, dict[str, Any]] = {
     TOOL_NAME: {
@@ -28,8 +31,22 @@ _TOOLS: dict[str, dict[str, Any]] = {
         "parameters": TOOL_PARAMETERS,
         "handler": files_handle,
         "context_hint": files_context_hint,
+        "context_loader": files_load_context,
     },
 }
+
+
+async def build_tool_context(tool_names: list[str], raw_context: dict[str, Any]) -> dict[str, Any]:
+    """Call each tool's context_loader and merge the results into one context dict."""
+    context: dict[str, Any] = {}
+    for name in tool_names:
+        entry = _TOOLS.get(name)
+        if entry is None:
+            continue
+        loader = entry.get("context_loader")
+        if loader is not None:
+            context.update(await loader(raw_context))
+    return context
 
 
 def build_tools_system_prompt(tool_names: list[str], context: dict[str, Any]) -> str:
@@ -75,14 +92,6 @@ def list_tools() -> list[dict[str, Any]]:
         }
         for name, entry in _TOOLS.items()
     ]
-
-
-def get_handler(tool_name: str) -> Callable[[dict[str, Any]], str]:
-    """Return the handler function for a registered tool."""
-    entry = _TOOLS.get(tool_name)
-    if entry is None:
-        raise KeyError(f"Unknown tool: {tool_name}")
-    return cast(Callable[[dict[str, Any]], str], entry["handler"])
 
 
 def build_tool_dispatcher(

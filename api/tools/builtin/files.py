@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    import aiosqlite
 
 TOOL_NAME = "files"
 
@@ -9,6 +12,24 @@ TOOL_DESCRIPTION = (
     "Use action='list' to see all available files, "
     "or action='read' with a file_name to get a file's content."
 )
+
+
+async def load_context(raw_context: dict[str, Any]) -> dict[str, Any]:
+    """Load file names and content for this agent into the tool context."""
+    db: aiosqlite.Connection = raw_context["db"]
+    agent_id: str = raw_context["agent_id"]
+    async with db.execute(
+        """
+        SELECT kf.name, kf.content
+          FROM knowledge_files kf
+          JOIN agent_files af ON af.file_id = kf.id
+         WHERE af.agent_id = ?
+        """,
+        (agent_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+    files = {r["name"]: r["content"] for r in rows}
+    return {"files": files, "file_names": list(files.keys())}
 
 
 def context_hint(context: dict[str, Any]) -> str | None:
@@ -41,13 +62,7 @@ TOOL_PARAMETERS = {
 
 
 async def handle(arguments: dict[str, Any], context: dict[str, Any] | None = None) -> str:
-    context = context if context is not None else {}
-
-    # Lazy load: if files aren't pre-populated but a loader is provided, fetch now.
-    if "files" not in context and "files_loader" in context:
-        context["files"] = await context["files_loader"]()
-
-    files: dict[str, str] = context.get("files") or {}
+    files: dict[str, str] = (context or {}).get("files") or {}
     action = arguments.get("action")
 
     if action == "list":

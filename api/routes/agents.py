@@ -20,7 +20,7 @@ from api.schemas import (
     AgentUpdate,
     KnowledgeFileResponse,
 )
-from api.tools.registry import build_tools_system_prompt
+from api.tools.registry import build_tool_context, build_tools_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -188,39 +188,16 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
 
     agent = deserialise_agent_row(row)
 
-    async with db.execute(
-        """
-        SELECT kf.name FROM knowledge_files kf
-          JOIN agent_files af ON af.file_id = kf.id
-         WHERE af.agent_id = ?
-        """,
-        (agent_id,),
-    ) as cur:
-        file_name_rows = await cur.fetchall()
-    file_names = [r["name"] for r in file_name_rows]
-
     tool_names: list[str] = agent["tools"] or []
-    tools_context = {"file_names": file_names}
-    tools_hint = build_tools_system_prompt(tool_names, tools_context)
+    tool_context = await build_tool_context(tool_names, {"db": db, "agent_id": agent_id})
+
+    tools_hint = build_tools_system_prompt(tool_names, tool_context)
     base_system_prompt = agent["system_prompt"] or ""
     system_prompt = (
         f"{base_system_prompt}\n\n{tools_hint}".strip()
         if tools_hint
         else base_system_prompt or None
     )
-
-    async def load_files() -> dict[str, str]:
-        async with db.execute(
-            """
-            SELECT kf.name, kf.content
-              FROM knowledge_files kf
-              JOIN agent_files af ON af.file_id = kf.id
-             WHERE af.agent_id = ?
-            """,
-            (agent_id,),
-        ) as cur:
-            file_rows = await cur.fetchall()
-        return {row["name"]: row["content"] for row in file_rows}
 
     try:
         response, tools_used = await call_agent(
@@ -229,7 +206,7 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
             model=agent["model"],
             system_prompt=system_prompt,
             tool_names=tool_names or None,
-            files_loader=load_files,
+            tool_context=tool_context,
         )
     except Exception as exc:
         logger.exception("Agent run failed for agent_id=%s", agent_id)

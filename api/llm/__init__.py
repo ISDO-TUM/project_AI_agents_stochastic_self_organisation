@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable
 from typing import Any
 
 from api.schemas import ToolCall
@@ -19,20 +18,14 @@ async def call_agent(
     model: str,
     system_prompt: str | None = None,
     tool_names: list[str] | None = None,
-    files_loader: Callable[[], Awaitable[dict[str, str]]] | None = None,
+    tool_context: dict[str, Any] | None = None,
 ) -> tuple[str, list[ToolCall]]:
-    """Call an LLM provider with optional system prompt, tools, and file loader.
-
-    *files_loader* is an async callable that returns a {name: content} dict.
-    It is only awaited if the LLM actually invokes a tool that needs files.
+    """Call an LLM provider with optional system prompt and tools.
 
     Returns a tuple of (response_text, tools_used).
     """
-    context: dict[str, Any] = {}
-    if files_loader is not None:
-        context["files_loader"] = files_loader
     used_tools: list[ToolCall] = []
-    dispatch = build_tool_dispatcher(context, used_tools) if tool_names else None
+    dispatch = build_tool_dispatcher(tool_context or {}, used_tools) if tool_names else None
 
     if provider == "openai":
         tools = get_openai_tools(tool_names) if tool_names else None
