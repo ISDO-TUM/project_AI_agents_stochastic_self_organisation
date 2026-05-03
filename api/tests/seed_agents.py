@@ -43,11 +43,11 @@ def _request(method: str, path: str, body: dict[str, Any] | None = None) -> dict
 
 AGENTS: list[dict[str, Any]] = [
     {
-        "name": "OpenAI Doctor",
-        "description": "Medical expert powered by OpenAI.",
+        "name": "OpenAI Salesman",
+        "description": "Salesman powered by OpenAI.",
         "system_prompt": (
-            "You are a knowledgeable and empathetic doctor. "
-            "Provide clear, accurate, and helpful medical advice."
+            "You are an expert salesman of OpenAI products. "
+            "Provide clear, accurate, and helpful OpenAI sales information."
         ),
         "provider": "openai",
         "model": "gpt-4o-mini",
@@ -55,11 +55,12 @@ AGENTS: list[dict[str, Any]] = [
         "connections": [],
     },
     {
-        "name": "Anthropic Mathematician",
-        "description": "Expert mathematician powered by Anthropic Claude.",
+        "name": "Anthropic CEO",
+        "description": "CEO of Anthropic powered by Anthropic Claude.",
         "system_prompt": (
-            "You are a brilliant mathematician. "
-            "Solve problems with detailed reasoning and clear explanations."
+            "You are the CEO of Anthropic. "
+            "Provide strategic insights and clear explanations "
+            "about Anthropic's products and vision."
         ),
         "provider": "anthropic",
         "model": "claude-haiku-4-5-20251001",

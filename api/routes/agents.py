@@ -25,11 +25,6 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agents", tags=["Agents"])
 
-_TOOLS_SYSTEM_PROMPT = (
-    "You have access to tools. "
-    "Use them whenever they would produce a more accurate or complete answer."
-)
-
 DBDep = Annotated[aiosqlite.Connection, Depends(get_db)]
 _PATCHABLE_COLUMNS: frozenset[str] = frozenset(AgentUpdate.model_fields.keys())
 
@@ -194,16 +189,13 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
 
     tool_names: list[str] = agent["tools"] or []
     base_prompt = agent["system_prompt"] or ""
-    system_prompt = (
-        f"{base_prompt}\n\n{_TOOLS_SYSTEM_PROMPT}".strip() if tool_names else base_prompt or None
-    )
 
     try:
         response, tools_used = await call_agent(
             body.prompt,
             provider=agent["provider"],
             model=agent["model"],
-            system_prompt=system_prompt,
+            system_prompt=base_prompt,
             tool_names=tool_names or None,
             tool_context={"db": db, "agent_id": agent_id},
         )
