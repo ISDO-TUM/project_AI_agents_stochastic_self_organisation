@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 from pydantic import BaseModel, Field
@@ -11,6 +12,7 @@ from starlette.concurrency import run_in_threadpool
 from api.llm.anthropic_provider import call_anthropic
 from api.llm.groq_provider import call_groq
 from api.llm.openai_provider import call_openai
+from api.tools.registry import list_tools
 
 logger = logging.getLogger(__name__)
 
@@ -38,6 +40,12 @@ class GroqPromptRequest(BaseModel):
 
 class PromptResponse(BaseModel):
     response: str
+
+
+class ToolInfo(BaseModel):
+    name: str
+    description: str
+    parameters: dict[str, Any]
 
 
 @router.post(
@@ -80,3 +88,13 @@ async def test_groq(body: GroqPromptRequest) -> PromptResponse:
     except Exception as exc:
         logger.exception("Groq provider error")
         raise HTTPException(status.HTTP_502_BAD_GATEWAY, "LLM provider unavailable") from exc
+
+
+@router.get(
+    "/tools",
+    response_model=list[ToolInfo],
+    summary="List available tools",
+    description="Return all tools registered in the tool registry.",
+)
+async def get_tools() -> list[ToolInfo]:
+    return [ToolInfo(**t) for t in list_tools()]

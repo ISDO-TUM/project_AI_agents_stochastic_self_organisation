@@ -3,14 +3,19 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from typing import Annotated
 
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, status
+from starlette.concurrency import run_in_threadpool
 
 from api.db import deserialise_agent_row, get_db
-from api.schemas import AgentCreate, AgentResponse, AgentUpdate
+from api.llm import call_agent
+from api.schemas import AgentCreate, AgentResponse, AgentRunRequest, AgentRunResponse, AgentUpdate
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agents", tags=["Agents"])
 
@@ -156,3 +161,40 @@ async def delete_agent(agent_id: str, db: DBDep) -> None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     await db.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
     await db.commit()
+
+
+@router.post(
+    "/{agent_id}/run",
+    response_model=AgentRunResponse,
+    summary="Run an agent",
+    description=(
+        "Send a prompt to an existing agent. The agent's configured system prompt, "
+        "provider, model, and tools are loaded from the database and forwarded to "
+        "the LLM.  The final text response is returned."
+    ),
+)
+async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRunResponse:
+    async with db.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+
+    agent = deserialise_agent_row(row)
+
+    try:
+        response = await run_in_threadpool(
+            call_agent,
+            body.prompt,
+            provider=agent["provider"],
+            model=agent["model"],
+            system_prompt=agent["system_prompt"] or None,
+            tool_names=agent["tools"] or None,
+        )
+    except Exception:
+        logger.exception("Agent run failed for agent_id=%s", agent_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="LLM provider unavailable",
+        )
+
+    return AgentRunResponse(agent_id=agent_id, response=response)
