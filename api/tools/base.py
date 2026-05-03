@@ -22,7 +22,8 @@ class Tool(ABC):
     @abstractmethod
     async def execute(
         self, validated_input: BaseModel, context: dict[str, Any] | None = None
-    ) -> str: ...
+    ) -> str:
+        raise NotImplementedError
 
     def schema(self) -> dict[str, Any]:
         return self.input_model.model_json_schema()
