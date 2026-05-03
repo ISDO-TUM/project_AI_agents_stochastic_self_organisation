@@ -16,7 +16,7 @@ def _get_client() -> AsyncGroq:
 
 async def call_groq(
     prompt: str,
-    model: str = "llama-3.1-8b-instant",
+    model: str = "llama-3.3-70b-versatile",
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_handler: Any | None = None,
@@ -29,6 +29,7 @@ async def call_groq(
     kwargs: dict[str, Any] = {"model": model, "messages": messages}
     if tools:
         kwargs["tools"] = tools
+        kwargs["parallel_tool_calls"] = False
 
     max_iterations = 10
     for _ in range(max_iterations):

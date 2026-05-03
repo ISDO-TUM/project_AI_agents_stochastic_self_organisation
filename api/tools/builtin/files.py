@@ -10,6 +10,19 @@ TOOL_DESCRIPTION = (
     "or action='read' with a file_name to get a file's content."
 )
 
+
+def context_hint(context: dict[str, Any]) -> str | None:
+    """Return a system-prompt snippet listing the attached files, or None if there are none."""
+    file_names: list[str] = context.get("file_names", [])
+    if not file_names:
+        return None
+    names = "\n".join(f"- {n}" for n in file_names)
+    return (
+        f"The following knowledge files are attached to you:\n{names}\n"
+        "Use the `files` tool with action='read' to retrieve their contents."
+    )
+
+
 TOOL_PARAMETERS = {
     "type": "object",
     "properties": {

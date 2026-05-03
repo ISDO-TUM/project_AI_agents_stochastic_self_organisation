@@ -96,7 +96,7 @@ class KnowledgeFileResponse(KnowledgeFileBase):
 
 _OPENAI_DEFAULT_MODEL = "gpt-4.1-nano"
 _ANTHROPIC_DEFAULT_MODEL = "claude-haiku-4-5-20251001"
-_GROQ_DEFAULT_MODEL = "llama-3.1-8b-instant"
+_GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
 
 
 class OpenAIPromptRequest(BaseModel):

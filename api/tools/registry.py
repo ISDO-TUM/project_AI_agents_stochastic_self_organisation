@@ -16,6 +16,9 @@ from api.tools.builtin.files import (
     TOOL_PARAMETERS,
 )
 from api.tools.builtin.files import (
+    context_hint as files_context_hint,
+)
+from api.tools.builtin.files import (
     handle as files_handle,
 )
 
@@ -24,8 +27,42 @@ _TOOLS: dict[str, dict[str, Any]] = {
         "description": TOOL_DESCRIPTION,
         "parameters": TOOL_PARAMETERS,
         "handler": files_handle,
+        "context_hint": files_context_hint,
     },
 }
+
+
+def build_tools_system_prompt(tool_names: list[str], context: dict[str, Any]) -> str:
+    """Build a system-prompt block describing available tools and their runtime context.
+
+    Each tool may declare a *context_hint* callable that contributes a snippet
+    (e.g. listing attached files).  Returns an empty string if nothing to inject.
+    """
+    lines: list[str] = []
+    tool_lines: list[str] = []
+    hint_lines: list[str] = []
+
+    for name in tool_names:
+        entry = _TOOLS.get(name)
+        if entry is None:
+            continue
+        tool_lines.append(f"- {name}: {entry['description']}")
+        hint_fn = entry.get("context_hint")
+        if hint_fn is not None:
+            hint = hint_fn(context)
+            if hint:
+                hint_lines.append(hint)
+
+    if not tool_lines:
+        return ""
+
+    lines.append("You have access to the following tools:")
+    lines.extend(tool_lines)
+    if hint_lines:
+        lines.append("")
+        lines.extend(hint_lines)
+
+    return "\n".join(lines)
 
 
 def list_tools() -> list[dict[str, Any]]:

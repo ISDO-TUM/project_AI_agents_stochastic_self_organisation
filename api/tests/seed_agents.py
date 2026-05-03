@@ -76,7 +76,7 @@ AGENTS: list[dict[str, Any]] = [
             "relate to stored knowledge."
         ),
         "provider": "groq",
-        "model": "llama-3.1-8b-instant",
+        "model": "llama-3.3-70b-versatile",
         "tools": ["files"],
         "connections": [],
     },

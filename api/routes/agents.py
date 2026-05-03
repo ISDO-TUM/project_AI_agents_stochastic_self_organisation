@@ -20,6 +20,7 @@ from api.schemas import (
     AgentUpdate,
     KnowledgeFileResponse,
 )
+from api.tools.registry import build_tools_system_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +188,27 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
 
     agent = deserialise_agent_row(row)
 
+    async with db.execute(
+        """
+        SELECT kf.name FROM knowledge_files kf
+          JOIN agent_files af ON af.file_id = kf.id
+         WHERE af.agent_id = ?
+        """,
+        (agent_id,),
+    ) as cur:
+        file_name_rows = await cur.fetchall()
+    file_names = [r["name"] for r in file_name_rows]
+
+    tool_names: list[str] = agent["tools"] or []
+    tools_context = {"file_names": file_names}
+    tools_hint = build_tools_system_prompt(tool_names, tools_context)
+    base_system_prompt = agent["system_prompt"] or ""
+    system_prompt = (
+        f"{base_system_prompt}\n\n{tools_hint}".strip()
+        if tools_hint
+        else base_system_prompt or None
+    )
+
     async def load_files() -> dict[str, str]:
         async with db.execute(
             """
@@ -205,8 +227,8 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
             body.prompt,
             provider=agent["provider"],
             model=agent["model"],
-            system_prompt=agent["system_prompt"] or None,
-            tool_names=agent["tools"] or None,
+            system_prompt=system_prompt,
+            tool_names=tool_names or None,
             files_loader=load_files,
         )
     except Exception as exc:
