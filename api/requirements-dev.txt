@@ -4,3 +4,7 @@
 # Development & CI tooling
 pre-commit
 mypy
+pytest
+pytest-asyncio
+pytest-cov
+httpx

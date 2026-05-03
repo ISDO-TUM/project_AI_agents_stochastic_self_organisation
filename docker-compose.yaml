@@ -6,11 +6,12 @@ services:
       - "8000:8000"
     env_file:
       - .env
+    restart: unless-stopped
     develop:
       watch:
         - action: sync
           path: ./api
-          target: /app
+          target: /app/api
 
   app:
     build:
@@ -21,6 +22,10 @@ services:
     env_file:
       - .env
     environment:
-      - NEXT_PUBLIC_API_URL=http://api:8000
+      # Server-side only: used by Next.js rewrites to reach the API container.
+      # Never reaches the browser bundle.
+      - INTERNAL_API_URL=http://api:8000
+    restart: unless-stopped
     depends_on:
-      - api
+      api:
+        condition: service_healthy
