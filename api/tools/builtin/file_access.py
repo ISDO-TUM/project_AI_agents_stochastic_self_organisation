@@ -25,7 +25,11 @@ TOOL_PARAMETERS = {
 }
 
 
-def handle(arguments: dict[str, Any]) -> str:
-    """Execute the file_access tool. Currently a no-op stub."""
+def handle(arguments: dict[str, Any], context: dict[str, Any] | None = None) -> str:
+    """Return the content of the requested file from the agent's attached files."""
     file_name = arguments.get("file_name", "")
-    return f"[file_access] Content of '{file_name}' will be available once connected."
+    files: dict[str, str] = (context or {}).get("files", {})
+    if file_name in files:
+        return files[file_name]
+    available = ", ".join(files) if files else "none"
+    return f"File '{file_name}' not found. Available files: {available}"

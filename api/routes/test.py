@@ -12,6 +12,7 @@ from starlette.concurrency import run_in_threadpool
 from api.llm.anthropic_provider import call_anthropic
 from api.llm.groq_provider import call_groq
 from api.llm.openai_provider import call_openai
+from api.tools.builtin.file_access import handle as file_access_handle
 from api.tools.registry import list_tools
 
 logger = logging.getLogger(__name__)
@@ -98,3 +99,26 @@ async def test_groq(body: GroqPromptRequest) -> PromptResponse:
 )
 async def get_tools() -> list[ToolInfo]:
     return [ToolInfo(**t) for t in list_tools()]
+
+
+class FileAccessRequest(BaseModel):
+    file_name: str = Field(..., description="Name of the file to read.")
+    files: dict[str, str] = Field(..., description="Mock file store: name → content.")
+
+
+class FileAccessResponse(BaseModel):
+    result: str
+
+
+@router.post(
+    "/tools/file-access",
+    response_model=FileAccessResponse,
+    summary="Test file_access tool",
+    description="Invoke the file_access handler directly with a mock file store.",
+)
+async def test_file_access(body: FileAccessRequest) -> FileAccessResponse:
+    result = file_access_handle(
+        {"file_name": body.file_name},
+        {"files": body.files},
+    )
+    return FileAccessResponse(result=result)

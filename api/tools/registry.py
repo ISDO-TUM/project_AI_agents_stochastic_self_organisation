@@ -47,6 +47,18 @@ def get_handler(tool_name: str) -> Callable[[dict[str, Any]], str]:
     return cast(Callable[[dict[str, Any]], str], entry["handler"])
 
 
+def make_dispatch(context: dict[str, Any] | None = None) -> Callable[[str, dict[str, Any]], str]:
+    """Return a tool dispatcher that forwards context to every handler."""
+
+    def dispatch(tool_name: str, arguments: dict[str, Any]) -> str:
+        entry = _TOOLS.get(tool_name)
+        if entry is None:
+            return f"Unknown tool: {tool_name}"
+        return str(entry["handler"](arguments, context))
+
+    return dispatch
+
+
 def get_openai_tools(tool_names: list[str]) -> list[dict[str, Any]]:
     """Return tool definitions in OpenAI/Groq function-calling format."""
     result: list[dict[str, Any]] = []

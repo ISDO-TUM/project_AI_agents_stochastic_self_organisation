@@ -11,9 +11,16 @@ import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, status
 from starlette.concurrency import run_in_threadpool
 
-from api.db import deserialise_agent_row, get_db
+from api.db import deserialise_agent_row, deserialise_knowledge_file_row, get_db
 from api.llm import call_agent
-from api.schemas import AgentCreate, AgentResponse, AgentRunRequest, AgentRunResponse, AgentUpdate
+from api.schemas import (
+    AgentCreate,
+    AgentResponse,
+    AgentRunRequest,
+    AgentRunResponse,
+    AgentUpdate,
+    KnowledgeFileResponse,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -181,6 +188,18 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
 
     agent = deserialise_agent_row(row)
 
+    async with db.execute(
+        """
+        SELECT kf.name, kf.content
+          FROM knowledge_files kf
+          JOIN agent_files af ON af.file_id = kf.id
+         WHERE af.agent_id = ?
+        """,
+        (agent_id,),
+    ) as cur:
+        file_rows = await cur.fetchall()
+    files = {row["name"]: row["content"] for row in file_rows} or None
+
     try:
         response = await run_in_threadpool(
             call_agent,
@@ -189,6 +208,7 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
             model=agent["model"],
             system_prompt=agent["system_prompt"] or None,
             tool_names=agent["tools"] or None,
+            files=files,
         )
     except Exception:
         logger.exception("Agent run failed for agent_id=%s", agent_id)
@@ -198,3 +218,61 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
         )
 
     return AgentRunResponse(agent_id=agent_id, response=response)
+
+
+@router.get(
+    "/{agent_id}/files",
+    response_model=list[KnowledgeFileResponse],
+    summary="List files attached to an agent",
+)
+async def list_agent_files(agent_id: str, db: DBDep) -> list[KnowledgeFileResponse]:
+    async with db.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)) as cur:
+        if await cur.fetchone() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    async with db.execute(
+        """
+        SELECT kf.* FROM knowledge_files kf
+        JOIN agent_files af ON af.file_id = kf.id
+        WHERE af.agent_id = ?
+        """,
+        (agent_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+    return [KnowledgeFileResponse(**deserialise_knowledge_file_row(row)) for row in rows]
+
+
+@router.post(
+    "/{agent_id}/files/{file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Attach a file to an agent",
+)
+async def attach_file_to_agent(agent_id: str, file_id: str, db: DBDep) -> None:
+    async with db.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)) as cur:
+        if await cur.fetchone() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    async with db.execute("SELECT id FROM knowledge_files WHERE id = ?", (file_id,)) as cur:
+        if await cur.fetchone() is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found."
+            )
+    await db.execute(
+        "INSERT OR IGNORE INTO agent_files (agent_id, file_id) VALUES (?, ?)",
+        (agent_id, file_id),
+    )
+    await db.commit()
+
+
+@router.delete(
+    "/{agent_id}/files/{file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Detach a file from an agent",
+)
+async def detach_file_from_agent(agent_id: str, file_id: str, db: DBDep) -> None:
+    async with db.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)) as cur:
+        if await cur.fetchone() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    await db.execute(
+        "DELETE FROM agent_files WHERE agent_id = ? AND file_id = ?",
+        (agent_id, file_id),
+    )
+    await db.commit()
