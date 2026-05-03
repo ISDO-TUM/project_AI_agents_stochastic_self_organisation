@@ -1,8 +1,4 @@
-"""Tool registry - maps tool names to their schemas and handlers.
-
-Each provider has a different format for tool definitions.  The registry
-exposes helpers that return the correct shape for OpenAI/Groq and Anthropic.
-"""
+"""Tool registry — register Tool instances, build provider payloads, dispatch calls."""
 
 from __future__ import annotations
 
@@ -10,143 +6,70 @@ from collections.abc import Awaitable, Callable
 from typing import Any
 
 from api.schemas import ToolCall
-from api.tools.builtin.files import (
-    TOOL_DESCRIPTION,
-    TOOL_NAME,
-    TOOL_PARAMETERS,
-)
-from api.tools.builtin.files import (
-    context_hint as files_context_hint,
-)
-from api.tools.builtin.files import (
-    handle as files_handle,
-)
-from api.tools.builtin.files import (
-    load_context as files_load_context,
-)
+from api.tools.base import Tool
+from api.tools.builtin.files import FilesTool
 
-_TOOLS: dict[str, dict[str, Any]] = {
-    TOOL_NAME: {
-        "description": TOOL_DESCRIPTION,
-        "parameters": TOOL_PARAMETERS,
-        "handler": files_handle,
-        "context_hint": files_context_hint,
-        "context_loader": files_load_context,
-    },
-}
+# ── registry ───────────────────────────────────────────────────────
+
+_TOOLS: dict[str, Tool] = {}
 
 
-async def build_tool_context(tool_names: list[str], raw_context: dict[str, Any]) -> dict[str, Any]:
-    """Call each tool's context_loader and merge the results into one context dict."""
-    context: dict[str, Any] = {}
+def register(tool: Tool) -> None:
+    _TOOLS[tool.name] = tool
+
+
+def get_tool(name: str) -> Tool | None:
+    return _TOOLS.get(name)
+
+
+register(FilesTool())
+
+# ── provider format builders ───────────────────────────────────────
+
+
+def get_tools_for_provider(provider: str, tool_names: list[str]) -> list[dict[str, Any]]:
+    result: list[dict[str, Any]] = []
     for name in tool_names:
-        entry = _TOOLS.get(name)
-        if entry is None:
+        tool = _TOOLS.get(name)
+        if tool is None:
             continue
-        loader = entry.get("context_loader")
-        if loader is not None:
-            context.update(await loader(raw_context))
-    return context
+        if provider in ("openai", "groq"):
+            result.append(tool.to_openai())
+        elif provider == "anthropic":
+            result.append(tool.to_anthropic())
+    return result
 
 
-def build_tools_system_prompt(tool_names: list[str], context: dict[str, Any]) -> str:
-    """Build a system-prompt block describing available tools and their runtime context.
-
-    Each tool may declare a *context_hint* callable that contributes a snippet
-    (e.g. listing attached files).  Returns an empty string if nothing to inject.
-    """
-    lines: list[str] = []
-    tool_lines: list[str] = []
-    hint_lines: list[str] = []
-
-    for name in tool_names:
-        entry = _TOOLS.get(name)
-        if entry is None:
-            continue
-        tool_lines.append(f"- {name}: {entry['description']}")
-        hint_fn = entry.get("context_hint")
-        if hint_fn is not None:
-            hint = hint_fn(context)
-            if hint:
-                hint_lines.append(hint)
-
-    if not tool_lines:
-        return ""
-
-    lines.append("You have access to the following tools:")
-    lines.extend(tool_lines)
-    if hint_lines:
-        lines.append("")
-        lines.extend(hint_lines)
-
-    return "\n".join(lines)
+# ── listing ────────────────────────────────────────────────────────
 
 
 def list_tools() -> list[dict[str, Any]]:
-    """Return all registered tools in a provider-agnostic format."""
     return [
         {
-            "name": name,
-            "description": entry["description"],
-            "parameters": entry["parameters"],
+            "name": tool.name,
+            "description": tool.description,
+            "parameters": tool.schema(),
         }
-        for name, entry in _TOOLS.items()
+        for tool in _TOOLS.values()
     ]
+
+
+# ── dispatcher with Pydantic validation ────────────────────────────
 
 
 def build_tool_dispatcher(
     context: dict[str, Any] | None = None,
     used_tools: list[ToolCall] | None = None,
 ) -> Callable[[str, dict[str, Any]], Awaitable[str]]:
-    """Return an async tool dispatcher that forwards context to every handler.
-
-    If *used_tools* is provided, a ToolCall record is appended to it on each call.
-    """
 
     async def dispatch(tool_name: str, arguments: dict[str, Any]) -> str:
-        entry = _TOOLS.get(tool_name)
-        if entry is None:
+        tool = _TOOLS.get(tool_name)
+        if tool is None:
             return f"Unknown tool: {tool_name}"
-        output = str(await entry["handler"](arguments, context))
+        # safe_execute should return Awaitable[str], but if not, cast to str
+        output: str = await tool.safe_execute(arguments, context)
         if used_tools is not None:
             used_tools.append(ToolCall(name=tool_name, input=arguments, output=output))
         return output
 
     return dispatch
-
-
-def get_openai_tools(tool_names: list[str]) -> list[dict[str, Any]]:
-    """Return tool definitions in OpenAI/Groq function-calling format."""
-    result: list[dict[str, Any]] = []
-    for name in tool_names:
-        entry = _TOOLS.get(name)
-        if entry is None:
-            continue
-        result.append(
-            {
-                "type": "function",
-                "function": {
-                    "name": name,
-                    "description": entry["description"],
-                    "parameters": entry["parameters"],
-                },
-            }
-        )
-    return result
-
-
-def get_anthropic_tools(tool_names: list[str]) -> list[dict[str, Any]]:
-    """Return tool definitions in Anthropic tool-use format."""
-    result: list[dict[str, Any]] = []
-    for name in tool_names:
-        entry = _TOOLS.get(name)
-        if entry is None:
-            continue
-        result.append(
-            {
-                "name": name,
-                "description": entry["description"],
-                "input_schema": entry["parameters"],
-            }
-        )
-    return result

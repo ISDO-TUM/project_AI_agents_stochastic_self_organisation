@@ -1,81 +1,74 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, cast
+
+from pydantic import BaseModel, Field
+
+from ..base import Tool
 
 if TYPE_CHECKING:
     import aiosqlite
 
-TOOL_NAME = "files"
 
-TOOL_DESCRIPTION = (
-    "Interact with knowledge files attached to this agent. "
-    "Use action='list' to see all available files, "
-    "or action='read' with a file_name to get a file's content."
-)
-
-
-async def load_context(raw_context: dict[str, Any]) -> dict[str, Any]:
-    """Load file names and content for this agent into the tool context."""
-    db: aiosqlite.Connection = raw_context["db"]
-    agent_id: str = raw_context["agent_id"]
-    async with db.execute(
-        """
-        SELECT kf.name, kf.content
-          FROM knowledge_files kf
-          JOIN agent_files af ON af.file_id = kf.id
-         WHERE af.agent_id = ?
-        """,
-        (agent_id,),
-    ) as cur:
-        rows = await cur.fetchall()
-    files = {r["name"]: r["content"] for r in rows}
-    return {"files": files, "file_names": list(files.keys())}
-
-
-def context_hint(context: dict[str, Any]) -> str | None:
-    """Return a system-prompt snippet listing the attached files, or None if there are none."""
-    file_names: list[str] = context.get("file_names", [])
-    if not file_names:
-        return None
-    names = "\n".join(f"- {n}" for n in file_names)
-    return (
-        f"The following knowledge files are attached to you:\n{names}\n"
-        "Use the `files` tool with action='read' to retrieve their contents."
+class FilesInput(BaseModel):
+    action: Literal["list", "read"] = Field(
+        description=(
+            "'list' returns the names of all knowledge files attached to this agent. "
+            "'read' returns the full text content of a specific file."
+        )
+    )
+    file_name: str | None = Field(
+        default=None,
+        description="Required when action='read'. The exact file name to read, e.g. 'report.txt'.",
     )
 
 
-TOOL_PARAMETERS = {
-    "type": "object",
-    "properties": {
-        "action": {
-            "type": "string",
-            "enum": ["list", "read"],
-            "description": "'list' returns available file names; 'read' returns file content.",
-        },
-        "file_name": {
-            "type": "string",
-            "description": "Required when action is 'read'. The name of the file to read.",
-        },
-    },
-    "required": ["action"],
-}
+class FilesTool(Tool):
+    name = "files"
+    description = (
+        "Access knowledge files attached to this agent. "
+        "Use action='list' to discover which files are available, "
+        "then action='read' with the exact file_name to retrieve its contents. "
+        "Always list first if you are unsure which files exist."
+    )
+    input_model = FilesInput
 
+    async def execute(
+        self, validated_input: BaseModel, context: dict[str, Any] | None = None
+    ) -> str:
+        inp = cast(FilesInput, validated_input)
+        ctx = context or {}
 
-async def handle(arguments: dict[str, Any], context: dict[str, Any] | None = None) -> str:
-    files: dict[str, str] = (context or {}).get("files") or {}
-    action = arguments.get("action")
+        # Support both pre-loaded files dict (tests) and live DB context (runtime)
+        if "files" in ctx:
+            files: dict[str, str] = ctx["files"]
+        else:
+            files = await self._load_files(ctx)
 
-    if action == "list":
-        if not files:
-            return "No files are available."
-        names = "\n".join(f"- {name}" for name in files)
-        return f"Available files:\n{names}"
+        if inp.action == "list":
+            if not files:
+                return "No knowledge files are attached to this agent."
+            names = "\n".join(f"- {name}" for name in files)
+            return f"Available files:\n{names}"
 
-    if action == "read":
-        file_name = arguments.get("file_name", "")
+        file_name = inp.file_name or ""
         if file_name in files:
             return files[file_name]
         available = ", ".join(files) if files else "none"
-        return f"File '{file_name}' not found. Available files: {available}"
+        return f"File '{file_name}' not found. Available: {available}"
 
-    return f"Unknown action '{action}'. Use 'list' or 'read'."
+    @staticmethod
+    async def _load_files(ctx: dict[str, Any]) -> dict[str, str]:
+        db: aiosqlite.Connection = ctx["db"]
+        agent_id: str = ctx["agent_id"]
+        async with db.execute(
+            """
+            SELECT kf.name, kf.content
+              FROM knowledge_files kf
+              JOIN agent_files af ON af.file_id = kf.id
+             WHERE af.agent_id = ?
+            """,
+            (agent_id,),
+        ) as cur:
+            rows = await cur.fetchall()
+        return {r["name"]: r["content"] for r in rows}

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from api.schemas import ToolCall
-from api.tools.registry import build_tool_dispatcher, get_anthropic_tools, get_openai_tools
+from api.tools.registry import build_tool_dispatcher, get_tools_for_provider
 
 from .anthropic_provider import call_anthropic
 from .groq_provider import call_groq
@@ -26,9 +26,9 @@ async def call_agent(
     """
     used_tools: list[ToolCall] = []
     dispatch = build_tool_dispatcher(tool_context or {}, used_tools) if tool_names else None
+    tools = get_tools_for_provider(provider, tool_names) if tool_names else None
 
     if provider == "openai":
-        tools = get_openai_tools(tool_names) if tool_names else None
         response = await call_openai(
             prompt,
             model=model,
@@ -37,7 +37,6 @@ async def call_agent(
             tool_handler=dispatch,
         )
     elif provider == "groq":
-        tools = get_openai_tools(tool_names) if tool_names else None
         response = await call_groq(
             prompt,
             model=model,
@@ -46,7 +45,6 @@ async def call_agent(
             tool_handler=dispatch,
         )
     elif provider == "anthropic":
-        tools = get_anthropic_tools(tool_names) if tool_names else None
         response = await call_anthropic(
             prompt,
             model=model,

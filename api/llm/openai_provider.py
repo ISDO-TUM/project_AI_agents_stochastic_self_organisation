@@ -1,8 +1,9 @@
-import json
 import os
 from typing import Any
 
 from openai import AsyncOpenAI
+
+from .normalizer import extract_openai_tool_calls
 
 _client: AsyncOpenAI | None = None
 
@@ -35,19 +36,18 @@ async def call_openai(
         response = await _get_client().chat.completions.create(**kwargs)
         message = response.choices[0].message
 
-        if not message.tool_calls:
+        tool_calls = extract_openai_tool_calls(message)
+        if not tool_calls:
             return message.content or ""
 
         messages.append(message.model_dump())
 
-        for tool_call in message.tool_calls:
-            fn_name = tool_call.function.name
-            fn_args = json.loads(tool_call.function.arguments)
-            result = await tool_handler(fn_name, fn_args) if tool_handler else ""
+        for tc in tool_calls:
+            result = await tool_handler(tc.name, tc.arguments) if tool_handler else ""
             messages.append(
                 {
                     "role": "tool",
-                    "tool_call_id": tool_call.id,
+                    "tool_call_id": tc.id,
                     "content": result,
                 }
             )

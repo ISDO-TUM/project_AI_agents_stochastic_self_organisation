@@ -1,8 +1,9 @@
-import json
 import os
 from typing import Any
 
 from anthropic import AsyncAnthropic
+
+from .normalizer import extract_anthropic_tool_calls
 
 _client: AsyncAnthropic | None = None
 
@@ -37,9 +38,9 @@ async def call_anthropic(
     for _ in range(max_iterations):
         response = await _get_client().messages.create(**kwargs)
 
-        tool_use_blocks = [b for b in response.content if b.type == "tool_use"]
+        tool_calls = extract_anthropic_tool_calls(response)
 
-        if not tool_use_blocks:
+        if not tool_calls:
             text_blocks = [b.text for b in response.content if hasattr(b, "text")]
             return "\n".join(text_blocks)
 
@@ -50,14 +51,12 @@ async def call_anthropic(
         messages.append({"role": "assistant", "content": assistant_content})
 
         tool_results = []
-        for block in tool_use_blocks:
-            fn_name = block.name
-            fn_args = block.input if isinstance(block.input, dict) else json.loads(block.input)
-            result = await tool_handler(fn_name, fn_args) if tool_handler else ""
+        for tc in tool_calls:
+            result = await tool_handler(tc.name, tc.arguments) if tool_handler else ""
             tool_results.append(
                 {
                     "type": "tool_result",
-                    "tool_use_id": block.id,
+                    "tool_use_id": tc.id,
                     "content": result,
                 }
             )

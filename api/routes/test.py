@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from fastapi import APIRouter, HTTPException, status
 
@@ -19,7 +18,7 @@ from api.schemas import (
     PromptResponse,
     ToolInfo,
 )
-from api.tools.builtin.files import handle as files_handle
+from api.tools.builtin.files import FilesInput, FilesTool
 from api.tools.registry import list_tools
 
 logger = logging.getLogger(__name__)
@@ -86,8 +85,7 @@ async def get_tools() -> list[ToolInfo]:
     description="Invoke the files handler directly with a mock file store.",
 )
 async def test_files_tool(body: FilesToolRequest) -> FilesToolResponse:
-    arguments: dict[str, Any] = {"action": body.action}
-    if body.file_name:
-        arguments["file_name"] = body.file_name
-    result = await files_handle(arguments, {"files": body.files})
+    tool = FilesTool()
+    validated = FilesInput(action=body.action, file_name=body.file_name)
+    result = await tool.execute(validated, {"files": body.files})
     return FilesToolResponse(result=result)

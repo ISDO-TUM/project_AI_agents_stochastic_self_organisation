@@ -20,11 +20,15 @@ from api.schemas import (
     AgentUpdate,
     KnowledgeFileResponse,
 )
-from api.tools.registry import build_tool_context, build_tools_system_prompt
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agents", tags=["Agents"])
+
+_TOOLS_SYSTEM_PROMPT = (
+    "You have access to tools. "
+    "Use them whenever they would produce a more accurate or complete answer."
+)
 
 DBDep = Annotated[aiosqlite.Connection, Depends(get_db)]
 _PATCHABLE_COLUMNS: frozenset[str] = frozenset(AgentUpdate.model_fields.keys())
@@ -189,14 +193,9 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
     agent = deserialise_agent_row(row)
 
     tool_names: list[str] = agent["tools"] or []
-    tool_context = await build_tool_context(tool_names, {"db": db, "agent_id": agent_id})
-
-    tools_hint = build_tools_system_prompt(tool_names, tool_context)
-    base_system_prompt = agent["system_prompt"] or ""
+    base_prompt = agent["system_prompt"] or ""
     system_prompt = (
-        f"{base_system_prompt}\n\n{tools_hint}".strip()
-        if tools_hint
-        else base_system_prompt or None
+        f"{base_prompt}\n\n{_TOOLS_SYSTEM_PROMPT}".strip() if tool_names else base_prompt or None
     )
 
     try:
@@ -206,7 +205,7 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
             model=agent["model"],
             system_prompt=system_prompt,
             tool_names=tool_names or None,
-            tool_context=tool_context,
+            tool_context={"db": db, "agent_id": agent_id},
         )
     except Exception as exc:
         logger.exception("Agent run failed for agent_id=%s", agent_id)
