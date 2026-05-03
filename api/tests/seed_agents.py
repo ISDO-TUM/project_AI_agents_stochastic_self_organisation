@@ -43,11 +43,11 @@ def _request(method: str, path: str, body: dict[str, Any] | None = None) -> dict
 
 AGENTS: list[dict[str, Any]] = [
     {
-        "name": "OpenAI Assistant",
-        "description": "General-purpose assistant powered by OpenAI.",
+        "name": "OpenAI Doctor",
+        "description": "Medical expert powered by OpenAI.",
         "system_prompt": (
-            "You are a helpful assistant. When asked about files, use the "
-            "file_access tool to read the relevant knowledge file before answering."
+            "You are a knowledgeable and empathetic doctor. "
+            "Provide clear, accurate, and helpful medical advice."
         ),
         "provider": "openai",
         "model": "gpt-4o-mini",
@@ -55,11 +55,11 @@ AGENTS: list[dict[str, Any]] = [
         "connections": [],
     },
     {
-        "name": "Anthropic Assistant",
-        "description": "General-purpose assistant powered by Anthropic Claude.",
+        "name": "Anthropic Mathematician",
+        "description": "Expert mathematician powered by Anthropic Claude.",
         "system_prompt": (
-            "You are a knowledgeable assistant. Use the file_access tool whenever "
-            "you need to consult a knowledge file to give an accurate answer."
+            "You are a brilliant mathematician. "
+            "Solve problems with detailed reasoning and clear explanations."
         ),
         "provider": "anthropic",
         "model": "claude-haiku-4-5-20251001",
@@ -67,11 +67,13 @@ AGENTS: list[dict[str, Any]] = [
         "connections": [],
     },
     {
-        "name": "Groq Assistant",
-        "description": "Fast assistant powered by Groq.",
+        "name": "Groq Programmer",
+        "description": "Skilled programmer powered by Groq.",
         "system_prompt": (
-            "You are a fast and concise assistant. Use the file_access tool to "
-            "retrieve file contents when questions relate to stored knowledge."
+            "You are an expert programmer. "
+            "Write clean, efficient code and explain your solutions clearly. "
+            "Use the file_access tool to retrieve file contents when questions "
+            "relate to stored knowledge."
         ),
         "provider": "groq",
         "model": "llama-3.1-8b-instant",

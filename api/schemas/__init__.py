@@ -52,13 +52,21 @@ class AgentRunRequest(BaseModel):
     prompt: str = Field(description="The user message to send to the agent.")
 
 
+class ToolCall(BaseModel):
+    """Record of a single tool invocation during an agent run."""
+
+    name: str
+    input: dict[str, Any]
+    output: str
+
+
 class AgentRunResponse(BaseModel):
     """Response from an agent run."""
 
     agent_id: str
     response: str
-    tools_used: list[str] = Field(
-        default_factory=list, description="Tool names called during this run, in order."
+    tools_used: list[ToolCall] = Field(
+        default_factory=list, description="Tool calls made during this run, in order."
     )
 
 

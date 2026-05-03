@@ -5,7 +5,8 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any
 
-from api.tools.registry import get_anthropic_tools, get_openai_tools, make_dispatch
+from api.schemas import ToolCall
+from api.tools.registry import build_tool_dispatcher, get_anthropic_tools, get_openai_tools
 
 from .anthropic_provider import call_anthropic
 from .groq_provider import call_groq
@@ -19,7 +20,7 @@ async def call_agent(
     system_prompt: str | None = None,
     tool_names: list[str] | None = None,
     files_loader: Callable[[], Awaitable[dict[str, str]]] | None = None,
-) -> tuple[str, list[str]]:
+) -> tuple[str, list[ToolCall]]:
     """Call an LLM provider with optional system prompt, tools, and file loader.
 
     *files_loader* is an async callable that returns a {name: content} dict.
@@ -30,8 +31,8 @@ async def call_agent(
     context: dict[str, Any] = {}
     if files_loader is not None:
         context["files_loader"] = files_loader
-    used_tools: list[str] = []
-    dispatch = make_dispatch(context, used_tools) if tool_names else None
+    used_tools: list[ToolCall] = []
+    dispatch = build_tool_dispatcher(context, used_tools) if tool_names else None
 
     if provider == "openai":
         tools = get_openai_tools(tool_names) if tool_names else None

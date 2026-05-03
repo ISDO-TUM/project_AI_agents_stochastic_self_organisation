@@ -9,6 +9,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
+from api.schemas import ToolCall
 from api.tools.builtin.files import (
     TOOL_DESCRIPTION,
     TOOL_NAME,
@@ -47,22 +48,23 @@ def get_handler(tool_name: str) -> Callable[[dict[str, Any]], str]:
     return cast(Callable[[dict[str, Any]], str], entry["handler"])
 
 
-def make_dispatch(
+def build_tool_dispatcher(
     context: dict[str, Any] | None = None,
-    used_tools: list[str] | None = None,
+    used_tools: list[ToolCall] | None = None,
 ) -> Callable[[str, dict[str, Any]], Awaitable[str]]:
     """Return an async tool dispatcher that forwards context to every handler.
 
-    If *used_tools* is provided, each tool name is appended to it on call.
+    If *used_tools* is provided, a ToolCall record is appended to it on each call.
     """
 
     async def dispatch(tool_name: str, arguments: dict[str, Any]) -> str:
-        if used_tools is not None:
-            used_tools.append(tool_name)
         entry = _TOOLS.get(tool_name)
         if entry is None:
             return f"Unknown tool: {tool_name}"
-        return str(await entry["handler"](arguments, context))
+        output = str(await entry["handler"](arguments, context))
+        if used_tools is not None:
+            used_tools.append(ToolCall(name=tool_name, input=arguments, output=output))
+        return output
 
     return dispatch
 
