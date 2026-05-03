@@ -72,7 +72,7 @@ AGENTS: list[dict[str, Any]] = [
         "system_prompt": (
             "You are an expert programmer. "
             "Write clean, efficient code and explain your solutions clearly. "
-            "Use the file_access tool to retrieve file contents when questions "
+            "Use the files tool to retrieve file contents when questions "
             "relate to stored knowledge."
         ),
         "provider": "groq",
