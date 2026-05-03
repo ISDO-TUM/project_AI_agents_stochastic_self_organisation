@@ -57,7 +57,7 @@ Variables prefixed with `NEXT_PUBLIC_` are injected into the browser bundle at b
 
 ```bash
 pnpm dev                                          # start both services
-pnpm clean                                        # wipe all artefacts and deps
+pnpm clean                                        # wipe all artifacts and deps
 
 cd api && uv run pre-commit run --all-files       # run all quality hooks manually
 ```
