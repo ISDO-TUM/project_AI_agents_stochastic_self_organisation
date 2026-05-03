@@ -38,7 +38,13 @@ async def call_groq(
         if not message.tool_calls:
             return message.content or ""
 
-        messages.append(message.model_dump())
+        messages.append(
+            {
+                "role": "assistant",
+                "content": message.content,
+                "tool_calls": [tc.model_dump() for tc in message.tool_calls],
+            }
+        )
 
         for tool_call in message.tool_calls:
             fn_name = tool_call.function.name
