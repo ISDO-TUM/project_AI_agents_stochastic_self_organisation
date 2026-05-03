@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from api.tools.registry import get_anthropic_tools, get_openai_tools, make_dispatch
@@ -17,15 +18,24 @@ async def call_agent(
     model: str,
     system_prompt: str | None = None,
     tool_names: list[str] | None = None,
-    files: dict[str, str] | None = None,
-) -> str:
-    """Call an LLM provider with optional system prompt, tools, and file context."""
-    context: dict[str, Any] = {"files": files} if files else {}
-    dispatch = make_dispatch(context) if tool_names else None
+    files_loader: Callable[[], Awaitable[dict[str, str]]] | None = None,
+) -> tuple[str, list[str]]:
+    """Call an LLM provider with optional system prompt, tools, and file loader.
+
+    *files_loader* is an async callable that returns a {name: content} dict.
+    It is only awaited if the LLM actually invokes a tool that needs files.
+
+    Returns a tuple of (response_text, tools_used).
+    """
+    context: dict[str, Any] = {}
+    if files_loader is not None:
+        context["files_loader"] = files_loader
+    used_tools: list[str] = []
+    dispatch = make_dispatch(context, used_tools) if tool_names else None
 
     if provider == "openai":
         tools = get_openai_tools(tool_names) if tool_names else None
-        return await call_openai(
+        response = await call_openai(
             prompt,
             model=model,
             system_prompt=system_prompt,
@@ -34,7 +44,7 @@ async def call_agent(
         )
     elif provider == "groq":
         tools = get_openai_tools(tool_names) if tool_names else None
-        return await call_groq(
+        response = await call_groq(
             prompt,
             model=model,
             system_prompt=system_prompt,
@@ -43,7 +53,7 @@ async def call_agent(
         )
     elif provider == "anthropic":
         tools = get_anthropic_tools(tool_names) if tool_names else None
-        return await call_anthropic(
+        response = await call_anthropic(
             prompt,
             model=model,
             system_prompt=system_prompt,
@@ -52,3 +62,5 @@ async def call_agent(
         )
     else:
         raise ValueError(f"Unsupported provider: {provider}")
+
+    return response, used_tools

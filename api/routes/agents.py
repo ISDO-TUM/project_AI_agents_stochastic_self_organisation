@@ -187,35 +187,36 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
 
     agent = deserialise_agent_row(row)
 
-    async with db.execute(
-        """
-        SELECT kf.name, kf.content
-          FROM knowledge_files kf
-          JOIN agent_files af ON af.file_id = kf.id
-         WHERE af.agent_id = ?
-        """,
-        (agent_id,),
-    ) as cur:
-        file_rows = await cur.fetchall()
-    files = {row["name"]: row["content"] for row in file_rows} or None
+    async def load_files() -> dict[str, str]:
+        async with db.execute(
+            """
+            SELECT kf.name, kf.content
+              FROM knowledge_files kf
+              JOIN agent_files af ON af.file_id = kf.id
+             WHERE af.agent_id = ?
+            """,
+            (agent_id,),
+        ) as cur:
+            file_rows = await cur.fetchall()
+        return {row["name"]: row["content"] for row in file_rows}
 
     try:
-        response = await call_agent(
+        response, tools_used = await call_agent(
             body.prompt,
             provider=agent["provider"],
             model=agent["model"],
             system_prompt=agent["system_prompt"] or None,
             tool_names=agent["tools"] or None,
-            files=files,
+            files_loader=load_files,
         )
-    except Exception:
+    except Exception as exc:
         logger.exception("Agent run failed for agent_id=%s", agent_id)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail="LLM provider unavailable",
+            detail=str(exc),
         )
 
-    return AgentRunResponse(agent_id=agent_id, response=response)
+    return AgentRunResponse(agent_id=agent_id, response=response, tools_used=tools_used)
 
 
 @router.get(

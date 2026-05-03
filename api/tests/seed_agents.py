@@ -51,7 +51,7 @@ AGENTS: list[dict[str, Any]] = [
         ),
         "provider": "openai",
         "model": "gpt-4o-mini",
-        "tools": ["file_access"],
+        "tools": ["files"],
         "connections": [],
     },
     {
@@ -63,7 +63,7 @@ AGENTS: list[dict[str, Any]] = [
         ),
         "provider": "anthropic",
         "model": "claude-haiku-4-5-20251001",
-        "tools": ["file_access"],
+        "tools": ["files"],
         "connections": [],
     },
     {
@@ -74,8 +74,8 @@ AGENTS: list[dict[str, Any]] = [
             "retrieve file contents when questions relate to stored knowledge."
         ),
         "provider": "groq",
-        "model": "llama-3.3-70b-versatile",
-        "tools": ["file_access"],
+        "model": "llama-3.1-8b-instant",
+        "tools": ["files"],
         "connections": [],
     },
 ]

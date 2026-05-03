@@ -43,7 +43,7 @@ async def call_openai(
         for tool_call in message.tool_calls:
             fn_name = tool_call.function.name
             fn_args = json.loads(tool_call.function.arguments)
-            result = tool_handler(fn_name, fn_args) if tool_handler else ""
+            result = await tool_handler(fn_name, fn_args) if tool_handler else ""
             messages.append(
                 {
                     "role": "tool",

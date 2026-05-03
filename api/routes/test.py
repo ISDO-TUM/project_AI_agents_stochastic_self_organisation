@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 from api.llm.anthropic_provider import call_anthropic
 from api.llm.groq_provider import call_groq
 from api.llm.openai_provider import call_openai
-from api.tools.builtin.file_access import handle as file_access_handle
+from api.tools.builtin.files import handle as files_handle
 from api.tools.registry import list_tools
 
 logger = logging.getLogger(__name__)
@@ -100,24 +100,25 @@ async def get_tools() -> list[ToolInfo]:
     return [ToolInfo(**t) for t in list_tools()]
 
 
-class FileAccessRequest(BaseModel):
-    file_name: str = Field(..., description="Name of the file to read.")
+class FilesToolRequest(BaseModel):
+    action: str = Field(..., description="'list' or 'read'.")
+    file_name: str | None = Field(None, description="Required when action is 'read'.")
     files: dict[str, str] = Field(..., description="Mock file store: name -> content.")
 
 
-class FileAccessResponse(BaseModel):
+class FilesToolResponse(BaseModel):
     result: str
 
 
 @router.post(
-    "/tools/file-access",
-    response_model=FileAccessResponse,
-    summary="Test file_access tool",
-    description="Invoke the file_access handler directly with a mock file store.",
+    "/tools/files",
+    response_model=FilesToolResponse,
+    summary="Test files tool",
+    description="Invoke the files handler directly with a mock file store.",
 )
-async def test_file_access(body: FileAccessRequest) -> FileAccessResponse:
-    result = file_access_handle(
-        {"file_name": body.file_name},
-        {"files": body.files},
-    )
-    return FileAccessResponse(result=result)
+async def test_files_tool(body: FilesToolRequest) -> FilesToolResponse:
+    arguments: dict[str, Any] = {"action": body.action}
+    if body.file_name:
+        arguments["file_name"] = body.file_name
+    result = await files_handle(arguments, {"files": body.files})
+    return FilesToolResponse(result=result)

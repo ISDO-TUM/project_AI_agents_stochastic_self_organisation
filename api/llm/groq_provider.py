@@ -16,7 +16,7 @@ def _get_client() -> AsyncGroq:
 
 async def call_groq(
     prompt: str,
-    model: str = "llama-3.3-70b-versatile",
+    model: str = "llama-3.1-8b-instant",
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_handler: Any | None = None,
@@ -43,7 +43,7 @@ async def call_groq(
         for tool_call in message.tool_calls:
             fn_name = tool_call.function.name
             fn_args = json.loads(tool_call.function.arguments)
-            result = tool_handler(fn_name, fn_args) if tool_handler else ""
+            result = await tool_handler(fn_name, fn_args) if tool_handler else ""
             messages.append(
                 {
                     "role": "tool",

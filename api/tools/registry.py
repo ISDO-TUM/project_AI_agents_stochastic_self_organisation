@@ -6,23 +6,23 @@ exposes helpers that return the correct shape for OpenAI/Groq and Anthropic.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
-from api.tools.builtin.file_access import (
+from api.tools.builtin.files import (
     TOOL_DESCRIPTION,
     TOOL_NAME,
     TOOL_PARAMETERS,
 )
-from api.tools.builtin.file_access import (
-    handle as file_access_handle,
+from api.tools.builtin.files import (
+    handle as files_handle,
 )
 
 _TOOLS: dict[str, dict[str, Any]] = {
     TOOL_NAME: {
         "description": TOOL_DESCRIPTION,
         "parameters": TOOL_PARAMETERS,
-        "handler": file_access_handle,
+        "handler": files_handle,
     },
 }
 
@@ -47,14 +47,22 @@ def get_handler(tool_name: str) -> Callable[[dict[str, Any]], str]:
     return cast(Callable[[dict[str, Any]], str], entry["handler"])
 
 
-def make_dispatch(context: dict[str, Any] | None = None) -> Callable[[str, dict[str, Any]], str]:
-    """Return a tool dispatcher that forwards context to every handler."""
+def make_dispatch(
+    context: dict[str, Any] | None = None,
+    used_tools: list[str] | None = None,
+) -> Callable[[str, dict[str, Any]], Awaitable[str]]:
+    """Return an async tool dispatcher that forwards context to every handler.
 
-    def dispatch(tool_name: str, arguments: dict[str, Any]) -> str:
+    If *used_tools* is provided, each tool name is appended to it on call.
+    """
+
+    async def dispatch(tool_name: str, arguments: dict[str, Any]) -> str:
+        if used_tools is not None:
+            used_tools.append(tool_name)
         entry = _TOOLS.get(tool_name)
         if entry is None:
             return f"Unknown tool: {tool_name}"
-        return str(entry["handler"](arguments, context))
+        return str(await entry["handler"](arguments, context))
 
     return dispatch
 

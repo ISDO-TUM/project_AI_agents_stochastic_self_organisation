@@ -53,7 +53,7 @@ async def call_anthropic(
         for block in tool_use_blocks:
             fn_name = block.name
             fn_args = block.input if isinstance(block.input, dict) else json.loads(block.input)
-            result = tool_handler(fn_name, fn_args) if tool_handler else ""
+            result = await tool_handler(fn_name, fn_args) if tool_handler else ""
             tool_results.append(
                 {
                     "type": "tool_result",

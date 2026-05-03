@@ -57,6 +57,9 @@ class AgentRunResponse(BaseModel):
 
     agent_id: str
     response: str
+    tools_used: list[str] = Field(
+        default_factory=list, description="Tool names called during this run, in order."
+    )
 
 
 class KnowledgeFileBase(BaseModel):
