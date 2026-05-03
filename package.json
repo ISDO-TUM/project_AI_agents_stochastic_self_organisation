@@ -2,11 +2,16 @@
   "name": "self-organising-agentic-system",
   "private": true,
   "scripts": {
-    "dev": "concurrently -c \"green,blue\" -n \"UI,API\" \"pnpm --filter app run dev\" \"cd api && uv run uvicorn index:app --reload --port 8000\"",
+    "dev": "concurrently -c \"green,blue\" -n \"UI,API\" \"pnpm --filter app run dev\" \"uv run --project api uvicorn api.index:app --reload --port 8000\"",
     "clean": "rm -rf node_modules app/node_modules api/.venv api/__pycache__"
   },
   "devDependencies": {
     "concurrently": "^9.2.1"
+  },
+  "pnpm": {
+    "overrides": {
+      "postcss": "^8.5.10"
+    }
   },
   "commitlint": {
     "extends": [

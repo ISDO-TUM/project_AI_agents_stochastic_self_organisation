@@ -14,6 +14,12 @@ fi
 if ! command -v pnpm &> /dev/null; then
     curl -fsSL https://get.pnpm.io/install.sh | env PNPM_VERSION=9.0.0 sh -
     export PATH="$HOME/.local/share/pnpm:$PATH"
+    echo ""
+    echo "⚠️  pnpm was just installed. Its PATH entry is written to your shell config"
+    echo "   (~/.bashrc or ~/.zshrc) but won't be active in your current session."
+    echo "   If the script fails below, run:  source ~/.bashrc  (or ~/.zshrc)"
+    echo "   then re-run ./scripts/setup.sh"
+    echo ""
 fi
 
 if [ ! -f .env ]; then

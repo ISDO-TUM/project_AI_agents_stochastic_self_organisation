@@ -10,6 +10,12 @@ api/__pycache__/
 **/*.pyc
 **/*.pyo
 
+# Coverage
+.coverage
+.coverage.*
+htmlcov/
+coverage.xml
+
 # Docker
 .docker/
 
