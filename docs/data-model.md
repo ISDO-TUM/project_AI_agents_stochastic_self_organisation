@@ -16,50 +16,7 @@ Agents are a separate, reusable concept that are referenced by connections but e
 
 ## Entity Relationship Diagram
 
-```mermaid
-erDiagram
-    agents {
-        TEXT id PK
-        TEXT name
-        TEXT description
-        TEXT system_prompt
-        TEXT provider
-        TEXT model
-        TEXT tools
-    }
-
-    trials {
-        TEXT id PK
-        TEXT user_prompt
-        TEXT description
-    }
-
-    rounds {
-        INTEGER id PK
-        TEXT trial_id FK
-    }
-
-    connections {
-        INTEGER id PK
-        INTEGER round_id FK
-        TEXT from_agent_id FK
-        TEXT to_agent_id FK
-    }
-
-    messages {
-        INTEGER id PK
-        INTEGER connection_id FK
-        TEXT message
-    }
-
-    trials ||--o{ rounds : "has"
-    rounds ||--o{ connections : "has"
-    connections ||--o{ messages : "carries"
-    agents ||--o{ connections : "from_agent_id"
-    agents ||--o{ connections : "to_agent_id"
-```
-
----
+![Mermaid Diagram](https://mermaid.ink/svg/pako:eNqVU11PwjAU_SvLfR6EfTHZq6IxRGOUB2OWkGa9QBPaLm1nROC_240xx5gJ7q3nnJ1ze7a7g0xShARQ3TGyUoSnwrEPWaEw2tkdT-Uzn77PHUadl1kHE4RjB6KoM8Vyw6ToMHqrDfJFriTPTYez4CejqDowtwNuOpiRcqOP2CGtM4xiZHPdyIVG1T_DxeSNvZKFoGf2j8_z6cP0tTehGmZhmftZxyeTQmBWBlxjdoKr9LZfk7S011hUn6uXNvKSbGbhqLVl_zPI7_i9cbVj_6fZ7wcDuTs1mTgprIlO4azfWtNuqSNsU7W6uUcpzYhSDBt5_Sf_4XvW3nWvtBpNAVzgqDhh1O5Q1aIVrNFuBJRaiktSbExpfLBSUhj5thUZJEYV6IK982oNydKWY09FTonBeg0bNCfiQ0p-emWlyqiaUyjsvtza5gwk3mTkAlJmpHo67nS12pUDJDv4gsQP_WF8E_njYDT2Ij8IQxe2kETRMAx8Lw7HN_7Yi73JwYXvKtMbepPIQqM48CejIIgPP_C7QnU)
 
 ## Table Descriptions
 
