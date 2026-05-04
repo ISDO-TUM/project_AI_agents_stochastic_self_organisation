@@ -57,19 +57,18 @@ def list_tools() -> list[dict[str, Any]]:
 # ── dispatcher with Pydantic validation ────────────────────────────
 
 
-def build_tool_dispatcher(
+def create_tool_handler(
     context: dict[str, Any] | None = None,
     used_tools: list[ToolCall] | None = None,
 ) -> Callable[[str, dict[str, Any]], Awaitable[str]]:
 
-    async def dispatch(tool_name: str, arguments: dict[str, Any]) -> str:
+    async def tool_handler(tool_name: str, arguments: dict[str, Any]) -> str:
         tool = _TOOLS.get(tool_name)
         if tool is None:
             return f"Unknown tool: {tool_name}"
-        # safe_execute should return Awaitable[str], but if not, cast to str
         output: str = await tool.safe_execute(arguments, context)
         if used_tools is not None:
             used_tools.append(ToolCall(name=tool_name, input=arguments, output=output))
         return output
 
-    return dispatch
+    return tool_handler

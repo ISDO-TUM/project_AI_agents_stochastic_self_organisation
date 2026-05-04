@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Any
 
 from api.schemas import ToolCall
-from api.tools.registry import build_tool_dispatcher, get_tools_for_provider
+from api.tools.registry import create_tool_handler, get_tools_for_provider
 
 from .anthropic_provider import call_anthropic
 from .groq_provider import call_groq
@@ -25,7 +25,7 @@ async def call_agent(
     Returns a tuple of (response_text, tools_used).
     """
     used_tools: list[ToolCall] = []
-    dispatch = build_tool_dispatcher(tool_context or {}, used_tools) if tool_names else None
+    tool_handler = create_tool_handler(tool_context or {}, used_tools) if tool_names else None
     tools = get_tools_for_provider(provider, tool_names) if tool_names else None
 
     if provider == "openai":
@@ -34,7 +34,7 @@ async def call_agent(
             model=model,
             system_prompt=system_prompt,
             tools=tools,
-            tool_handler=dispatch,
+            tool_handler=tool_handler,
         )
     elif provider == "groq":
         response = await call_groq(
@@ -42,7 +42,7 @@ async def call_agent(
             model=model,
             system_prompt=system_prompt,
             tools=tools,
-            tool_handler=dispatch,
+            tool_handler=tool_handler,
         )
     elif provider == "anthropic":
         response = await call_anthropic(
@@ -50,7 +50,7 @@ async def call_agent(
             model=model,
             system_prompt=system_prompt,
             tools=tools,
-            tool_handler=dispatch,
+            tool_handler=tool_handler,
         )
     else:
         raise ValueError(f"Unsupported provider: {provider}")
