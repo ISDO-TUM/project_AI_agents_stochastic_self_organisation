@@ -26,12 +26,21 @@ _PATCHABLE_COLUMNS: frozenset[str] = frozenset(AgentUpdate.model_fields.keys())
     description="Persist a new agent and return it with its generated UUID.",
 )
 async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
+    """Create a new agent and persist it to the database.
+
+    Args:
+        body: Agent creation payload.
+        db: Shared database connection injected by FastAPI.
+
+    Returns:
+        The newly created agent including its generated UUID.
+    """
     agent_id = str(uuid.uuid4())
     await db.execute(
         """
         INSERT INTO agents
-            (id, name, description, system_prompt, provider, model, tools, connections)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (id, name, description, system_prompt, provider, model, tools)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
         """,
         (
             agent_id,
@@ -41,7 +50,6 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
             body.provider,
             body.model,
             json.dumps(body.tools),
-            json.dumps(body.connections),
         ),
     )
     await db.commit()
@@ -58,6 +66,14 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
     summary="List all agents",
 )
 async def list_agents(db: DBDep) -> list[AgentResponse]:
+    """Return all agents in the database.
+
+    Args:
+        db: Shared database connection injected by FastAPI.
+
+    Returns:
+        A list of all agents, possibly empty.
+    """
     async with db.execute("SELECT * FROM agents") as cur:
         rows = await cur.fetchall()
     return [AgentResponse(**deserialise_agent_row(row)) for row in rows]
@@ -69,6 +85,18 @@ async def list_agents(db: DBDep) -> list[AgentResponse]:
     summary="Get an agent by ID",
 )
 async def get_agent(agent_id: str, db: DBDep) -> AgentResponse:
+    """Fetch a single agent by its UUID.
+
+    Args:
+        agent_id: UUID of the agent.
+        db: Shared database connection injected by FastAPI.
+
+    Returns:
+        The requested agent.
+
+    Raises:
+        HTTPException: 404 if no agent with the given ID exists.
+    """
     async with db.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)) as cur:
         row = await cur.fetchone()
     if row is None:
@@ -83,6 +111,19 @@ async def get_agent(agent_id: str, db: DBDep) -> AgentResponse:
     description="Fully replace all fields of an existing agent.",
 )
 async def replace_agent(agent_id: str, body: AgentCreate, db: DBDep) -> AgentResponse:
+    """Fully replace all fields of an existing agent.
+
+    Args:
+        agent_id: UUID of the agent to replace.
+        body: New agent payload; all fields are required.
+        db: Shared database connection injected by FastAPI.
+
+    Returns:
+        The updated agent.
+
+    Raises:
+        HTTPException: 404 if no agent with the given ID exists.
+    """
     async with db.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)) as cur:
         if await cur.fetchone() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
@@ -90,7 +131,7 @@ async def replace_agent(agent_id: str, body: AgentCreate, db: DBDep) -> AgentRes
         """
         UPDATE agents
            SET name = ?, description = ?, system_prompt = ?,
-               provider = ?, model = ?, tools = ?, connections = ?
+               provider = ?, model = ?, tools = ?
          WHERE id = ?
         """,
         (
@@ -100,7 +141,6 @@ async def replace_agent(agent_id: str, body: AgentCreate, db: DBDep) -> AgentRes
             body.provider,
             body.model,
             json.dumps(body.tools),
-            json.dumps(body.connections),
             agent_id,
         ),
     )
@@ -119,6 +159,19 @@ async def replace_agent(agent_id: str, body: AgentCreate, db: DBDep) -> AgentRes
     description="Update only the supplied fields; all other fields remain unchanged.",
 )
 async def update_agent(agent_id: str, body: AgentUpdate, db: DBDep) -> AgentResponse:
+    """Partially update an agent; only supplied fields are written.
+
+    Args:
+        agent_id: UUID of the agent to update.
+        body: Partial update payload; omitted fields are left unchanged.
+        db: Shared database connection injected by FastAPI.
+
+    Returns:
+        The updated agent.
+
+    Raises:
+        HTTPException: 404 if no agent with the given ID exists.
+    """
     async with db.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)) as cur:
         row = await cur.fetchone()
     if row is None:
@@ -151,6 +204,15 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: DBDep) -> AgentResp
     summary="Delete an agent",
 )
 async def delete_agent(agent_id: str, db: DBDep) -> None:
+    """Delete an agent from the database.
+
+    Args:
+        agent_id: UUID of the agent to delete.
+        db: Shared database connection injected by FastAPI.
+
+    Raises:
+        HTTPException: 404 if no agent with the given ID exists.
+    """
     async with db.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)) as cur:
         if await cur.fetchone() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
