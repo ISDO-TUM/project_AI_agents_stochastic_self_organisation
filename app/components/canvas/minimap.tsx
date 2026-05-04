@@ -42,9 +42,8 @@ export function Minimap({ agents, sources, edges, dark }: MinimapProps) {
     )} ${mx(to.x - dx * 0.5)} ${my(to.y)} ${mx(to.x)} ${my(to.y)}`;
   }
 
-  function getPos(id: string) {
-    return all.find((n) => n.id === id)?.position ?? null;
-  }
+  const posMap = new Map(all.map((n) => [n.id, n.position]));
+  const getPos = (id: string) => posMap.get(id) ?? null;
 
   return (
     <div

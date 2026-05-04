@@ -1,11 +1,6 @@
 import { Agent, Source } from "./types";
 
-export function uuid(): string {
-  return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    return (c === "x" ? r : (r & 0x3) | 0x8).toString(16);
-  });
-}
+export const uuid = () => crypto.randomUUID();
 
 export function shortId(id: string): string {
   return id ? id.slice(0, 8) : "";

@@ -16,16 +16,14 @@ interface EdgeLayerProps {
   tweaks: Tweaks;
 }
 
-function getNodeCenter(
-  id: string,
+function buildPositionMap(
   agents: Agent[],
   sources: Source[],
-): { x: number; y: number } | null {
-  const agent = agents.find((a) => a.id === id);
-  if (agent) return { x: agent.position.x, y: agent.position.y };
-  const source = sources.find((s) => s.id === id);
-  if (source) return { x: source.position.x, y: source.position.y };
-  return null;
+): Map<string, { x: number; y: number }> {
+  const map = new Map<string, { x: number; y: number }>();
+  for (const a of agents) map.set(a.id, a.position);
+  for (const s of sources) map.set(s.id, s.position);
+  return map;
 }
 
 function bezierPath(
@@ -60,6 +58,7 @@ export function EdgeLayer({
   const accent = tweaks.accentColor;
   const ew = tweaks.edgeWidth;
   const base = dark ? "rgba(255,255,255,0.09)" : "rgba(0,0,0,0.13)";
+  const posMap = buildPositionMap(agents, sources);
 
   return (
     <svg
@@ -111,8 +110,8 @@ export function EdgeLayer({
       </defs>
 
       {edges.map((edge) => {
-        const from = getNodeCenter(edge.from, agents, sources);
-        const to = getNodeCenter(edge.to, agents, sources);
+        const from = posMap.get(edge.from) ?? null;
+        const to = posMap.get(edge.to) ?? null;
         if (!from || !to) return null;
         const path = bezierPath(from, to);
         const mid = midpoint(from, to);
@@ -191,8 +190,8 @@ export function EdgeLayer({
       })}
 
       {animatedParticles.map((p) => {
-        const from = getNodeCenter(p.from, agents, sources);
-        const to = getNodeCenter(p.to, agents, sources);
+        const from = posMap.get(p.from) ?? null;
+        const to = posMap.get(p.to) ?? null;
         if (!from || !to) return null;
         const path = bezierPath(from, to);
         return (

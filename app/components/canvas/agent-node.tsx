@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef, useCallback } from "react";
+import { useCallback } from "react";
 import { Agent, Tweaks } from "@/lib/types";
 import { TOOL_ICON, LIcon } from "@/lib/icons";
-import { BURG, BURG_LT, BURG_GLOW, getTheme } from "@/lib/theme";
+import { BURG_LT, BURG_GLOW, getTheme } from "@/lib/theme";
+import { useDraggable } from "@/hooks/useDraggable";
 
 interface AgentNodeProps {
   agent: Agent;
@@ -28,37 +29,12 @@ export function AgentNode({
   dark,
   tweaks,
 }: AgentNodeProps) {
-  const dragging = useRef(false);
-  const dragOffset = useRef({ x: 0, y: 0 });
-
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.closest(".connect-handle")) return;
-      e.stopPropagation();
-      onSelect(agent.id, e);
-      if (simMode) return;
-      dragging.current = true;
-      dragOffset.current = {
-        x: e.clientX - agent.position.x,
-        y: e.clientY - agent.position.y,
-      };
-      const onMove = (me: MouseEvent) => {
-        if (!dragging.current) return;
-        onDragEnd(agent.id, {
-          x: me.clientX - dragOffset.current.x,
-          y: me.clientY - dragOffset.current.y,
-        });
-      };
-      const onUp = () => {
-        dragging.current = false;
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-      };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
-    },
-    [agent, onSelect, onDragEnd, simMode],
+  const { onMouseDown: handleMouseDown } = useDraggable(
+    agent.id,
+    agent.position,
+    onSelect,
+    onDragEnd,
+    simMode,
   );
 
   const handleConnectMouseDown = useCallback(

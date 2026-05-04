@@ -3,7 +3,7 @@ export const BURG_LT = "#C4374F";
 export const BURG_DIM = "rgba(139,26,47,0.13)";
 export const BURG_GLOW = "rgba(139,26,47,0.3)";
 
-export interface ThemeTokens {
+interface ThemeTokens {
   bg: string;
   pill: string;
   pillBorder: string;

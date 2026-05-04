@@ -1,8 +1,8 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useMemo } from "react";
 import { Agent, Provider } from "@/lib/types";
-import { uuid, PROVIDERS, TOOLS } from "@/lib/utils";
+import { uuid, shortId, PROVIDERS, TOOLS } from "@/lib/utils";
 import { BURG, BURG_LT, BURG_DIM, getTheme } from "@/lib/theme";
 import { LIcon, TOOL_ICON } from "@/lib/icons";
 import {
@@ -66,20 +66,6 @@ export function AgentPanel({
   );
   const [connIn, setConnIn] = useState("");
 
-  useEffect(() => {
-    if (agent) {
-      setForm({
-        name: agent.name,
-        description: agent.description,
-        provider: agent.provider,
-        model: agent.model,
-        systemPrompt: agent.systemPrompt,
-        tools: [...agent.tools],
-        connections: [...agent.connections],
-      });
-    }
-  }, [agent]);
-
   const set = <K extends keyof AgentForm>(k: K, v: AgentForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
   const toggleTool = (tool: string) =>
@@ -103,8 +89,11 @@ export function AgentPanel({
       setConnIn("");
     }
   };
-  const getName = (id: string) =>
-    agents.find((a) => a.id === id)?.name ?? id.slice(0, 8) + "…";
+  const nameById = useMemo(
+    () => new Map(agents.map((a) => [a.id, a.name])),
+    [agents],
+  );
+  const getName = (id: string) => nameById.get(id) ?? `${shortId(id)}…`;
   const handleSave = () => {
     const position = agent?.position ?? {
       x: 220 + Math.random() * 480,

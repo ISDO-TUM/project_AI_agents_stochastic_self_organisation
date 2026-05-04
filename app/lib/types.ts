@@ -5,7 +5,6 @@ export type SimStepType =
   | "agent-to-agent"
   | "tool"
   | "agent-to-source";
-export type Theme = "dark" | "light";
 
 export interface Position {
   x: number;

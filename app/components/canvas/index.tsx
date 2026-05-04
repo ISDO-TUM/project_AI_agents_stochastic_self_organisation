@@ -2,7 +2,7 @@
 
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Agent, Source, Edge, AnimatedParticle, Tweaks } from "@/lib/types";
-import { BURG } from "@/lib/theme";
+import { clamp } from "@/lib/utils";
 import { AgentNode } from "./agent-node";
 import { SourceNode } from "./source-node";
 import { EdgeLayer } from "./edge-layer";
@@ -71,9 +71,7 @@ export function Canvas({
 
   const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault();
-    setZoom((z) =>
-      Math.min(Math.max(z * (e.deltaY > 0 ? 0.93 : 1.07), 0.15), 5),
-    );
+    setZoom((z) => clamp(z * (e.deltaY > 0 ? 0.93 : 1.07), 0.15, 5));
   }, []);
 
   useEffect(() => {
@@ -87,7 +85,7 @@ export function Canvas({
     const onKeyDown = (e: KeyboardEvent) => {
       if (
         e.code === "Space" &&
-        !"INPUT TEXTAREA SELECT".includes((e.target as HTMLElement).tagName)
+        !(e.target as HTMLElement).matches("input,textarea,select")
       ) {
         e.preventDefault();
         spaceDown.current = true;
@@ -178,35 +176,6 @@ export function Canvas({
     },
     [agents, sources, pan, zoom],
   );
-
-  useEffect(() => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const show = (e: Event) => {
-      const node = (e.target as HTMLElement).closest("[data-node-id]");
-      if (node) {
-        const handle = node.querySelector(
-          ".connect-handle",
-        ) as HTMLElement | null;
-        if (handle) handle.style.opacity = "1";
-      }
-    };
-    const hide = (e: Event) => {
-      const node = (e.target as HTMLElement).closest("[data-node-id]");
-      if (node) {
-        const handle = node.querySelector(
-          ".connect-handle",
-        ) as HTMLElement | null;
-        if (handle) handle.style.opacity = "0";
-      }
-    };
-    canvas.addEventListener("mouseover", show);
-    canvas.addEventListener("mouseout", hide);
-    return () => {
-      canvas.removeEventListener("mouseover", show);
-      canvas.removeEventListener("mouseout", hide);
-    };
-  }, []);
 
   const accent = tweaks.accentColor;
   const hasNodes = agents.length > 0 || sources.length > 0;

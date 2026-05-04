@@ -1,9 +1,8 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Tweaks } from "@/lib/types";
 import { LIcon } from "@/lib/icons";
-import { BURG, getTheme } from "@/lib/theme";
+import { BURG, BURG_LT, getTheme } from "@/lib/theme";
 
 interface ToolbarProps {
   simMode: boolean;
@@ -63,7 +62,7 @@ function TBtn({
         borderRadius: 8,
         color: danger
           ? hov
-            ? "#C4374F"
+            ? BURG_LT
             : BURG
           : hov || active
             ? t.text

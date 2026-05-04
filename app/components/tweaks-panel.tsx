@@ -5,6 +5,8 @@ import { BURG, getTheme } from "@/lib/theme";
 import { LIcon } from "@/lib/icons";
 import { Toggle } from "./panels/panel-primitives";
 
+type ThemeTokens = ReturnType<typeof getTheme>;
+
 interface TweaksPanelProps {
   tweaks: Tweaks;
   onChange: (key: keyof Tweaks, value: Tweaks[keyof Tweaks]) => void;
@@ -14,6 +16,117 @@ interface TweaksPanelProps {
 
 const ACCENT_SWATCHES = ["#8B1A2F", "#1A3A8B", "#1A7A3A", "#6B1A8B", "#7A5A1A"];
 
+function Slider({
+  label,
+  k,
+  min,
+  max,
+  step = 1,
+  unit = "",
+  tweaks,
+  onChange,
+  t,
+}: {
+  label: string;
+  k: keyof Tweaks;
+  min: number;
+  max: number;
+  step?: number;
+  unit?: string;
+  tweaks: Tweaks;
+  onChange: (key: keyof Tweaks, value: Tweaks[keyof Tweaks]) => void;
+  t: ThemeTokens;
+}) {
+  return (
+    <div style={{ marginBottom: 16 }}>
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          marginBottom: 6,
+        }}
+      >
+        <span style={{ fontSize: 12, color: t.textSub }}>{label}</span>
+        <span
+          style={{
+            fontSize: 11,
+            color: BURG,
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          {tweaks[k] as number}
+          {unit}
+        </span>
+      </div>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={tweaks[k] as number}
+        onChange={(e) => onChange(k, Number(e.target.value))}
+        style={{ width: "100%", accentColor: BURG, cursor: "pointer" }}
+      />
+    </div>
+  );
+}
+
+function Row({
+  label,
+  children,
+  t,
+}: {
+  label: string;
+  children: React.ReactNode;
+  t: ThemeTokens;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        marginBottom: 14,
+      }}
+    >
+      <span style={{ fontSize: 12, color: t.textSub }}>{label}</span>
+      {children}
+    </div>
+  );
+}
+
+function Sec({
+  title,
+  children,
+  t,
+}: {
+  title: string;
+  children: React.ReactNode;
+  t: ThemeTokens;
+}) {
+  return (
+    <>
+      <div
+        style={{
+          fontSize: 9.5,
+          fontWeight: 700,
+          letterSpacing: 1.4,
+          textTransform: "uppercase",
+          color: t.textDim,
+          marginTop: 20,
+          marginBottom: 12,
+          paddingBottom: 7,
+          borderBottom: `1px solid ${t.border}`,
+          fontFamily: "'JetBrains Mono', monospace",
+        }}
+      >
+        {title}
+      </div>
+      {children}
+    </>
+  );
+}
+
 export function TweaksPanel({
   tweaks,
   onChange,
@@ -21,107 +134,6 @@ export function TweaksPanel({
   dark,
 }: TweaksPanelProps) {
   const t = getTheme(dark);
-
-  function Slider({
-    label,
-    k,
-    min,
-    max,
-    step = 1,
-    unit = "",
-  }: {
-    label: string;
-    k: keyof Tweaks;
-    min: number;
-    max: number;
-    step?: number;
-    unit?: string;
-  }) {
-    return (
-      <div style={{ marginBottom: 16 }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            marginBottom: 6,
-          }}
-        >
-          <span style={{ fontSize: 12, color: t.textSub }}>{label}</span>
-          <span
-            style={{
-              fontSize: 11,
-              color: BURG,
-              fontFamily: "'JetBrains Mono', monospace",
-            }}
-          >
-            {tweaks[k] as number}
-            {unit}
-          </span>
-        </div>
-        <input
-          type="range"
-          min={min}
-          max={max}
-          step={step}
-          value={tweaks[k] as number}
-          onChange={(e) => onChange(k, Number(e.target.value))}
-          style={{ width: "100%", accentColor: BURG, cursor: "pointer" }}
-        />
-      </div>
-    );
-  }
-
-  function Row({
-    label,
-    children,
-  }: {
-    label: string;
-    children: React.ReactNode;
-  }) {
-    return (
-      <div
-        style={{
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          marginBottom: 14,
-        }}
-      >
-        <span style={{ fontSize: 12, color: t.textSub }}>{label}</span>
-        {children}
-      </div>
-    );
-  }
-
-  function Sec({
-    title,
-    children,
-  }: {
-    title: string;
-    children: React.ReactNode;
-  }) {
-    return (
-      <>
-        <div
-          style={{
-            fontSize: 9.5,
-            fontWeight: 700,
-            letterSpacing: 1.4,
-            textTransform: "uppercase",
-            color: t.textDim,
-            marginTop: 20,
-            marginBottom: 12,
-            paddingBottom: 7,
-            borderBottom: `1px solid ${t.border}`,
-            fontFamily: "'JetBrains Mono', monospace",
-          }}
-        >
-          {title}
-        </div>
-        {children}
-      </>
-    );
-  }
 
   return (
     <div
@@ -182,8 +194,17 @@ export function TweaksPanel({
       <div
         style={{ padding: "4px 18px 18px", maxHeight: 420, overflowY: "auto" }}
       >
-        <Sec title="Canvas">
-          <Slider label="Node Size" k="nodeSize" min={60} max={120} unit="px" />
+        <Sec title="Canvas" t={t}>
+          <Slider
+            label="Node Size"
+            k="nodeSize"
+            min={60}
+            max={120}
+            unit="px"
+            tweaks={tweaks}
+            onChange={onChange}
+            t={t}
+          />
           <Slider
             label="Edge Width"
             k="edgeWidth"
@@ -191,6 +212,9 @@ export function TweaksPanel({
             max={4}
             step={0.5}
             unit="px"
+            tweaks={tweaks}
+            onChange={onChange}
+            t={t}
           />
           <Slider
             label="Grid Density"
@@ -198,15 +222,18 @@ export function TweaksPanel({
             min={16}
             max={48}
             unit="px"
+            tweaks={tweaks}
+            onChange={onChange}
+            t={t}
           />
-          <Row label="Show Grid">
+          <Row label="Show Grid" t={t}>
             <Toggle
               checked={tweaks.showGrid}
               onChange={() => onChange("showGrid", !tweaks.showGrid)}
               dark={dark}
             />
           </Row>
-          <Row label="Ambient Orbs">
+          <Row label="Ambient Orbs" t={t}>
             <Toggle
               checked={tweaks.showOrbs}
               onChange={() => onChange("showOrbs", !tweaks.showOrbs)}
@@ -215,7 +242,7 @@ export function TweaksPanel({
           </Row>
         </Sec>
 
-        <Sec title="Animation">
+        <Sec title="Animation" t={t}>
           <Slider
             label="Particle Speed"
             k="particleSpeed"
@@ -223,8 +250,11 @@ export function TweaksPanel({
             max={2}
             step={0.1}
             unit="s"
+            tweaks={tweaks}
+            onChange={onChange}
+            t={t}
           />
-          <Row label="Pulse Rings">
+          <Row label="Pulse Rings" t={t}>
             <Toggle
               checked={tweaks.showPulse}
               onChange={() => onChange("showPulse", !tweaks.showPulse)}
@@ -233,7 +263,7 @@ export function TweaksPanel({
           </Row>
         </Sec>
 
-        <Sec title="Accent Color">
+        <Sec title="Accent Color" t={t}>
           <div
             style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}
           >

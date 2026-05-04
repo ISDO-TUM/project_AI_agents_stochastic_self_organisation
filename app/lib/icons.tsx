@@ -1,6 +1,4 @@
-import React from "react";
-
-export const PATHS: Record<string, string[]> = {
+const PATHS: Record<string, string[]> = {
   Bot: [
     "M12 8V4",
     "M8 8h8",

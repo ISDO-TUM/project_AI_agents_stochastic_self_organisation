@@ -1,6 +1,7 @@
 import { Agent, Source, SimStep } from "./types";
 import { uuid, timestamp } from "./utils";
 
+// TODO: wire real simulation engine — _prompt is currently ignored; steps are hardcoded by agent count
 export function generateSimSteps(
   agents: Agent[],
   sources: Source[],

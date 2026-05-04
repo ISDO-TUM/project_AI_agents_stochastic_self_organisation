@@ -2,7 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { SimStep } from "@/lib/types";
-import { BURG, BURG_GLOW, getTheme } from "@/lib/theme";
+import { BURG, BURG_LT, BURG_GLOW, getTheme } from "@/lib/theme";
 import { LIcon } from "@/lib/icons";
 
 interface LogWallProps {
@@ -320,8 +320,7 @@ export function LogWall({
           }}
           onMouseEnter={(e) => {
             if (currentStep < steps.length - 1)
-              (e.currentTarget as HTMLButtonElement).style.background =
-                "#C4374F";
+              (e.currentTarget as HTMLButtonElement).style.background = BURG_LT;
           }}
           onMouseLeave={(e) => {
             if (currentStep < steps.length - 1)

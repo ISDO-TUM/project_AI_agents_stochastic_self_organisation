@@ -225,7 +225,7 @@ export function FSelect({ value, onChange, options, dark }: FSelectProps) {
 interface FBtnProps extends DarkProps {
   children: React.ReactNode;
   onClick: () => void;
-  variant?: "primary" | "secondary" | "danger" | "ghost";
+  variant?: "primary" | "danger" | "ghost";
   icon?: string;
 }
 

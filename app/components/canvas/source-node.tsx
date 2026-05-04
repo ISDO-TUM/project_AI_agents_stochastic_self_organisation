@@ -1,9 +1,10 @@
 "use client";
 
-import { useRef, useCallback } from "react";
+import { useCallback } from "react";
 import { Source, Tweaks } from "@/lib/types";
 import { LIcon } from "@/lib/icons";
 import { BURG_LT, BURG_GLOW, BURG_DIM, getTheme } from "@/lib/theme";
+import { useDraggable } from "@/hooks/useDraggable";
 
 interface SourceNodeProps {
   source: Source;
@@ -28,37 +29,12 @@ export function SourceNode({
   dark,
   tweaks,
 }: SourceNodeProps) {
-  const dragging = useRef(false);
-  const dragOffset = useRef({ x: 0, y: 0 });
-
-  const handleMouseDown = useCallback(
-    (e: React.MouseEvent) => {
-      const target = e.target as HTMLElement;
-      if (target.closest(".connect-handle")) return;
-      e.stopPropagation();
-      onSelect(source.id, e);
-      if (simMode) return;
-      dragging.current = true;
-      dragOffset.current = {
-        x: e.clientX - source.position.x,
-        y: e.clientY - source.position.y,
-      };
-      const onMove = (me: MouseEvent) => {
-        if (!dragging.current) return;
-        onDragEnd(source.id, {
-          x: me.clientX - dragOffset.current.x,
-          y: me.clientY - dragOffset.current.y,
-        });
-      };
-      const onUp = () => {
-        dragging.current = false;
-        window.removeEventListener("mousemove", onMove);
-        window.removeEventListener("mouseup", onUp);
-      };
-      window.addEventListener("mousemove", onMove);
-      window.addEventListener("mouseup", onUp);
-    },
-    [source, onSelect, onDragEnd, simMode],
+  const { onMouseDown: handleMouseDown } = useDraggable(
+    source.id,
+    source.position,
+    onSelect,
+    onDragEnd,
+    simMode,
   );
 
   const handleConnectMouseDown = useCallback(

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState } from "react";
 import { Source, SourceType } from "@/lib/types";
 import { uuid } from "@/lib/utils";
 import { BURG_DIM, getTheme } from "@/lib/theme";
@@ -33,15 +33,6 @@ export function SourcePanel({
     type: source?.type ?? "text",
     content: source?.content ?? "",
   });
-
-  useEffect(() => {
-    if (source)
-      setForm({
-        name: source.name,
-        type: source.type,
-        content: source.content,
-      });
-  }, [source]);
 
   const set = <K extends keyof SourceForm>(k: K, v: SourceForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));

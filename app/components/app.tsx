@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useReducer } from "react";
+import { useState, useEffect, useCallback, useReducer, useRef } from "react";
 import {
   CanvasState,
   CanvasAction,
@@ -13,6 +13,12 @@ import {
 import { uuid, autoLayout } from "@/lib/utils";
 import { BURG } from "@/lib/theme";
 import { generateSimSteps } from "@/lib/simulation";
+import {
+  fetchAgents,
+  createAgent,
+  updateAgent,
+  deleteAgentApi,
+} from "@/lib/api";
 import { Canvas } from "@/components/canvas";
 import { LogWall } from "@/components/log-wall";
 import { Toolbar } from "@/components/toolbar";
@@ -127,8 +133,11 @@ export function App() {
 
   const [tweaks, setTweaks] = useState<Tweaks>(defaultTweaks);
   const [showTweaks, setShowTweaks] = useState(false);
-  const setTweak = (k: keyof Tweaks, v: Tweaks[keyof Tweaks]) =>
-    setTweaks((t) => ({ ...t, [k]: v }));
+  const setTweak = useCallback(
+    (k: keyof Tweaks, v: Tweaks[keyof Tweaks]) =>
+      setTweaks((t) => ({ ...t, [k]: v })),
+    [],
+  );
 
   const [state, dispatch] = useReducer(reducer, {
     agents: [],
@@ -148,6 +157,33 @@ export function App() {
   const [activeNode, setActNode] = useState<string | null>(null);
   const [activeEdge, setActEdge] = useState<string | null>(null);
   const [particles, setParticles] = useState<AnimatedParticle[]>([]);
+  const [importError, setImportError] = useState<string | null>(null);
+  const particleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const importErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
+    null,
+  );
+
+  useEffect(() => {
+    return () => {
+      if (particleTimerRef.current) clearTimeout(particleTimerRef.current);
+      if (importErrorTimerRef.current)
+        clearTimeout(importErrorTimerRef.current);
+    };
+  }, []);
+
+  // Hydrate agents from API on mount
+  useEffect(() => {
+    fetchAgents()
+      .then((list) => {
+        dispatch({
+          type: "LOAD",
+          state: { agents: list, sources: [], edges: [] },
+        });
+      })
+      .catch(() => {
+        // API not yet available – start with empty canvas
+      });
+  }, []);
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -205,36 +241,72 @@ export function App() {
   }, [cur, simMode, steps, edges]);
 
   const saveAgent = useCallback(
-    (data: Agent) => {
+    async (data: Agent) => {
       const exists = agents.find((a) => a.id === data.id);
-      if (exists) {
-        dispatch({ type: "UPDATE_AGENT", agent: data });
-        const existing = edges
-          .filter((e) => e.from === data.id)
-          .map((e) => e.to);
-        data.connections
-          .filter((c) => !existing.includes(c))
-          .forEach((toId) =>
+      try {
+        const saved = exists
+          ? await updateAgent(data)
+          : await createAgent(data);
+        // preserve canvas position (API doesn't store it)
+        const withPos: Agent = { ...saved, position: data.position };
+        if (exists) {
+          dispatch({ type: "UPDATE_AGENT", agent: withPos });
+          const existing = edges
+            .filter((e) => e.from === data.id)
+            .map((e) => e.to);
+          withPos.connections
+            .filter((c) => !existing.includes(c))
+            .forEach((toId) =>
+              dispatch({
+                type: "ADD_EDGE",
+                edge: { id: uuid(), from: withPos.id, to: toId },
+              }),
+            );
+        } else {
+          dispatch({ type: "ADD_AGENT", agent: withPos });
+          withPos.connections.forEach((toId) =>
+            dispatch({
+              type: "ADD_EDGE",
+              edge: { id: uuid(), from: withPos.id, to: toId },
+            }),
+          );
+        }
+      } catch {
+        // API unavailable — fall back to local-only
+        if (exists) {
+          dispatch({ type: "UPDATE_AGENT", agent: data });
+          const existing = edges
+            .filter((e) => e.from === data.id)
+            .map((e) => e.to);
+          data.connections
+            .filter((c) => !existing.includes(c))
+            .forEach((toId) =>
+              dispatch({
+                type: "ADD_EDGE",
+                edge: { id: uuid(), from: data.id, to: toId },
+              }),
+            );
+        } else {
+          dispatch({ type: "ADD_AGENT", agent: data });
+          data.connections.forEach((toId) =>
             dispatch({
               type: "ADD_EDGE",
               edge: { id: uuid(), from: data.id, to: toId },
             }),
           );
-      } else {
-        dispatch({ type: "ADD_AGENT", agent: data });
-        data.connections.forEach((toId) =>
-          dispatch({
-            type: "ADD_EDGE",
-            edge: { id: uuid(), from: data.id, to: toId },
-          }),
-        );
+        }
       }
       setPanel(null);
     },
     [agents, edges],
   );
 
-  const deleteAgent = useCallback((id: string) => {
+  const deleteAgent = useCallback(async (id: string) => {
+    try {
+      await deleteAgentApi(id);
+    } catch {
+      // API unavailable — proceed with local delete
+    }
     dispatch({ type: "DELETE_AGENT", id });
     setPanel(null);
     setSelNode(null);
@@ -307,21 +379,23 @@ export function App() {
         delay: i * 0.09,
       }));
       setParticles(pts);
-      setTimeout(() => setParticles([]), 3500);
+      if (particleTimerRef.current) clearTimeout(particleTimerRef.current);
+      particleTimerRef.current = setTimeout(() => setParticles([]), 3500);
     },
     [agents, sources, edges],
   );
 
-  const stopSim = () => {
+  const stopSim = useCallback(() => {
+    if (particleTimerRef.current) clearTimeout(particleTimerRef.current);
     setSim(false);
     setSteps([]);
     setCur(0);
     setActNode(null);
     setActEdge(null);
     setParticles([]);
-  };
+  }, []);
 
-  const exportCanvas = () => {
+  const exportCanvas = useCallback(() => {
     const blob = new Blob(
       [JSON.stringify({ agents, sources, edges }, null, 2)],
       { type: "application/json" },
@@ -332,32 +406,54 @@ export function App() {
     a.download = "canvas.json";
     a.click();
     URL.revokeObjectURL(url);
-  };
+  }, [agents, sources, edges]);
 
-  const importCanvas = (raw: string) => {
-    try {
-      const data = JSON.parse(raw);
-      if (data.agents && data.sources && data.edges)
-        dispatch({ type: "LOAD", state: data });
-    } catch {
-      alert("Invalid JSON file");
-    }
-  };
+  const showImportError = useCallback((msg: string) => {
+    if (importErrorTimerRef.current) clearTimeout(importErrorTimerRef.current);
+    setImportError(msg);
+    importErrorTimerRef.current = setTimeout(() => setImportError(null), 4000);
+  }, []);
 
-  const selectNode = (id: string, e: React.MouseEvent) => {
+  const importCanvas = useCallback(
+    (raw: string) => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const data = JSON.parse(raw) as any;
+        if (
+          Array.isArray(data.agents) &&
+          Array.isArray(data.sources) &&
+          Array.isArray(data.edges)
+        )
+          dispatch({ type: "LOAD", state: data as CanvasState });
+        else
+          showImportError(
+            "Invalid canvas file — missing agents, sources, or edges",
+          );
+      } catch {
+        showImportError("Invalid JSON file");
+      }
+    },
+    [showImportError],
+  );
+
+  const selectNode = useCallback((id: string, e: React.MouseEvent) => {
     setSelNode(id);
     setSelEdge(null);
     if (e?.button === 2) {
       e.preventDefault();
       setCtx({ x: e.clientX, y: e.clientY, nodeId: id });
     }
-  };
+  }, []);
 
-  const openPanel = (id: string) => {
-    if (simMode) return;
-    if (agents.some((a) => a.id === id)) setPanel({ type: "agent", id });
-    else if (sources.some((s) => s.id === id)) setPanel({ type: "source", id });
-  };
+  const openPanel = useCallback(
+    (id: string) => {
+      if (simMode) return;
+      if (agents.some((a) => a.id === id)) setPanel({ type: "agent", id });
+      else if (sources.some((s) => s.id === id))
+        setPanel({ type: "source", id });
+    },
+    [simMode, agents, sources],
+  );
 
   const nodeCtxItems = (id: string): ContextMenuItem[] => [
     { label: "Edit", icon: "Settings2", fn: () => openPanel(id) },
@@ -389,6 +485,37 @@ export function App() {
       },
     },
   ];
+
+  const onSelectEdge = useCallback((id: string) => {
+    setSelEdge(id);
+    setSelNode(null);
+  }, []);
+
+  const onMoveNode = useCallback(
+    (id: string, pos: { x: number; y: number }) =>
+      dispatch({ type: "MOVE_NODE", id, position: pos }),
+    [],
+  );
+
+  const onCanvasClick = useCallback(() => {
+    setSelNode(null);
+    setSelEdge(null);
+    setPanel(null);
+    setCtx(null);
+  }, []);
+
+  const onToggleTheme = useCallback(() => setDark((x) => !x), []);
+  const onAddAgent = useCallback(() => {
+    setPanel({ type: "agent", id: null });
+    setSelNode(null);
+  }, []);
+  const onAddSource = useCallback(() => {
+    setPanel({ type: "source", id: null });
+    setSelNode(null);
+  }, []);
+  const onClear = useCallback(() => dispatch({ type: "CLEAR" }), []);
+  const onAutoLayout = useCallback(() => dispatch({ type: "AUTO_LAYOUT" }), []);
+  const onToggleTweaks = useCallback(() => setShowTweaks((x) => !x), []);
 
   const panelAgent =
     panel?.type === "agent" && panel.id
@@ -457,13 +584,8 @@ export function App() {
           selectedNode={selNode}
           selectedEdge={selEdge}
           onSelectNode={selectNode}
-          onSelectEdge={(id) => {
-            setSelEdge(id);
-            setSelNode(null);
-          }}
-          onMoveNode={(id, pos) =>
-            dispatch({ type: "MOVE_NODE", id, position: pos })
-          }
+          onSelectEdge={onSelectEdge}
+          onMoveNode={onMoveNode}
           onConnectNodes={connectNodes}
           onDeleteEdge={deleteEdge}
           simMode={simMode}
@@ -472,50 +594,37 @@ export function App() {
           animatedParticles={particles}
           dark={dark}
           tweaks={tweaks}
-          onCanvasClick={() => {
-            setSelNode(null);
-            setSelEdge(null);
-            setPanel(null);
-            setCtx(null);
-          }}
+          onCanvasClick={onCanvasClick}
         />
       </div>
 
       {/* Log wall */}
       {simMode && (
-        <div style={{ display: "flex" }}>
-          <LogWall
-            steps={steps}
-            currentStep={cur}
-            onNext={() => setCur((s) => Math.min(s + 1, steps.length - 1))}
-            onPrev={() => setCur((s) => Math.max(s - 1, 0))}
-            expanded={logExp}
-            onToggleExpand={() => setLogExp((x) => !x)}
-            dark={dark}
-          />
-        </div>
+        <LogWall
+          steps={steps}
+          currentStep={cur}
+          onNext={() => setCur((s) => Math.min(s + 1, steps.length - 1))}
+          onPrev={() => setCur((s) => Math.max(s - 1, 0))}
+          expanded={logExp}
+          onToggleExpand={() => setLogExp((x) => !x)}
+          dark={dark}
+        />
       )}
 
       {/* Floating toolbar */}
       <Toolbar
         simMode={simMode}
         dark={dark}
-        onToggleTheme={() => setDark((x) => !x)}
-        onAddAgent={() => {
-          setPanel({ type: "agent", id: null });
-          setSelNode(null);
-        }}
-        onAddSource={() => {
-          setPanel({ type: "source", id: null });
-          setSelNode(null);
-        }}
-        onClear={() => dispatch({ type: "CLEAR" })}
+        onToggleTheme={onToggleTheme}
+        onAddAgent={onAddAgent}
+        onAddSource={onAddSource}
+        onClear={onClear}
         onStop={stopSim}
-        onAutoLayout={() => dispatch({ type: "AUTO_LAYOUT" })}
+        onAutoLayout={onAutoLayout}
         onExport={exportCanvas}
         onImport={importCanvas}
         showTweaks={showTweaks}
-        onToggleTweaks={() => setShowTweaks((x) => !x)}
+        onToggleTweaks={onToggleTweaks}
       />
 
       {/* Floating prompt bar */}
@@ -534,6 +643,7 @@ export function App() {
       {/* Slide-in panels */}
       {panel?.type === "agent" && (
         <AgentPanel
+          key={panel.id ?? "new-agent"}
           agent={panelAgent}
           agents={agents}
           onSave={saveAgent}
@@ -544,12 +654,36 @@ export function App() {
       )}
       {panel?.type === "source" && (
         <SourcePanel
+          key={panel.id ?? "new-source"}
           source={panelSource}
           onSave={saveSource}
           onDelete={deleteSource}
           onClose={() => setPanel(null)}
           dark={dark}
         />
+      )}
+
+      {/* Import error toast */}
+      {importError && (
+        <div
+          style={{
+            position: "absolute",
+            top: 72,
+            left: "50%",
+            transform: "translateX(-50%)",
+            background: "rgba(139,26,47,0.92)",
+            color: "#fff",
+            borderRadius: 8,
+            padding: "8px 18px",
+            fontSize: 13,
+            fontWeight: 600,
+            zIndex: 200,
+            pointerEvents: "none",
+            animation: "fadeIn 0.2s ease-out",
+          }}
+        >
+          {importError}
+        </div>
       )}
 
       {/* Context menu */}
