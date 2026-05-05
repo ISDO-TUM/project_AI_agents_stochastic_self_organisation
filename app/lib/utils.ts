@@ -19,11 +19,11 @@ export function timestamp(): string {
 export const PROVIDERS: Record<string, { label: string; models: string[] }> = {
   openai: {
     label: "OpenAI",
-    models: ["GPT-4o", "GPT-4o-mini", "GPT-3.5-turbo"],
+    models: ["gpt-4o-mini", "gpt-4o", "gpt-3.5-turbo"],
   },
   anthropic: {
     label: "Anthropic",
-    models: ["Claude Sonnet", "Claude Haiku", "Claude Opus"],
+    models: ["claude-sonnet-4-5", "claude-haiku-4-5", "claude-opus-4-5"],
   },
 };
 

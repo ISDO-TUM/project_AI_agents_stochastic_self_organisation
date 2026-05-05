@@ -38,7 +38,7 @@ const defaultForm = (): AgentForm => ({
   name: "",
   description: "",
   provider: "openai",
-  model: "GPT-4o",
+  model: "gpt-4o-mini",
   systemPrompt: "",
   tools: [],
   connections: [],

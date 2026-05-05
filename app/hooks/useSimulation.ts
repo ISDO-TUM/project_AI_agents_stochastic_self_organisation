@@ -2,8 +2,9 @@
 
 import { useState, useEffect, useCallback, useRef } from "react";
 import { Agent, Source, Edge, SimStep, AnimatedParticle } from "@/lib/types";
-import { uuid } from "@/lib/utils";
-import { generateSimSteps } from "@/lib/simulation";
+import { uuid, timestamp } from "@/lib/utils";
+import { buildStepsFromTrial, emptyCanvasSteps } from "@/lib/simulation";
+import { runTrial, getTrial } from "@/lib/api";
 
 export function useSimulation(
   agents: Agent[],
@@ -17,6 +18,7 @@ export function useSimulation(
   const [activeNode, setActNode] = useState<string | null>(null);
   const [activeEdge, setActEdge] = useState<string | null>(null);
   const [particles, setParticles] = useState<AnimatedParticle[]>([]);
+  const [running, setRunning] = useState(false);
   const particleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -47,13 +49,31 @@ export function useSimulation(
   }, [cur, simMode, steps, edges]);
 
   const runSim = useCallback(
-    (prompt: string) => {
-      const s = generateSimSteps(agents, sources, prompt);
-      if (!s.length) return;
-      setSteps(s);
-      setCur(0);
+    async (prompt: string) => {
+      if (running) return;
+
+      if (agents.length === 0) {
+        setSteps(emptyCanvasSteps(agents, sources));
+        setCur(0);
+        setSim(true);
+        setLogExp(false);
+        return;
+      }
+
+      setRunning(true);
       setSim(true);
       setLogExp(false);
+      setSteps([
+        {
+          id: uuid(),
+          ts: timestamp(),
+          label: "SYSTEM",
+          msg: "Running consensus on the backend…",
+          type: "system",
+        },
+      ]);
+      setCur(0);
+
       const pts: AnimatedParticle[] = edges.map((e, i) => ({
         id: uuid(),
         from: e.from,
@@ -64,8 +84,34 @@ export function useSimulation(
       setParticles(pts);
       if (particleTimerRef.current) clearTimeout(particleTimerRef.current);
       particleTimerRef.current = setTimeout(() => setParticles([]), 3500);
+
+      try {
+        const agentIds = agents.map((a) => a.id);
+        const idMap: Record<string, string> = Object.fromEntries(
+          agentIds.map((id) => [id, id]),
+        );
+        const runResp = await runTrial(prompt, agentIds, 2);
+        const trial = await getTrial(runResp.trial_id);
+        const realSteps = buildStepsFromTrial(trial, agents, idMap);
+        setSteps(realSteps);
+        setCur(0);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        setSteps((prev) => [
+          ...prev,
+          {
+            id: uuid(),
+            ts: timestamp(),
+            label: "ERROR",
+            msg: `Trial failed: ${message}`,
+            type: "system",
+          },
+        ]);
+      } finally {
+        setRunning(false);
+      }
     },
-    [agents, sources, edges],
+    [agents, sources, edges, running],
   );
 
   const stopSim = useCallback(() => {
@@ -76,6 +122,7 @@ export function useSimulation(
     setActNode(null);
     setActEdge(null);
     setParticles([]);
+    setRunning(false);
   }, []);
 
   return {
@@ -88,6 +135,7 @@ export function useSimulation(
     activeNode,
     activeEdge,
     particles,
+    running,
     runSim,
     stopSim,
   };
