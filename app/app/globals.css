@@ -1,26 +1,209 @@
 @import "tailwindcss";
 
-:root {
-  --background: #ffffff;
-  --foreground: #171717;
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
 }
 
-@theme inline {
-  --color-background: var(--background);
-  --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+html,
+body {
+  height: 100%;
+  overflow: hidden;
+  font-family:
+    var(--font-space-grotesk),
+    system-ui,
+    -apple-system,
+    sans-serif;
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  background: #060608;
+  color: #eceaf5;
+}
+
+/* ─── Keyframe animations ─── */
+
+@keyframes pulseRing {
+  0% {
+    opacity: 0.85;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.55);
+  }
+}
+
+@keyframes pulseRing2 {
+  0% {
+    opacity: 0.5;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0;
+    transform: scale(1.75);
+  }
+}
+
+@keyframes orbDrift {
+  0% {
+    transform: translate(0, 0) scale(1);
+  }
+  33% {
+    transform: translate(3%, 2%) scale(1.04);
+  }
+  66% {
+    transform: translate(-2%, 3%) scale(0.97);
+  }
+  100% {
+    transform: translate(0, 0) scale(1);
+  }
+}
+
+@keyframes emptyFloat {
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+  50% {
+    transform: translateY(-10px);
+  }
+}
+
+@keyframes fadeIn {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes panelSlide {
+  from {
+    transform: translateX(28px);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes tweakSlide {
+  from {
+    transform: translateY(16px);
+    opacity: 0;
+  }
+  to {
+    transform: translateY(0);
+    opacity: 1;
+  }
+}
+
+@keyframes logSlide {
+  from {
+    transform: translateX(100%);
+    opacity: 0;
+  }
+  to {
+    transform: translateX(0);
+    opacity: 1;
+  }
+}
+
+@keyframes minimapFade {
+  from {
+    opacity: 0;
+    transform: scale(0.92);
+  }
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+@keyframes checkPop {
+  from {
+    transform: scale(0.5);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+
+@keyframes pillPulse {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(139, 26, 47, 0.14),
+      0 4px 20px rgba(139, 26, 47, 0.12),
+      0 8px 36px rgba(0, 0, 0, 0.35);
+    border-color: rgba(139, 26, 47, 0.18);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(139, 26, 47, 0.28),
+      0 4px 30px rgba(139, 26, 47, 0.22),
+      0 8px 52px rgba(139, 26, 47, 0.1);
+    border-color: rgba(139, 26, 47, 0.36);
+  }
+}
+
+@keyframes pillPulseLight {
+  0%,
+  100% {
+    box-shadow:
+      0 0 0 1px rgba(139, 26, 47, 0.1),
+      0 4px 18px rgba(139, 26, 47, 0.1),
+      0 6px 24px rgba(0, 0, 0, 0.07);
+    border-color: rgba(139, 26, 47, 0.14);
+  }
+  50% {
+    box-shadow:
+      0 0 0 1px rgba(139, 26, 47, 0.2),
+      0 4px 28px rgba(139, 26, 47, 0.18),
+      0 8px 40px rgba(139, 26, 47, 0.07);
+    border-color: rgba(139, 26, 47, 0.28);
+  }
+}
+
+/* ─── Scrollbar ─── */
+::-webkit-scrollbar {
+  width: 4px;
+  height: 4px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: rgba(139, 26, 47, 0.2);
+  border-radius: 2px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(139, 26, 47, 0.38);
+}
+
+/* ─── Range inputs ─── */
+input[type="range"] {
+  -webkit-appearance: none;
+  appearance: none;
+  height: 3px;
+  border-radius: 2px;
+  outline: none;
+  cursor: pointer;
+}
+input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: #8b1a2f;
+  cursor: pointer;
+  box-shadow: 0 0 6px rgba(139, 26, 47, 0.4);
 }

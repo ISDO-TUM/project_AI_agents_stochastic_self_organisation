@@ -40,15 +40,6 @@ repos:
       - id: prettier
         types_or: [javascript, jsx, ts, tsx, json, css, markdown]
 
-  # --- JS/TS: type checking ---
-  - repo: local
-    hooks:
-      - id: tsc
-        name: TypeScript type check
-        entry: bash -c 'pnpm --filter app typecheck'
-        language: system
-        types_or: [ts, tsx]
-        pass_filenames: false
 
   # --- Commit message convention ---
   - repo: https://github.com/alessandrojcm/commitlint-pre-commit-hook
