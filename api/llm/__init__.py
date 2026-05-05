@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable, Coroutine
 from typing import Any
 
 from api.schemas import ToolCall
@@ -10,6 +11,12 @@ from api.tools.registry import create_tool_handler, get_tools_for_provider
 from .anthropic_provider import call_anthropic
 from .groq_provider import call_groq
 from .openai_provider import call_openai
+
+PROVIDERS: dict[str, Callable[..., Coroutine[Any, Any, str]]] = {
+    "openai": call_openai,
+    "groq": call_groq,
+    "anthropic": call_anthropic,
+}
 
 
 async def call_agent(
@@ -28,31 +35,16 @@ async def call_agent(
     tool_handler = create_tool_handler(tool_context or {}, used_tools) if tool_names else None
     tools = get_tools_for_provider(provider, tool_names) if tool_names else None
 
-    if provider == "openai":
-        response = await call_openai(
-            prompt,
-            model=model,
-            system_prompt=system_prompt,
-            tools=tools,
-            tool_handler=tool_handler,
-        )
-    elif provider == "groq":
-        response = await call_groq(
-            prompt,
-            model=model,
-            system_prompt=system_prompt,
-            tools=tools,
-            tool_handler=tool_handler,
-        )
-    elif provider == "anthropic":
-        response = await call_anthropic(
-            prompt,
-            model=model,
-            system_prompt=system_prompt,
-            tools=tools,
-            tool_handler=tool_handler,
-        )
-    else:
-        raise ValueError(f"Unsupported provider: {provider}")
+    caller = PROVIDERS.get(provider)
+    if caller is None:
+        raise ValueError(f"Unsupported provider: {provider}. Choose from: {list(PROVIDERS)}")
+
+    response = await caller(
+        prompt,
+        model=model,
+        system_prompt=system_prompt,
+        tools=tools,
+        tool_handler=tool_handler,
+    )
 
     return response, used_tools
