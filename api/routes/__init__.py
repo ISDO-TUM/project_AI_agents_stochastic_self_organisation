@@ -3,5 +3,6 @@
 from api.routes.agents import router as agents_router
 from api.routes.files import router as knowledge_files_router
 from api.routes.test import router as test_router
+from api.routes.trials import router as trials_router
 
-__all__ = ["agents_router", "knowledge_files_router", "test_router"]
+__all__ = ["agents_router", "knowledge_files_router", "test_router", "trials_router"]

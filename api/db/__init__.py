@@ -41,6 +41,53 @@ CREATE TABLE IF NOT EXISTS agent_files (
 );
 """
 
+_CREATE_TRIALS_TABLE = """
+CREATE TABLE IF NOT EXISTS trials (
+    id              TEXT PRIMARY KEY,
+    description     TEXT NOT NULL DEFAULT '',
+    task_prompt     TEXT NOT NULL,
+    protocol_name   TEXT NOT NULL,
+    final_answer    TEXT,
+    stopped_reason  TEXT,
+    started_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    completed_at    TEXT
+);
+"""
+
+_CREATE_ROUNDS_TABLE = """
+CREATE TABLE IF NOT EXISTS rounds (
+    id           INTEGER PRIMARY KEY AUTOINCREMENT,
+    trial_id     TEXT NOT NULL REFERENCES trials(id) ON DELETE CASCADE,
+    round_index  INTEGER NOT NULL,
+    aggregate    TEXT NOT NULL DEFAULT '',
+    agreement    REAL NOT NULL DEFAULT 0.0,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (trial_id, round_index)
+);
+"""
+
+_CREATE_PROPOSALS_TABLE = """
+CREATE TABLE IF NOT EXISTS proposals (
+    id        INTEGER PRIMARY KEY AUTOINCREMENT,
+    round_id  INTEGER NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+    agent_id  TEXT NOT NULL REFERENCES agents(id),
+    content   TEXT NOT NULL,
+    score     REAL NOT NULL DEFAULT 0.0,
+    UNIQUE (round_id, agent_id)
+);
+"""
+
+_CREATE_ROUND_EDGES_TABLE = """
+CREATE TABLE IF NOT EXISTS round_edges (
+    id             INTEGER PRIMARY KEY AUTOINCREMENT,
+    round_id       INTEGER NOT NULL REFERENCES rounds(id) ON DELETE CASCADE,
+    from_agent_id  TEXT NOT NULL REFERENCES agents(id),
+    to_agent_id    TEXT NOT NULL REFERENCES agents(id),
+    weight         REAL NOT NULL DEFAULT 1.0,
+    UNIQUE (round_id, from_agent_id, to_agent_id)
+);
+"""
+
 _db: aiosqlite.Connection | None = None
 
 
@@ -53,6 +100,10 @@ async def init_db() -> None:
     await _db.execute(_CREATE_AGENTS_TABLE)
     await _db.execute(_CREATE_KNOWLEDGE_FILES_TABLE)
     await _db.execute(_CREATE_AGENT_FILES_TABLE)
+    await _db.execute(_CREATE_TRIALS_TABLE)
+    await _db.execute(_CREATE_ROUNDS_TABLE)
+    await _db.execute(_CREATE_PROPOSALS_TABLE)
+    await _db.execute(_CREATE_ROUND_EDGES_TABLE)
     await _db.commit()
 
 
