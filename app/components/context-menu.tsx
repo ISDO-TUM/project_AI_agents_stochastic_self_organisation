@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { LIcon } from "@/lib/icons";
 import { BURG_LT, getTheme } from "@/lib/theme";
+import { useTheme } from "@/lib/theme-context";
 
 export interface ContextMenuItem {
   label: string;
@@ -16,10 +17,10 @@ interface ContextMenuProps {
   y: number;
   items: ContextMenuItem[];
   onClose: () => void;
-  dark: boolean;
 }
 
-export function ContextMenu({ x, y, items, onClose, dark }: ContextMenuProps) {
+export function ContextMenu({ x, y, items, onClose }: ContextMenuProps) {
+  const { dark } = useTheme();
   const t = getTheme(dark);
   const menuRef = useRef<HTMLDivElement>(null);
 

@@ -1,24 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback, useReducer, useRef } from "react";
-import {
-  CanvasState,
-  CanvasAction,
-  Agent,
-  Source,
-  SimStep,
-  AnimatedParticle,
-  Tweaks,
-} from "@/lib/types";
-import { uuid, autoLayout } from "@/lib/utils";
+import { useState, useEffect, useCallback, useRef } from "react";
+import { CanvasState, Tweaks } from "@/lib/types";
 import { BURG } from "@/lib/theme";
-import { generateSimSteps } from "@/lib/simulation";
-import {
-  fetchAgents,
-  createAgent,
-  updateAgent,
-  deleteAgentApi,
-} from "@/lib/api";
+import { useTheme } from "@/lib/theme-context";
+import { useCanvasState } from "@/hooks/useCanvasState";
+import { useSimulation } from "@/hooks/useSimulation";
+import { useUIState } from "@/hooks/useUIState";
 import { Canvas } from "@/components/canvas";
 import { LogWall } from "@/components/log-wall";
 import { Toolbar } from "@/components/toolbar";
@@ -28,75 +16,6 @@ import { TweaksPanel } from "@/components/tweaks-panel";
 import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
 import { getTheme } from "@/lib/theme";
-
-function reducer(state: CanvasState, action: CanvasAction): CanvasState {
-  const { agents, sources, edges } = state;
-  switch (action.type) {
-    case "ADD_AGENT":
-      return { ...state, agents: [...agents, action.agent] };
-    case "UPDATE_AGENT":
-      return {
-        ...state,
-        agents: agents.map((a) =>
-          a.id === action.agent.id ? action.agent : a,
-        ),
-      };
-    case "DELETE_AGENT":
-      return {
-        ...state,
-        agents: agents
-          .filter((a) => a.id !== action.id)
-          .map((a) => ({
-            ...a,
-            connections: a.connections.filter((c) => c !== action.id),
-          })),
-        edges: edges.filter((e) => e.from !== action.id && e.to !== action.id),
-      };
-    case "ADD_SOURCE":
-      return { ...state, sources: [...sources, action.source] };
-    case "UPDATE_SOURCE":
-      return {
-        ...state,
-        sources: sources.map((s) =>
-          s.id === action.source.id ? action.source : s,
-        ),
-      };
-    case "DELETE_SOURCE":
-      return {
-        ...state,
-        sources: sources.filter((s) => s.id !== action.id),
-        edges: edges.filter((e) => e.from !== action.id && e.to !== action.id),
-      };
-    case "MOVE_NODE":
-      return {
-        ...state,
-        agents: agents.map((a) =>
-          a.id === action.id ? { ...a, position: action.position } : a,
-        ),
-        sources: sources.map((s) =>
-          s.id === action.id ? { ...s, position: action.position } : s,
-        ),
-      };
-    case "ADD_EDGE":
-      return edges.some(
-        (e) => e.from === action.edge.from && e.to === action.edge.to,
-      )
-        ? state
-        : { ...state, edges: [...edges, action.edge] };
-    case "DELETE_EDGE":
-      return { ...state, edges: edges.filter((e) => e.id !== action.id) };
-    case "CLEAR":
-      return { agents: [], sources: [], edges: [] };
-    case "LOAD":
-      return action.state;
-    case "AUTO_LAYOUT": {
-      const { agents: na, sources: ns } = autoLayout(agents, sources);
-      return { ...state, agents: na, sources: ns };
-    }
-    default:
-      return state;
-  }
-}
 
 const defaultTweaks: Tweaks = {
   nodeSize: 88,
@@ -109,81 +28,76 @@ const defaultTweaks: Tweaks = {
   accentColor: BURG,
 };
 
-interface PanelState {
-  type: "agent" | "source";
-  id: string | null;
-}
-interface CtxState {
-  x: number;
-  y: number;
-  nodeId: string | null;
-}
-
 export function App() {
-  const [dark, setDark] = useState<boolean>(() => {
-    if (typeof window === "undefined") return false;
-    return (localStorage.getItem("theme") ?? "light") === "dark";
-  });
-
-  useEffect(() => {
-    localStorage.setItem("theme", dark ? "dark" : "light");
-    document.body.style.background = dark ? "#060608" : "#f0eef8";
-    document.body.style.color = dark ? "#eceaf5" : "#18161f";
-  }, [dark]);
+  const { dark, toggle: toggleTheme } = useTheme();
 
   const [tweaks, setTweaks] = useState<Tweaks>(defaultTweaks);
-  const [showTweaks, setShowTweaks] = useState(false);
   const setTweak = useCallback(
     (k: keyof Tweaks, v: Tweaks[keyof Tweaks]) =>
       setTweaks((t) => ({ ...t, [k]: v })),
     [],
   );
 
-  const [state, dispatch] = useReducer(reducer, {
-    agents: [],
-    sources: [],
-    edges: [],
-  });
-  const { agents, sources, edges } = state;
+  const {
+    agents,
+    sources,
+    edges,
+    dispatch,
+    saveAgent,
+    deleteAgent,
+    saveSource,
+    deleteSource,
+    connectNodes,
+    deleteEdge: deleteEdgeBase,
+  } = useCanvasState();
 
-  const [selNode, setSelNode] = useState<string | null>(null);
-  const [selEdge, setSelEdge] = useState<string | null>(null);
-  const [panel, setPanel] = useState<PanelState | null>(null);
-  const [ctx, setCtx] = useState<CtxState | null>(null);
-  const [simMode, setSim] = useState(false);
-  const [steps, setSteps] = useState<SimStep[]>([]);
-  const [cur, setCur] = useState(0);
-  const [logExp, setLogExp] = useState(false);
-  const [activeNode, setActNode] = useState<string | null>(null);
-  const [activeEdge, setActEdge] = useState<string | null>(null);
-  const [particles, setParticles] = useState<AnimatedParticle[]>([]);
+  const {
+    steps,
+    cur,
+    setCur,
+    simMode,
+    logExp,
+    setLogExp,
+    activeNode,
+    activeEdge,
+    particles,
+    runSim,
+    stopSim,
+  } = useSimulation(agents, sources, edges);
+
+  const {
+    selNode,
+    setSelNode,
+    selEdge,
+    setSelEdge,
+    panel,
+    setPanel,
+    ctx,
+    setCtx,
+    showTweaks,
+    setShowTweaks,
+  } = useUIState();
+
   const [importError, setImportError] = useState<string | null>(null);
-  const particleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const importErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
 
   useEffect(() => {
     return () => {
-      if (particleTimerRef.current) clearTimeout(particleTimerRef.current);
       if (importErrorTimerRef.current)
         clearTimeout(importErrorTimerRef.current);
     };
   }, []);
 
-  // Hydrate agents from API on mount
-  useEffect(() => {
-    fetchAgents()
-      .then((list) => {
-        dispatch({
-          type: "LOAD",
-          state: { agents: list, sources: [], edges: [] },
-        });
-      })
-      .catch(() => {
-        // API not yet available – start with empty canvas
-      });
-  }, []);
+  // Wire deleteEdge to also clear selection
+  const deleteEdge = useCallback(
+    (id: string) => {
+      deleteEdgeBase(id);
+      setSelEdge(null);
+    },
+    [deleteEdgeBase, setSelEdge],
+  );
 
   // Keyboard shortcuts
   useEffect(() => {
@@ -216,184 +130,17 @@ export function App() {
     };
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, [selNode, selEdge, agents]);
-
-  // Sim step sync
-  useEffect(() => {
-    if (!simMode || !steps.length) return;
-    const s = steps[cur];
-    if (!s) return;
-    if (s.nodeId) {
-      setActNode(s.nodeId);
-      setActEdge(null);
-    } else if (s.fromId && s.toId) {
-      const e = edges.find(
-        (e) =>
-          (e.from === s.fromId && e.to === s.toId) ||
-          (e.from === s.toId && e.to === s.fromId),
-      );
-      setActEdge(e ? e.id : null);
-      setActNode(s.fromId ?? null);
-    } else {
-      setActNode(null);
-      setActEdge(null);
-    }
-  }, [cur, simMode, steps, edges]);
-
-  const saveAgent = useCallback(
-    async (data: Agent) => {
-      const exists = agents.find((a) => a.id === data.id);
-      try {
-        const saved = exists
-          ? await updateAgent(data)
-          : await createAgent(data);
-        // preserve canvas position (API doesn't store it)
-        const withPos: Agent = { ...saved, position: data.position };
-        if (exists) {
-          dispatch({ type: "UPDATE_AGENT", agent: withPos });
-          const existing = edges
-            .filter((e) => e.from === data.id)
-            .map((e) => e.to);
-          withPos.connections
-            .filter((c) => !existing.includes(c))
-            .forEach((toId) =>
-              dispatch({
-                type: "ADD_EDGE",
-                edge: { id: uuid(), from: withPos.id, to: toId },
-              }),
-            );
-        } else {
-          dispatch({ type: "ADD_AGENT", agent: withPos });
-          withPos.connections.forEach((toId) =>
-            dispatch({
-              type: "ADD_EDGE",
-              edge: { id: uuid(), from: withPos.id, to: toId },
-            }),
-          );
-        }
-      } catch {
-        // API unavailable — fall back to local-only
-        if (exists) {
-          dispatch({ type: "UPDATE_AGENT", agent: data });
-          const existing = edges
-            .filter((e) => e.from === data.id)
-            .map((e) => e.to);
-          data.connections
-            .filter((c) => !existing.includes(c))
-            .forEach((toId) =>
-              dispatch({
-                type: "ADD_EDGE",
-                edge: { id: uuid(), from: data.id, to: toId },
-              }),
-            );
-        } else {
-          dispatch({ type: "ADD_AGENT", agent: data });
-          data.connections.forEach((toId) =>
-            dispatch({
-              type: "ADD_EDGE",
-              edge: { id: uuid(), from: data.id, to: toId },
-            }),
-          );
-        }
-      }
-      setPanel(null);
-    },
-    [agents, edges],
-  );
-
-  const deleteAgent = useCallback(async (id: string) => {
-    try {
-      await deleteAgentApi(id);
-    } catch {
-      // API unavailable — proceed with local delete
-    }
-    dispatch({ type: "DELETE_AGENT", id });
-    setPanel(null);
-    setSelNode(null);
-    setCtx(null);
-  }, []);
-
-  const saveSource = useCallback(
-    (data: Source) => {
-      if (sources.find((s) => s.id === data.id))
-        dispatch({ type: "UPDATE_SOURCE", source: data });
-      else dispatch({ type: "ADD_SOURCE", source: data });
-      setPanel(null);
-    },
-    [sources],
-  );
-
-  const deleteSource = useCallback((id: string) => {
-    dispatch({ type: "DELETE_SOURCE", id });
-    setPanel(null);
-    setSelNode(null);
-    setCtx(null);
-  }, []);
-
-  const connectNodes = useCallback(
-    (from: string, to: string) => {
-      dispatch({ type: "ADD_EDGE", edge: { id: uuid(), from, to } });
-      const ag = agents.find((a) => a.id === from);
-      if (ag && !ag.connections.includes(to))
-        dispatch({
-          type: "UPDATE_AGENT",
-          agent: { ...ag, connections: [...ag.connections, to] },
-        });
-    },
-    [agents],
-  );
-
-  const deleteEdge = useCallback(
-    (id: string) => {
-      const e = edges.find((e) => e.id === id);
-      if (e) {
-        const ag = agents.find((a) => a.id === e.from);
-        if (ag)
-          dispatch({
-            type: "UPDATE_AGENT",
-            agent: {
-              ...ag,
-              connections: ag.connections.filter((c) => c !== e.to),
-            },
-          });
-      }
-      dispatch({ type: "DELETE_EDGE", id });
-      setSelEdge(null);
-    },
-    [edges, agents],
-  );
-
-  const runSim = useCallback(
-    (prompt: string) => {
-      const s = generateSimSteps(agents, sources, prompt);
-      if (!s.length) return;
-      setSteps(s);
-      setCur(0);
-      setSim(true);
-      setLogExp(false);
-      const pts: AnimatedParticle[] = edges.map((e, i) => ({
-        id: uuid(),
-        from: e.from,
-        to: e.to,
-        dur: 0.55 + Math.random() * 0.3,
-        delay: i * 0.09,
-      }));
-      setParticles(pts);
-      if (particleTimerRef.current) clearTimeout(particleTimerRef.current);
-      particleTimerRef.current = setTimeout(() => setParticles([]), 3500);
-    },
-    [agents, sources, edges],
-  );
-
-  const stopSim = useCallback(() => {
-    if (particleTimerRef.current) clearTimeout(particleTimerRef.current);
-    setSim(false);
-    setSteps([]);
-    setCur(0);
-    setActNode(null);
-    setActEdge(null);
-    setParticles([]);
-  }, []);
+  }, [
+    selNode,
+    selEdge,
+    agents,
+    dispatch,
+    setPanel,
+    setCtx,
+    setSelNode,
+    setSelEdge,
+    setShowTweaks,
+  ]);
 
   const exportCanvas = useCallback(() => {
     const blob = new Blob(
@@ -433,17 +180,20 @@ export function App() {
         showImportError("Invalid JSON file");
       }
     },
-    [showImportError],
+    [dispatch, showImportError],
   );
 
-  const selectNode = useCallback((id: string, e: React.MouseEvent) => {
-    setSelNode(id);
-    setSelEdge(null);
-    if (e?.button === 2) {
-      e.preventDefault();
-      setCtx({ x: e.clientX, y: e.clientY, nodeId: id });
-    }
-  }, []);
+  const selectNode = useCallback(
+    (id: string, e: React.MouseEvent) => {
+      setSelNode(id);
+      setSelEdge(null);
+      if (e?.button === 2) {
+        e.preventDefault();
+        setCtx({ x: e.clientX, y: e.clientY, nodeId: id });
+      }
+    },
+    [setSelNode, setSelEdge, setCtx],
+  );
 
   const openPanel = useCallback(
     (id: string) => {
@@ -452,7 +202,7 @@ export function App() {
       else if (sources.some((s) => s.id === id))
         setPanel({ type: "source", id });
     },
-    [simMode, agents, sources],
+    [simMode, agents, sources, setPanel],
   );
 
   const nodeCtxItems = (id: string): ContextMenuItem[] => [
@@ -486,15 +236,18 @@ export function App() {
     },
   ];
 
-  const onSelectEdge = useCallback((id: string) => {
-    setSelEdge(id);
-    setSelNode(null);
-  }, []);
+  const onSelectEdge = useCallback(
+    (id: string) => {
+      setSelEdge(id);
+      setSelNode(null);
+    },
+    [setSelEdge, setSelNode],
+  );
 
   const onMoveNode = useCallback(
     (id: string, pos: { x: number; y: number }) =>
       dispatch({ type: "MOVE_NODE", id, position: pos }),
-    [],
+    [dispatch],
   );
 
   const onCanvasClick = useCallback(() => {
@@ -502,20 +255,27 @@ export function App() {
     setSelEdge(null);
     setPanel(null);
     setCtx(null);
-  }, []);
+  }, [setSelNode, setSelEdge, setPanel, setCtx]);
 
-  const onToggleTheme = useCallback(() => setDark((x) => !x), []);
   const onAddAgent = useCallback(() => {
     setPanel({ type: "agent", id: null });
     setSelNode(null);
-  }, []);
+  }, [setPanel, setSelNode]);
+
   const onAddSource = useCallback(() => {
     setPanel({ type: "source", id: null });
     setSelNode(null);
-  }, []);
-  const onClear = useCallback(() => dispatch({ type: "CLEAR" }), []);
-  const onAutoLayout = useCallback(() => dispatch({ type: "AUTO_LAYOUT" }), []);
-  const onToggleTweaks = useCallback(() => setShowTweaks((x) => !x), []);
+  }, [setPanel, setSelNode]);
+
+  const onClear = useCallback(() => dispatch({ type: "CLEAR" }), [dispatch]);
+  const onAutoLayout = useCallback(
+    () => dispatch({ type: "AUTO_LAYOUT" }),
+    [dispatch],
+  );
+  const onToggleTweaks = useCallback(
+    () => setShowTweaks((x) => !x),
+    [setShowTweaks],
+  );
 
   const panelAgent =
     panel?.type === "agent" && panel.id
@@ -562,7 +322,6 @@ export function App() {
         .pscroll::-webkit-scrollbar-thumb { background: rgba(139,26,47,0.22); border-radius: 2px; }
       `}</style>
 
-      {/* Full-bleed canvas */}
       <div
         style={{
           flex: 1,
@@ -592,13 +351,11 @@ export function App() {
           activeNodeId={activeNode}
           activeEdgeId={activeEdge}
           animatedParticles={particles}
-          dark={dark}
           tweaks={tweaks}
           onCanvasClick={onCanvasClick}
         />
       </div>
 
-      {/* Log wall */}
       {simMode && (
         <LogWall
           steps={steps}
@@ -607,15 +364,12 @@ export function App() {
           onPrev={() => setCur((s) => Math.max(s - 1, 0))}
           expanded={logExp}
           onToggleExpand={() => setLogExp((x) => !x)}
-          dark={dark}
         />
       )}
 
-      {/* Floating toolbar */}
       <Toolbar
         simMode={simMode}
-        dark={dark}
-        onToggleTheme={onToggleTheme}
+        onToggleTheme={toggleTheme}
         onAddAgent={onAddAgent}
         onAddSource={onAddSource}
         onClear={onClear}
@@ -627,43 +381,52 @@ export function App() {
         onToggleTweaks={onToggleTweaks}
       />
 
-      {/* Floating prompt bar */}
-      <PromptBar simMode={simMode} onRun={runSim} dark={dark} />
+      <PromptBar simMode={simMode} onRun={runSim} />
 
-      {/* Tweaks panel */}
       {showTweaks && (
         <TweaksPanel
           tweaks={tweaks}
           onChange={setTweak}
           onClose={() => setShowTweaks(false)}
-          dark={dark}
         />
       )}
 
-      {/* Slide-in panels */}
       {panel?.type === "agent" && (
         <AgentPanel
           key={panel.id ?? "new-agent"}
           agent={panelAgent}
           agents={agents}
-          onSave={saveAgent}
-          onDelete={deleteAgent}
+          onSave={async (data) => {
+            await saveAgent(data);
+            setPanel(null);
+          }}
+          onDelete={async (id) => {
+            await deleteAgent(id);
+            setPanel(null);
+            setSelNode(null);
+            setCtx(null);
+          }}
           onClose={() => setPanel(null)}
-          dark={dark}
         />
       )}
       {panel?.type === "source" && (
         <SourcePanel
           key={panel.id ?? "new-source"}
           source={panelSource}
-          onSave={saveSource}
-          onDelete={deleteSource}
+          onSave={(data) => {
+            saveSource(data);
+            setPanel(null);
+          }}
+          onDelete={(id) => {
+            deleteSource(id);
+            setPanel(null);
+            setSelNode(null);
+            setCtx(null);
+          }}
           onClose={() => setPanel(null)}
-          dark={dark}
         />
       )}
 
-      {/* Import error toast */}
       {importError && (
         <div
           style={{
@@ -686,18 +449,15 @@ export function App() {
         </div>
       )}
 
-      {/* Context menu */}
       {ctx && (
         <ContextMenu
           x={ctx.x}
           y={ctx.y}
-          dark={dark}
           items={ctx.nodeId ? nodeCtxItems(ctx.nodeId) : canvasCtxItems}
           onClose={() => setCtx(null)}
         />
       )}
 
-      {/* Keyboard hints */}
       {!simMode && hasNodes && (
         <div
           style={{

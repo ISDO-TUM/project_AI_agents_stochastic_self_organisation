@@ -3,6 +3,8 @@
 import { useEffect, useRef } from "react";
 import { SimStep } from "@/lib/types";
 import { BURG, BURG_LT, BURG_GLOW, getTheme } from "@/lib/theme";
+import { useTheme } from "@/lib/theme-context";
+
 import { LIcon } from "@/lib/icons";
 
 interface LogWallProps {
@@ -12,7 +14,6 @@ interface LogWallProps {
   onPrev: () => void;
   expanded: boolean;
   onToggleExpand: () => void;
-  dark: boolean;
 }
 
 function typeIcon(type: SimStep["type"]): string {
@@ -51,9 +52,9 @@ export function LogWall({
   onPrev,
   expanded,
   onToggleExpand,
-  dark,
 }: LogWallProps) {
   const listRef = useRef<HTMLDivElement>(null);
+  const { dark } = useTheme();
   const t = getTheme(dark);
 
   useEffect(() => {

@@ -4,6 +4,8 @@ import { useState, useMemo } from "react";
 import { Agent, Provider } from "@/lib/types";
 import { uuid, shortId, PROVIDERS, TOOLS } from "@/lib/utils";
 import { BURG, BURG_LT, BURG_DIM, getTheme } from "@/lib/theme";
+import { useTheme } from "@/lib/theme-context";
+
 import { LIcon, TOOL_ICON } from "@/lib/icons";
 import {
   FLabel,
@@ -20,7 +22,6 @@ interface AgentPanelProps {
   onSave: (agent: Agent) => void;
   onDelete: (id: string) => void;
   onClose: () => void;
-  dark: boolean;
 }
 
 interface AgentForm {
@@ -49,7 +50,6 @@ export function AgentPanel({
   onSave,
   onDelete,
   onClose,
-  dark,
 }: AgentPanelProps) {
   const [form, setForm] = useState<AgentForm>(
     agent
@@ -102,30 +102,28 @@ export function AgentPanel({
     onSave({ ...form, id: agent?.id ?? uuid(), position });
   };
 
+  const { dark } = useTheme();
   const t = getTheme(dark);
 
   return (
     <PanelShell
       title={agent ? "Configure Agent" : "New Agent"}
       onClose={onClose}
-      dark={dark}
       icon={agent ? "Bot" : "Plus"}
     >
-      <FLabel dark={dark}>Name</FLabel>
+      <FLabel>Name</FLabel>
       <FInput
         value={form.name}
         onChange={(v) => set("name", v)}
         placeholder="Agent name"
-        dark={dark}
       />
-      <FLabel dark={dark}>Description</FLabel>
+      <FLabel>Description</FLabel>
       <FInput
         value={form.description}
         onChange={(v) => set("description", v)}
         placeholder="What does this agent do?"
-        dark={dark}
       />
-      <FLabel dark={dark}>Provider</FLabel>
+      <FLabel>Provider</FLabel>
       <FSelect
         value={form.provider}
         onChange={handleProv}
@@ -133,9 +131,8 @@ export function AgentPanel({
           { value: "openai", label: "OpenAI" },
           { value: "anthropic", label: "Anthropic" },
         ]}
-        dark={dark}
       />
-      <FLabel dark={dark}>Model</FLabel>
+      <FLabel>Model</FLabel>
       <FSelect
         value={form.model}
         onChange={(v) => set("model", v)}
@@ -143,26 +140,30 @@ export function AgentPanel({
           value: m,
           label: m,
         }))}
-        dark={dark}
       />
-      <FLabel dark={dark}>System Prompt</FLabel>
+      <FLabel>System Prompt</FLabel>
       <FInput
         value={form.systemPrompt}
         onChange={(v) => set("systemPrompt", v)}
         placeholder="You are a helpful assistant…"
         multiline
         rows={5}
-        dark={dark}
       />
 
-      <FLabel dark={dark}>Tools</FLabel>
+      <FLabel>Tools</FLabel>
       <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
         {TOOLS.map((tool) => {
           const active = form.tools.includes(tool);
           return (
             <div
               key={tool}
+              role="checkbox"
+              aria-checked={active}
+              tabIndex={0}
               onClick={() => toggleTool(tool)}
+              onKeyDown={(e) =>
+                (e.key === " " || e.key === "Enter") && toggleTool(tool)
+              }
               style={{
                 display: "flex",
                 alignItems: "center",
@@ -177,11 +178,7 @@ export function AgentPanel({
                 transition: "all 0.15s",
               }}
             >
-              <Checkbox
-                checked={active}
-                onChange={() => toggleTool(tool)}
-                dark={dark}
-              />
+              <Checkbox checked={active} onChange={() => toggleTool(tool)} />
               <LIcon
                 name={TOOL_ICON[tool] || "Wrench"}
                 size={14}
@@ -201,13 +198,12 @@ export function AgentPanel({
         })}
       </div>
 
-      <FLabel dark={dark}>Connections</FLabel>
+      <FLabel>Connections</FLabel>
       <div style={{ display: "flex", gap: 8 }}>
         <FInput
           value={connIn}
           onChange={setConnIn}
           placeholder="Node ID or name"
-          dark={dark}
         />
         <button
           onClick={addConn}
@@ -305,7 +301,6 @@ export function AgentPanel({
           <FBtn
             variant="danger"
             onClick={() => onDelete(agent.id)}
-            dark={dark}
             icon="Trash2"
           >
             Delete
@@ -316,7 +311,6 @@ export function AgentPanel({
         <FBtn
           variant="primary"
           onClick={handleSave}
-          dark={dark}
           icon={agent ? undefined : "Plus"}
         >
           {agent ? "Save Agent" : "Create Agent"}

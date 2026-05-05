@@ -4,6 +4,8 @@ import { useState } from "react";
 import { Source, SourceType } from "@/lib/types";
 import { uuid } from "@/lib/utils";
 import { BURG_DIM, getTheme } from "@/lib/theme";
+import { useTheme } from "@/lib/theme-context";
+
 import { LIcon } from "@/lib/icons";
 import { FLabel, FInput, FSelect, FBtn, PanelShell } from "./panel-primitives";
 
@@ -12,7 +14,6 @@ interface SourcePanelProps {
   onSave: (source: Source) => void;
   onDelete: (id: string) => void;
   onClose: () => void;
-  dark: boolean;
 }
 
 interface SourceForm {
@@ -26,7 +27,6 @@ export function SourcePanel({
   onSave,
   onDelete,
   onClose,
-  dark,
 }: SourcePanelProps) {
   const [form, setForm] = useState<SourceForm>({
     name: source?.name ?? "",
@@ -45,23 +45,22 @@ export function SourcePanel({
     onSave({ ...form, id: source?.id ?? uuid(), position });
   };
 
+  const { dark } = useTheme();
   const t = getTheme(dark);
 
   return (
     <PanelShell
       title={source ? "Configure Source" : "New Source"}
       onClose={onClose}
-      dark={dark}
       icon={source ? "FileText" : "Plus"}
     >
-      <FLabel dark={dark}>Name</FLabel>
+      <FLabel>Name</FLabel>
       <FInput
         value={form.name}
         onChange={(v) => set("name", v)}
         placeholder="Source name"
-        dark={dark}
       />
-      <FLabel dark={dark}>Type</FLabel>
+      <FLabel>Type</FLabel>
       <FSelect
         value={form.type}
         onChange={(v) => set("type", v as SourceType)}
@@ -69,9 +68,8 @@ export function SourcePanel({
           { value: "text", label: "Text" },
           { value: "document", label: "Document" },
         ]}
-        dark={dark}
       />
-      <FLabel dark={dark}>Content</FLabel>
+      <FLabel>Content</FLabel>
       {form.type === "document" ? (
         <div
           style={{
@@ -97,7 +95,6 @@ export function SourcePanel({
           placeholder="Paste or type source content…"
           multiline
           rows={8}
-          dark={dark}
         />
       )}
       <div
@@ -114,7 +111,6 @@ export function SourcePanel({
           <FBtn
             variant="danger"
             onClick={() => onDelete(source.id)}
-            dark={dark}
             icon="Trash2"
           >
             Delete
@@ -125,7 +121,6 @@ export function SourcePanel({
         <FBtn
           variant="primary"
           onClick={handleSave}
-          dark={dark}
           icon={source ? undefined : "Plus"}
         >
           {source ? "Save Source" : "Create Source"}

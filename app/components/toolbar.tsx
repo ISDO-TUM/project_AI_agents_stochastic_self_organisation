@@ -3,10 +3,10 @@
 import { useRef, useState } from "react";
 import { LIcon } from "@/lib/icons";
 import { BURG, BURG_LT, getTheme } from "@/lib/theme";
+import { useTheme } from "@/lib/theme-context";
 
 interface ToolbarProps {
   simMode: boolean;
-  dark: boolean;
   onToggleTheme: () => void;
   onAddAgent: () => void;
   onAddSource: () => void;
@@ -86,7 +86,6 @@ function TBtn({
 
 export function Toolbar({
   simMode,
-  dark,
   onToggleTheme,
   onAddAgent,
   onAddSource,
@@ -98,6 +97,7 @@ export function Toolbar({
   showTweaks,
   onToggleTweaks,
 }: ToolbarProps) {
+  const { dark } = useTheme();
   const t = getTheme(dark);
   const fileRef = useRef<HTMLInputElement>(null);
 

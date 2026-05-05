@@ -1,5 +1,10 @@
+import { ThemeProvider } from "@/lib/theme-context";
 import { App } from "@/components/app";
 
 export default function Home() {
-  return <App />;
+  return (
+    <ThemeProvider>
+      <App />
+    </ThemeProvider>
+  );
 }

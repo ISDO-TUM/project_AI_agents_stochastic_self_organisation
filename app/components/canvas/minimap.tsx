@@ -2,15 +2,16 @@
 
 import { Agent, Source, Edge } from "@/lib/types";
 import { BURG, getTheme } from "@/lib/theme";
+import { useTheme } from "@/lib/theme-context";
 
 interface MinimapProps {
   agents: Agent[];
   sources: Source[];
   edges: Edge[];
-  dark: boolean;
 }
 
-export function Minimap({ agents, sources, edges, dark }: MinimapProps) {
+export function Minimap({ agents, sources, edges }: MinimapProps) {
+  const { dark } = useTheme();
   const t = getTheme(dark);
   const W = 160;
   const H = 100;

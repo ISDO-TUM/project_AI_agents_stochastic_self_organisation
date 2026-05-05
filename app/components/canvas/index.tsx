@@ -3,6 +3,8 @@
 import { useState, useRef, useEffect, useCallback } from "react";
 import { Agent, Source, Edge, AnimatedParticle, Tweaks } from "@/lib/types";
 import { clamp } from "@/lib/utils";
+import { useTheme } from "@/lib/theme-context";
+
 import { AgentNode } from "./agent-node";
 import { SourceNode } from "./source-node";
 import { EdgeLayer } from "./edge-layer";
@@ -23,7 +25,6 @@ interface CanvasProps {
   activeNodeId: string | null;
   activeEdgeId: string | null;
   animatedParticles: AnimatedParticle[];
-  dark: boolean;
   tweaks: Tweaks;
   onCanvasClick: () => void;
 }
@@ -56,10 +57,10 @@ export function Canvas({
   activeNodeId,
   activeEdgeId,
   animatedParticles,
-  dark,
   tweaks,
   onCanvasClick,
 }: CanvasProps) {
+  const { dark } = useTheme();
   const canvasRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
@@ -290,7 +291,6 @@ export function Canvas({
           onDeleteEdge={onDeleteEdge}
           activeEdgeId={activeEdgeId}
           animatedParticles={animatedParticles}
-          dark={dark}
           tweaks={tweaks}
         />
         {connectLine && (
@@ -332,7 +332,6 @@ export function Canvas({
             onSelect={onSelectNode}
             onDragEnd={onMoveNode}
             onConnectStart={handleConnectStart}
-            dark={dark}
             tweaks={tweaks}
           />
         ))}
@@ -346,7 +345,6 @@ export function Canvas({
             onSelect={onSelectNode}
             onDragEnd={onMoveNode}
             onConnectStart={handleConnectStart}
-            dark={dark}
             tweaks={tweaks}
           />
         ))}
@@ -452,9 +450,7 @@ export function Canvas({
       )}
 
       {/* Minimap */}
-      {hasNodes && (
-        <Minimap agents={agents} sources={sources} edges={edges} dark={dark} />
-      )}
+      {hasNodes && <Minimap agents={agents} sources={sources} edges={edges} />}
     </div>
   );
 }

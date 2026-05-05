@@ -3,15 +3,16 @@
 import { useState } from "react";
 import { LIcon } from "@/lib/icons";
 import { BURG, BURG_LT, BURG_GLOW, getTheme } from "@/lib/theme";
+import { useTheme } from "@/lib/theme-context";
 
 interface PromptBarProps {
   simMode: boolean;
   onRun: (prompt: string) => void;
-  dark: boolean;
 }
 
-export function PromptBar({ simMode, onRun, dark }: PromptBarProps) {
+export function PromptBar({ simMode, onRun }: PromptBarProps) {
   const [val, setVal] = useState("");
+  const { dark } = useTheme();
   const t = getTheme(dark);
   const canRun = !simMode && val.trim().length > 0;
 

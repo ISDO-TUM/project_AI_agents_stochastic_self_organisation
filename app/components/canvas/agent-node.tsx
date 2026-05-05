@@ -4,6 +4,8 @@ import { useCallback } from "react";
 import { Agent, Tweaks } from "@/lib/types";
 import { TOOL_ICON, LIcon } from "@/lib/icons";
 import { BURG_LT, BURG_GLOW, getTheme } from "@/lib/theme";
+import { useTheme } from "@/lib/theme-context";
+
 import { useDraggable } from "@/hooks/useDraggable";
 
 interface AgentNodeProps {
@@ -14,7 +16,6 @@ interface AgentNodeProps {
   onSelect: (id: string, e: React.MouseEvent) => void;
   onDragEnd: (id: string, position: { x: number; y: number }) => void;
   onConnectStart: (id: string, e: React.MouseEvent) => void;
-  dark: boolean;
   tweaks: Tweaks;
 }
 
@@ -26,7 +27,6 @@ export function AgentNode({
   onSelect,
   onDragEnd,
   onConnectStart,
-  dark,
   tweaks,
 }: AgentNodeProps) {
   const { onMouseDown: handleMouseDown } = useDraggable(
@@ -46,6 +46,7 @@ export function AgentNode({
     [agent.id, onConnectStart],
   );
 
+  const { dark } = useTheme();
   const t = getTheme(dark);
   const accent = tweaks.accentColor;
   const ns = tweaks.nodeSize;

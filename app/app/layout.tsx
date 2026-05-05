@@ -27,11 +27,8 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${spaceGrotesk.variable} ${jetbrainsMono.variable}`}
-      style={{ height: "100%" }}
     >
-      <body style={{ height: "100%", margin: 0 }} suppressHydrationWarning>
-        {children}
-      </body>
+      <body suppressHydrationWarning>{children}</body>
     </html>
   );
 }

@@ -2,6 +2,7 @@
 
 import { Agent, Source, Edge, AnimatedParticle, Tweaks } from "@/lib/types";
 import { BURG_LT } from "@/lib/theme";
+import { useTheme } from "@/lib/theme-context";
 
 interface EdgeLayerProps {
   edges: Edge[];
@@ -12,7 +13,6 @@ interface EdgeLayerProps {
   onDeleteEdge: (id: string) => void;
   activeEdgeId: string | null;
   animatedParticles: AnimatedParticle[];
-  dark: boolean;
   tweaks: Tweaks;
 }
 
@@ -52,9 +52,9 @@ export function EdgeLayer({
   onDeleteEdge,
   activeEdgeId,
   animatedParticles,
-  dark,
   tweaks,
 }: EdgeLayerProps) {
+  const { dark } = useTheme();
   const accent = tweaks.accentColor;
   const ew = tweaks.edgeWidth;
   const base = dark ? "rgba(255,255,255,0.09)" : "rgba(0,0,0,0.13)";

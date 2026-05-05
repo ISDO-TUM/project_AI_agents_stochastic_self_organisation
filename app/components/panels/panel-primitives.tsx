@@ -3,20 +3,24 @@
 import React, { useState } from "react";
 import { BURG, BURG_DIM, BURG_LT, getTheme } from "@/lib/theme";
 import { LIcon } from "@/lib/icons";
-
-interface DarkProps {
-  dark: boolean;
-}
+import { useTheme } from "@/lib/theme-context";
 
 export function Checkbox({
   checked,
   onChange,
-  dark,
-}: DarkProps & { checked: boolean; onChange: () => void }) {
+}: {
+  checked: boolean;
+  onChange: () => void;
+}) {
+  const { dark } = useTheme();
   const t = getTheme(dark);
   return (
     <div
+      role="checkbox"
+      aria-checked={checked}
+      tabIndex={0}
       onClick={onChange}
+      onKeyDown={(e) => (e.key === " " || e.key === "Enter") && onChange()}
       style={{
         width: 18,
         height: 18,
@@ -54,12 +58,19 @@ export function Checkbox({
 export function Toggle({
   checked,
   onChange,
-  dark,
-}: DarkProps & { checked: boolean; onChange: () => void }) {
+}: {
+  checked: boolean;
+  onChange: () => void;
+}) {
+  const { dark } = useTheme();
   const t = getTheme(dark);
   return (
     <div
+      role="switch"
+      aria-checked={checked}
+      tabIndex={0}
       onClick={onChange}
+      onKeyDown={(e) => (e.key === " " || e.key === "Enter") && onChange()}
       style={{
         width: 38,
         height: 22,
@@ -89,10 +100,8 @@ export function Toggle({
   );
 }
 
-export function FLabel({
-  children,
-  dark,
-}: DarkProps & { children: React.ReactNode }) {
+export function FLabel({ children }: { children: React.ReactNode }) {
+  const { dark } = useTheme();
   return (
     <div
       style={{
@@ -111,7 +120,7 @@ export function FLabel({
   );
 }
 
-interface FInputProps extends DarkProps {
+interface FInputProps {
   value: string;
   onChange: (value: string) => void;
   placeholder?: string;
@@ -125,8 +134,8 @@ export function FInput({
   placeholder,
   multiline,
   rows = 4,
-  dark,
 }: FInputProps) {
+  const { dark } = useTheme();
   const t = getTheme(dark);
   const base: React.CSSProperties = {
     width: "100%",
@@ -183,13 +192,14 @@ export function FInput({
   );
 }
 
-interface FSelectProps extends DarkProps {
+interface FSelectProps {
   value: string;
   onChange: (value: string) => void;
   options: { value: string; label: string }[];
 }
 
-export function FSelect({ value, onChange, options, dark }: FSelectProps) {
+export function FSelect({ value, onChange, options }: FSelectProps) {
+  const { dark } = useTheme();
   const t = getTheme(dark);
   return (
     <select
@@ -222,7 +232,7 @@ export function FSelect({ value, onChange, options, dark }: FSelectProps) {
   );
 }
 
-interface FBtnProps extends DarkProps {
+interface FBtnProps {
   children: React.ReactNode;
   onClick: () => void;
   variant?: "primary" | "danger" | "ghost";
@@ -233,10 +243,10 @@ export function FBtn({
   children,
   onClick,
   variant = "ghost",
-  dark,
   icon,
 }: FBtnProps) {
   const [hov, setHov] = useState(false);
+  const { dark } = useTheme();
   const t = getTheme(dark);
   let bg: string, color: string, border: string, shadow: string;
 
@@ -288,7 +298,7 @@ export function FBtn({
   );
 }
 
-interface PanelShellProps extends DarkProps {
+interface PanelShellProps {
   title: string;
   onClose: () => void;
   children: React.ReactNode;
@@ -299,9 +309,9 @@ export function PanelShell({
   title,
   onClose,
   children,
-  dark,
   icon,
 }: PanelShellProps) {
+  const { dark } = useTheme();
   const t = getTheme(dark);
   return (
     <div

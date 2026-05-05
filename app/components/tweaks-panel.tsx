@@ -2,6 +2,8 @@
 
 import { Tweaks } from "@/lib/types";
 import { BURG, getTheme } from "@/lib/theme";
+import { useTheme } from "@/lib/theme-context";
+
 import { LIcon } from "@/lib/icons";
 import { Toggle } from "./panels/panel-primitives";
 
@@ -11,7 +13,6 @@ interface TweaksPanelProps {
   tweaks: Tweaks;
   onChange: (key: keyof Tweaks, value: Tweaks[keyof Tweaks]) => void;
   onClose: () => void;
-  dark: boolean;
 }
 
 const ACCENT_SWATCHES = ["#8B1A2F", "#1A3A8B", "#1A7A3A", "#6B1A8B", "#7A5A1A"];
@@ -127,12 +128,8 @@ function Sec({
   );
 }
 
-export function TweaksPanel({
-  tweaks,
-  onChange,
-  onClose,
-  dark,
-}: TweaksPanelProps) {
+export function TweaksPanel({ tweaks, onChange, onClose }: TweaksPanelProps) {
+  const { dark } = useTheme();
   const t = getTheme(dark);
 
   return (
@@ -230,14 +227,12 @@ export function TweaksPanel({
             <Toggle
               checked={tweaks.showGrid}
               onChange={() => onChange("showGrid", !tweaks.showGrid)}
-              dark={dark}
             />
           </Row>
           <Row label="Ambient Orbs" t={t}>
             <Toggle
               checked={tweaks.showOrbs}
               onChange={() => onChange("showOrbs", !tweaks.showOrbs)}
-              dark={dark}
             />
           </Row>
         </Sec>
@@ -258,7 +253,6 @@ export function TweaksPanel({
             <Toggle
               checked={tweaks.showPulse}
               onChange={() => onChange("showPulse", !tweaks.showPulse)}
-              dark={dark}
             />
           </Row>
         </Sec>
@@ -270,7 +264,15 @@ export function TweaksPanel({
             {ACCENT_SWATCHES.map((col) => (
               <div
                 key={col}
+                role="radio"
+                aria-checked={tweaks.accentColor === col}
+                aria-label={`Accent colour ${col}`}
+                tabIndex={0}
                 onClick={() => onChange("accentColor", col)}
+                onKeyDown={(e) =>
+                  (e.key === " " || e.key === "Enter") &&
+                  onChange("accentColor", col)
+                }
                 style={{
                   width: 28,
                   height: 28,
