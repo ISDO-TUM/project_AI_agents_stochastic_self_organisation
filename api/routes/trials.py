@@ -126,4 +126,5 @@ async def get_trial(trial_id: str, db: DBDep) -> dict[str, Any]:
     trial = await load_trial(db, trial_id)
     if trial is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Trial not found")
-    return trial
+    result: dict[str, Any] = trial
+    return result

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from api.simulation import (
     AgentSpec,
     CompleteGraphTopology,
@@ -16,13 +18,15 @@ from api.simulation import (
 )
 
 
-def _fixed(answer: str):
+def _fixed(answer: str) -> Callable[[str], str]:
     """Return a callable that ignores the prompt and yields a fixed answer."""
     return lambda _prompt: answer
 
 
 def test_unanimous_agents_converge_in_one_round() -> None:
-    pool = InMemoryPool([AgentSpec(id=str(i), profile="agent", llm_call=_fixed("yes")) for i in range(4)])
+    pool = InMemoryPool(
+        [AgentSpec(id=str(i), profile="agent", llm_call=_fixed("yes")) for i in range(4)]
+    )
     topology = CompleteGraphTopology(pool.ids())
     consensus = ShapleySwarmConsensus(
         scoring=MonteCarloShapleyScoring(samples=8, seed=0),

@@ -22,10 +22,11 @@ async def _create_agent(client: AsyncClient, name: str, fixed_answer: str) -> st
         },
     )
     assert response.status_code == 201, response.text
-    return response.json()["id"]
+    agent_id: str = response.json()["id"]
+    return agent_id
 
 
-def _mock_openai_returns_system_prompt(prompt: str, model: str) -> str:  # noqa: ARG001
+def _mock_openai_returns_system_prompt(prompt: str, model: str) -> str:
     """Echo the first line of the prompt — which is the agent's system_prompt.
 
     `_collect_proposals` builds the prompt as ``f"{agent.profile}\\n\\nTask: ..."``,

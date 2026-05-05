@@ -89,7 +89,7 @@ export function useCanvasState() {
 
   useEffect(() => {
     fetchAgents()
-      .then((list) => {
+      .then((list: Agent[]) => {
         dispatch({
           type: "LOAD",
           state: { agents: list, sources: [], edges: [] },

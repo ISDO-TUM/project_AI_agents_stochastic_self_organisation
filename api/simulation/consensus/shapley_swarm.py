@@ -28,7 +28,7 @@ from api.simulation.types import ConsensusResult, Proposal, RoundState, Task
 
 
 @dataclass
-class ShapleySwarmConsensus(ConsensusProtocol):
+class ShapleySwarmConsensus(ConsensusProtocol):  # type: ignore[misc]
     """Decentralised consensus inspired by SelfOrg + AgentNet + Symphony."""
 
     aggregation: AggregationStrategy = field(default_factory=WeightedMajorityAggregation)
@@ -43,7 +43,7 @@ class ShapleySwarmConsensus(ConsensusProtocol):
             contexts = (
                 self.messaging.build_contexts(history, topology)
                 if history
-                else {aid: "" for aid in topology.nodes()}
+                else dict.fromkeys(topology.nodes(), "")
             )
             proposals = self._collect_proposals(pool, topology, task, contexts)
             scores = self.scoring.score(proposals, task, topology, self.aggregation)
