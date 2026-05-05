@@ -14,10 +14,12 @@ class BaseLLMProvider(ABC):
     max_iterations: int = 10
 
     @abstractmethod
-    def _get_client(self) -> Any: ...
+    def _get_client(self) -> Any:
+        raise NotImplementedError
 
     @abstractmethod
-    def _build_messages(self, prompt: str, system_prompt: str | None) -> list[dict[str, Any]]: ...
+    def _build_messages(self, prompt: str, system_prompt: str | None) -> list[dict[str, Any]]:
+        raise NotImplementedError
 
     @abstractmethod
     def _build_kwargs(
@@ -25,16 +27,20 @@ class BaseLLMProvider(ABC):
         model: str,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]] | None,
-    ) -> dict[str, Any]: ...
+    ) -> dict[str, Any]:
+        raise NotImplementedError
 
     @abstractmethod
-    async def _send(self, kwargs: dict[str, Any]) -> Any: ...
+    async def _send(self, kwargs: dict[str, Any]) -> Any:
+        raise NotImplementedError
 
     @abstractmethod
-    def _extract_tool_calls(self, response: Any) -> list[NormalizedToolCall]: ...
+    def _extract_tool_calls(self, response: Any) -> list[NormalizedToolCall]:
+        raise NotImplementedError
 
     @abstractmethod
-    def _extract_text(self, response: Any) -> str: ...
+    def _extract_text(self, response: Any) -> str:
+        raise NotImplementedError
 
     @abstractmethod
     def _append_assistant_and_tool_results(
@@ -42,7 +48,8 @@ class BaseLLMProvider(ABC):
         messages: list[dict[str, Any]],
         response: Any,
         tool_results: list[tuple[NormalizedToolCall, str]],
-    ) -> None: ...
+    ) -> None:
+        raise NotImplementedError
 
     async def call(
         self,
