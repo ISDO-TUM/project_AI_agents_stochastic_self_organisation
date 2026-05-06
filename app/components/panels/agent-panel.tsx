@@ -38,7 +38,7 @@ const defaultForm = (): AgentForm => ({
   name: "",
   description: "",
   provider: "openai",
-  model: "GPT-4o",
+  model: PROVIDERS["openai"].models[0].value,
   systemPrompt: "",
   tools: [],
   connections: [],
@@ -79,7 +79,7 @@ export function AgentPanel({
     setForm((f) => ({
       ...f,
       provider: v as Provider,
-      model: PROVIDERS[v].models[0],
+      model: PROVIDERS[v].models[0].value,
     }));
 
   const addConn = () => {
@@ -127,18 +127,18 @@ export function AgentPanel({
       <FSelect
         value={form.provider}
         onChange={handleProv}
-        options={[
-          { value: "openai", label: "OpenAI" },
-          { value: "anthropic", label: "Anthropic" },
-        ]}
+        options={Object.entries(PROVIDERS).map(([value, { label }]) => ({
+          value,
+          label,
+        }))}
       />
       <FLabel>Model</FLabel>
       <FSelect
         value={form.model}
         onChange={(v) => set("model", v)}
         options={PROVIDERS[form.provider].models.map((m) => ({
-          value: m,
-          label: m,
+          value: m.value,
+          label: m.label,
         }))}
       />
       <FLabel>System Prompt</FLabel>

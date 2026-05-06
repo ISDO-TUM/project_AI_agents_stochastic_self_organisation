@@ -1,4 +1,4 @@
-export type Provider = "openai" | "anthropic";
+export type Provider = "openai" | "anthropic" | "groq";
 export type SourceType = "text" | "document";
 export type SimStepType =
   | "system"

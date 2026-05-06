@@ -16,24 +16,44 @@ export function timestamp(): string {
   return `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-export const PROVIDERS: Record<string, { label: string; models: string[] }> = {
+export const PROVIDERS: Record<
+  string,
+  { label: string; models: Array<{ label: string; value: string }> }
+> = {
   openai: {
     label: "OpenAI",
-    models: ["GPT-4o", "GPT-4o-mini", "GPT-3.5-turbo"],
+    models: [
+      { label: "GPT-4o mini", value: "gpt-4o-mini" },
+      { label: "GPT-4o", value: "gpt-4o" },
+      { label: "GPT-5 nano", value: "gpt-5-nano" },
+      { label: "GPT-5 mini", value: "gpt-5-mini" },
+      { label: "GPT-5", value: "gpt-5" },
+      { label: "GPT-5.4 nano", value: "gpt-5.4-nano" },
+      { label: "GPT-5.4 mini", value: "gpt-5.4-mini" },
+      { label: "GPT-5.4", value: "gpt-5.4" },
+    ],
   },
   anthropic: {
     label: "Anthropic",
-    models: ["Claude Sonnet", "Claude Haiku", "Claude Opus"],
+    models: [
+      { label: "Claude Haiku 4.5", value: "claude-haiku-4-5-20251001" },
+      { label: "Claude Sonnet 4.6", value: "claude-sonnet-4-6" },
+      { label: "Claude Opus 4.7", value: "claude-opus-4-7" },
+    ],
+  },
+  groq: {
+    label: "Groq",
+    models: [
+      { label: "Llama 3.1 8B Instant", value: "llama-3.1-8b-instant" },
+      { label: "Llama 3.3 70B Versatile", value: "llama-3.3-70b-versatile" },
+      { label: "GPT OSS 20B", value: "openai/gpt-oss-20b" },
+      { label: "GPT OSS 120B", value: "openai/gpt-oss-120b" },
+    ],
   },
 };
 
-export const TOOLS: string[] = [
-  "Web Search",
-  "Database Query",
-  "Calculator",
-  "Document Reader",
-  "API Call",
-];
+// Must match tool names registered in api/tools/registry.py
+export const TOOLS: string[] = ["files"];
 
 export function autoLayout(
   agents: Agent[],
