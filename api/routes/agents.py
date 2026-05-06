@@ -3,14 +3,25 @@
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from typing import Annotated
 
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from api.db import deserialise_agent_row, get_db
-from api.schemas import AgentCreate, AgentResponse, AgentUpdate
+from api.db import deserialise_agent_row, deserialise_knowledge_file_row, get_db
+from api.llm import call_agent
+from api.schemas import (
+    AgentCreate,
+    AgentResponse,
+    AgentRunRequest,
+    AgentRunResponse,
+    AgentUpdate,
+    KnowledgeFileResponse,
+)
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agents", tags=["Agents"])
 
@@ -155,4 +166,102 @@ async def delete_agent(agent_id: str, db: DBDep) -> None:
         if await cur.fetchone() is None:
             raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     await db.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+    await db.commit()
+
+
+@router.post(
+    "/{agent_id}/run",
+    response_model=AgentRunResponse,
+    summary="Run an agent",
+    description=(
+        "Send a prompt to an existing agent. The agent's configured system prompt, "
+        "provider, model, and tools are loaded from the database and forwarded to "
+        "the LLM.  The final text response is returned."
+    ),
+)
+async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRunResponse:
+    async with db.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+
+    agent = deserialise_agent_row(row)
+
+    tool_names: list[str] = agent["tools"] or []
+    base_prompt = agent["system_prompt"] or ""
+
+    try:
+        response, tools_used = await call_agent(
+            body.prompt,
+            provider=agent["provider"],
+            model=agent["model"],
+            system_prompt=base_prompt,
+            tool_names=tool_names or None,
+            tool_context={"db": db, "agent_id": agent_id},
+        )
+    except Exception as exc:
+        logger.exception("Agent run failed for agent_id=%s", agent_id)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="LLM provider error. Check server logs for details.",
+        ) from exc
+
+    return AgentRunResponse(agent_id=agent_id, response=response, tools_used=tools_used)
+
+
+@router.get(
+    "/{agent_id}/files",
+    response_model=list[KnowledgeFileResponse],
+    summary="List files attached to an agent",
+)
+async def list_agent_files(agent_id: str, db: DBDep) -> list[KnowledgeFileResponse]:
+    async with db.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)) as cur:
+        if await cur.fetchone() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    async with db.execute(
+        """
+        SELECT kf.* FROM knowledge_files kf
+        JOIN agent_files af ON af.file_id = kf.id
+        WHERE af.agent_id = ?
+        """,
+        (agent_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+    return [KnowledgeFileResponse(**deserialise_knowledge_file_row(row)) for row in rows]
+
+
+@router.post(
+    "/{agent_id}/files/{file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Attach a file to an agent",
+)
+async def attach_file_to_agent(agent_id: str, file_id: str, db: DBDep) -> None:
+    async with db.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)) as cur:
+        if await cur.fetchone() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    async with db.execute("SELECT id FROM knowledge_files WHERE id = ?", (file_id,)) as cur:
+        if await cur.fetchone() is None:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found."
+            )
+    await db.execute(
+        "INSERT OR IGNORE INTO agent_files (agent_id, file_id) VALUES (?, ?)",
+        (agent_id, file_id),
+    )
+    await db.commit()
+
+
+@router.delete(
+    "/{agent_id}/files/{file_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Detach a file from an agent",
+)
+async def detach_file_from_agent(agent_id: str, file_id: str, db: DBDep) -> None:
+    async with db.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)) as cur:
+        if await cur.fetchone() is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    await db.execute(
+        "DELETE FROM agent_files WHERE agent_id = ? AND file_id = ?",
+        (agent_id, file_id),
+    )
     await db.commit()
