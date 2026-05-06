@@ -1,4 +1,4 @@
-import { Agent, Source } from "./types";
+import { Agent, Provider, Source } from "./types";
 
 export const uuid = () => crypto.randomUUID();
 
@@ -17,7 +17,7 @@ export function timestamp(): string {
 }
 
 export const PROVIDERS: Record<
-  string,
+  Provider,
   { label: string; models: Array<{ label: string; value: string }> }
 > = {
   openai: {

@@ -75,12 +75,14 @@ export function AgentPanel({
         ? form.tools.filter((t) => t !== tool)
         : [...form.tools, tool],
     );
-  const handleProv = (v: string) =>
+  const handleProv = (v: string) => {
+    const provider = v as Provider;
     setForm((f) => ({
       ...f,
-      provider: v as Provider,
-      model: PROVIDERS[v].models[0].value,
+      provider,
+      model: PROVIDERS[provider].models[0].value,
     }));
+  };
 
   const addConn = () => {
     const val = connIn.trim();
