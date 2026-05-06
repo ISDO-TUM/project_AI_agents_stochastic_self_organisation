@@ -146,3 +146,40 @@ class FilesToolResponse(BaseModel):
     """Response from the files tool handler."""
 
     result: str
+
+
+# ── Simulation ────────────────────────────────────────────────────────────────
+
+_SimStepType = Literal["system", "agent-to-agent", "tool", "agent-to-source"]
+
+
+class SimulationStep(BaseModel):
+    """A single event in the simulation log, mirroring the frontend SimStep type."""
+
+    id: str
+    ts: str
+    label: str
+    msg: str
+    type: _SimStepType
+    target: str | None = None
+    node_id: str | None = None
+    from_id: str | None = None
+    to_id: str | None = None
+
+
+class SimulationRunRequest(BaseModel):
+    """Request body for running a topology simulation."""
+
+    prompt: str = Field(description="The prompt broadcast to all agents.")
+    rounds: int = Field(
+        default=1,
+        ge=1,
+        le=10,
+        description="Discussion rounds after the initial broadcast.",
+    )
+
+
+class SimulationRunResponse(BaseModel):
+    """Ordered list of simulation steps returned after the run completes."""
+
+    steps: list[SimulationStep]

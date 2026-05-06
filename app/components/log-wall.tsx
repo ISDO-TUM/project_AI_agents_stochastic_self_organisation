@@ -1,11 +1,14 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useCallback } from "react";
 import { SimStep } from "@/lib/types";
 import { BURG, BURG_LT, BURG_GLOW, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
-
+import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { LIcon } from "@/lib/icons";
+
+const MIN_WIDTH = 220;
+const MAX_WIDTH = 640;
 
 interface LogWallProps {
   steps: SimStep[];
@@ -14,6 +17,8 @@ interface LogWallProps {
   onPrev: () => void;
   expanded: boolean;
   onToggleExpand: () => void;
+  sidebarWidth: number;
+  onSidebarWidthChange: (w: number) => void;
 }
 
 function typeIcon(type: SimStep["type"]): string {
@@ -52,11 +57,48 @@ export function LogWall({
   onPrev,
   expanded,
   onToggleExpand,
+  sidebarWidth,
+  onSidebarWidthChange,
 }: LogWallProps) {
   const listRef = useRef<HTMLDivElement>(null);
   const { dark } = useTheme();
   const t = getTheme(dark);
 
+  // ── Resize drag ────────────────────────────────────────────────────────
+  const dragRef = useRef<{ startX: number; startW: number } | null>(null);
+
+  const onResizeMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      dragRef.current = { startX: e.clientX, startW: sidebarWidth };
+    },
+    [sidebarWidth],
+  );
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragRef.current) return;
+      // handle is on the left edge → dragging left increases width
+      const delta = dragRef.current.startX - e.clientX;
+      onSidebarWidthChange(
+        Math.min(
+          MAX_WIDTH,
+          Math.max(MIN_WIDTH, dragRef.current.startW + delta),
+        ),
+      );
+    };
+    const onUp = () => {
+      dragRef.current = null;
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+    return () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+  }, [onSidebarWidthChange]);
+
+  // ── Scroll active step into view ──────────────────────────────────────────
   useEffect(() => {
     if (!listRef.current) return;
     const active = listRef.current.querySelector<HTMLElement>(
@@ -72,26 +114,9 @@ export function LogWall({
     }
   }, [currentStep]);
 
-  const width = expanded ? "100vw" : 290;
-
-  return (
-    <div
-      style={{
-        width,
-        minWidth: width,
-        height: "100%",
-        background: dark ? "rgba(5,4,10,0.95)" : "rgba(252,250,255,0.96)",
-        backdropFilter: "blur(24px)",
-        borderLeft: `1px solid ${t.border}`,
-        display: "flex",
-        flexDirection: "column",
-        flexShrink: 0,
-        position: expanded ? "absolute" : "relative",
-        inset: expanded ? 0 : "auto",
-        zIndex: 50,
-        animation: "logSlide 0.3s cubic-bezier(0.22,1,0.36,1)",
-      }}
-    >
+  // ── Shared panel content ───────────────────────────────────────────────────
+  const panelContent = (
+    <>
       {/* Header */}
       <div
         style={{
@@ -236,10 +261,27 @@ export function LogWall({
                       fontSize: 11,
                       color: isActive ? t.text : t.textSub,
                       lineHeight: 1.45,
-                      fontFamily: "'JetBrains Mono', monospace",
                     }}
                   >
-                    {step.msg}
+                    {isActive ? (
+                      <MarkdownRenderer
+                        content={step.msg}
+                        fontSize={expanded ? 13 : 11}
+                        compact
+                      />
+                    ) : (
+                      <span
+                        style={{
+                          fontFamily: "'JetBrains Mono', monospace",
+                          display: "-webkit-box",
+                          WebkitLineClamp: 2,
+                          WebkitBoxOrient: "vertical",
+                          overflow: "hidden",
+                        }}
+                      >
+                        {step.msg}
+                      </span>
+                    )}
                   </div>
                   {isActive && (
                     <div style={{ marginTop: 6 }}>
@@ -331,6 +373,91 @@ export function LogWall({
           Next <LIcon name="ChevronRight" size={13} color="currentColor" />
         </button>
       </div>
+    </>
+  );
+
+  // ── Expanded modal ─────────────────────────────────────────────────────────
+  if (expanded) {
+    return (
+      <div
+        style={{
+          position: "fixed",
+          inset: 0,
+          zIndex: 500,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          background: dark ? "rgba(0,0,0,0.65)" : "rgba(220,216,235,0.6)",
+          backdropFilter: "blur(12px)",
+          WebkitBackdropFilter: "blur(12px)",
+          animation: "fadeIn 0.2s ease-out",
+        }}
+        onClick={(e) => {
+          // Close when clicking the backdrop
+          if (e.target === e.currentTarget) onToggleExpand();
+        }}
+      >
+        <div
+          style={{
+            width: "min(860px, 92vw)",
+            height: "82vh",
+            background: dark ? "rgba(8,6,16,0.97)" : "rgba(255,254,255,0.98)",
+            border: `1px solid ${t.borderHi}`,
+            borderRadius: 16,
+            display: "flex",
+            flexDirection: "column",
+            overflow: "hidden",
+            boxShadow: dark
+              ? "0 24px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(139,26,47,0.2)"
+              : "0 24px 80px rgba(0,0,0,0.18), 0 0 0 1px rgba(139,26,47,0.14)",
+            animation: "logSlide 0.28s cubic-bezier(0.22,1,0.36,1)",
+          }}
+        >
+          {panelContent}
+        </div>
+      </div>
+    );
+  }
+
+  // ── Sidebar (resizable) ────────────────────────────────────────────────────
+  return (
+    <div
+      style={{
+        width: sidebarWidth,
+        minWidth: sidebarWidth,
+        height: "100%",
+        background: dark ? "rgba(5,4,10,0.95)" : "rgba(252,250,255,0.96)",
+        backdropFilter: "blur(24px)",
+        borderLeft: `1px solid ${t.border}`,
+        display: "flex",
+        flexDirection: "column",
+        flexShrink: 0,
+        position: "relative",
+        zIndex: 50,
+        animation: "logSlide 0.3s cubic-bezier(0.22,1,0.36,1)",
+      }}
+    >
+      {/* Resize handle — left edge */}
+      <div
+        onMouseDown={onResizeMouseDown}
+        style={{
+          position: "absolute",
+          left: 0,
+          top: 0,
+          bottom: 0,
+          width: 5,
+          cursor: "col-resize",
+          zIndex: 10,
+        }}
+        onMouseEnter={(e) => {
+          (e.currentTarget as HTMLDivElement).style.background =
+            "rgba(139,26,47,0.18)";
+        }}
+        onMouseLeave={(e) => {
+          (e.currentTarget as HTMLDivElement).style.background = "transparent";
+        }}
+      />
+      {panelContent}
     </div>
   );
 }
