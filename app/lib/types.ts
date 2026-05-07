@@ -31,6 +31,12 @@ export interface Source {
   position: Position;
 }
 
+export interface KnowledgeFile {
+  id: string;
+  name: string;
+  content: string;
+}
+
 export interface Edge {
   id: string;
   from: string;

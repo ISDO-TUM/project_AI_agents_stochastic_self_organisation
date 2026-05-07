@@ -80,6 +80,8 @@ class KnowledgeFileBase(BaseModel):
 class KnowledgeFileCreate(KnowledgeFileBase):
     """Request body for creating a knowledge file."""
 
+    id: str | None = None
+
 
 class KnowledgeFileUpdate(BaseModel):
     """Partial update body; only supplied fields are written to the database."""

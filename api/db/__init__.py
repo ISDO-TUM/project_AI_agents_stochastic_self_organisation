@@ -86,3 +86,32 @@ def deserialise_agent_row(row: aiosqlite.Row) -> dict[str, Any]:
 def deserialise_knowledge_file_row(row: aiosqlite.Row) -> dict[str, Any]:
     """Convert a knowledge_files table row to a plain dict."""
     return dict(row)
+
+
+async def load_agent_file_names(
+    db: aiosqlite.Connection, agent_id: str
+) -> list[str]:
+    """Return the names of all knowledge files attached to an agent."""
+    async with db.execute(
+        """
+        SELECT kf.name
+          FROM knowledge_files kf
+          JOIN agent_files af ON af.file_id = kf.id
+         WHERE af.agent_id = ?
+        """,
+        (agent_id,),
+    ) as cur:
+        rows = await cur.fetchall()
+    return [r["name"] for r in rows]
+
+
+def hint_files_in_prompt(
+    system_prompt: str | None,
+    file_names: list[str],
+) -> str | None:
+    """Append a one-line hint listing available file names so the agent can decide to read them."""
+    if not file_names:
+        return system_prompt or None
+    names = ", ".join(f'"{n}"' for n in file_names)
+    hint = f"\n\nYou have the following knowledge files available via the 'files' tool: {names}."
+    return (system_prompt or "") + hint

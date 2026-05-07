@@ -5,7 +5,7 @@
  * No NEXT_PUBLIC_ env var needed — the proxy handles both dev and Docker.
  */
 
-import type { Agent, Provider } from "./types";
+import type { Agent, KnowledgeFile, Provider } from "./types";
 
 // ─── Wire types ──────────────────────────────────────────────────────────────
 
@@ -111,6 +111,48 @@ export async function updateAgent(agent: Agent): Promise<Agent> {
 
 export async function deleteAgentApi(id: string): Promise<void> {
   await request<void>("DELETE", `/api/agents/${id}`);
+}
+
+export async function patchAgentTools(id: string, tools: string[]): Promise<void> {
+  await request<AgentOut>("PATCH", `/api/agents/${id}`, { tools });
+}
+
+// ─── Knowledge File endpoints ─────────────────────────────────────────────────
+
+export async function fetchFiles(): Promise<KnowledgeFile[]> {
+  return request<KnowledgeFile[]>("GET", "/api/files/");
+}
+
+export async function createFile(
+  name: string,
+  content: string,
+  id?: string,
+): Promise<KnowledgeFile> {
+  return request<KnowledgeFile>("POST", "/api/files/", { name, content, id });
+}
+
+export async function updateFileContent(
+  id: string,
+  name: string,
+  content: string,
+): Promise<KnowledgeFile> {
+  return request<KnowledgeFile>("PUT", `/api/files/${id}`, { name, content });
+}
+
+export async function deleteFileApi(id: string): Promise<void> {
+  await request<void>("DELETE", `/api/files/${id}`);
+}
+
+export async function fetchAgentFiles(agentId: string): Promise<KnowledgeFile[]> {
+  return request<KnowledgeFile[]>("GET", `/api/agents/${agentId}/files`);
+}
+
+export async function attachFile(agentId: string, fileId: string): Promise<void> {
+  await request<void>("POST", `/api/agents/${agentId}/files/${fileId}`);
+}
+
+export async function detachFile(agentId: string, fileId: string): Promise<void> {
+  await request<void>("DELETE", `/api/agents/${agentId}/files/${fileId}`);
 }
 
 // ─── Agent run ────────────────────────────────────────────────────────────────

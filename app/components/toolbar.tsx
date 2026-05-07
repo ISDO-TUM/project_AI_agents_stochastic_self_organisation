@@ -9,7 +9,7 @@ interface ToolbarProps {
   simMode: boolean;
   onToggleTheme: () => void;
   onAddAgent: () => void;
-  onAddSource: () => void;
+  onAddFile: () => void;
   onClear: () => void;
   onStop: () => void;
   onAutoLayout: () => void;
@@ -84,11 +84,99 @@ function TBtn({
   );
 }
 
+function ToolsDropdown({
+  onAddFile,
+  t,
+}: {
+  onAddFile: () => void;
+  t: ReturnType<typeof getTheme>;
+}) {
+  const [open, setOpen] = useState(false);
+  const { dark } = useTheme();
+
+  return (
+    <div style={{ position: "relative" }}>
+      <TBtn
+        onClick={() => setOpen((x) => !x)}
+        icon="Wrench"
+        title="Tools"
+        active={open}
+        t={t}
+      >
+        Tools
+      </TBtn>
+      {open && (
+        <>
+          <div
+            style={{ position: "fixed", inset: 0, zIndex: 98 }}
+            onClick={() => setOpen(false)}
+          />
+          <div
+            style={{
+              position: "absolute",
+              top: "calc(100% + 6px)",
+              left: "50%",
+              transform: "translateX(-50%)",
+              background: dark
+                ? "rgba(12,10,22,0.97)"
+                : "rgba(255,254,255,0.98)",
+              border: `1px solid ${t.borderHi}`,
+              borderRadius: 10,
+              padding: "5px 0",
+              minWidth: 140,
+              zIndex: 99,
+              boxShadow: dark
+                ? "0 8px 32px rgba(0,0,0,0.55)"
+                : "0 8px 24px rgba(0,0,0,0.12)",
+              animation: "fadeIn 0.15s ease-out",
+            }}
+          >
+            <button
+              onClick={() => {
+                setOpen(false);
+                onAddFile();
+              }}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 9,
+                width: "100%",
+                background: "none",
+                border: "none",
+                color: t.textSub,
+                fontSize: 12,
+                fontWeight: 600,
+                padding: "8px 14px",
+                cursor: "pointer",
+                textAlign: "left",
+                transition: "all 0.12s",
+              }}
+              onMouseEnter={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  t.hover;
+                (e.currentTarget as HTMLButtonElement).style.color = t.text;
+              }}
+              onMouseLeave={(e) => {
+                (e.currentTarget as HTMLButtonElement).style.background =
+                  "none";
+                (e.currentTarget as HTMLButtonElement).style.color = t.textSub;
+              }}
+            >
+              <LIcon name="FileText" size={13} color="currentColor" />
+              Files
+            </button>
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function Toolbar({
   simMode,
   onToggleTheme,
   onAddAgent,
-  onAddSource,
+  onAddFile,
   onClear,
   onStop,
   onAutoLayout,
@@ -173,14 +261,7 @@ export function Toolbar({
             <TBtn onClick={onAddAgent} icon="Plus" title="Add Agent" t={t}>
               Agent
             </TBtn>
-            <TBtn
-              onClick={onAddSource}
-              icon="FileText"
-              title="Add Source"
-              t={t}
-            >
-              Source
-            </TBtn>
+            <ToolsDropdown onAddFile={onAddFile} t={t} />
             <Sep t={t} />
             <TBtn
               onClick={onAutoLayout}

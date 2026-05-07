@@ -26,7 +26,7 @@ from typing import Any
 
 import aiosqlite
 
-from api.db import deserialise_agent_row
+from api.db import deserialise_agent_row, hint_files_in_prompt, load_agent_file_names
 from api.llm import call_agent
 from api.schemas import SimulationStep
 
@@ -44,11 +44,13 @@ def _step(**kwargs: Any) -> SimulationStep:
 
 async def _call_agent(agent: dict[str, Any], prompt: str, db: aiosqlite.Connection) -> str:
     """Invoke an agent and return its text response."""
+    file_names = await load_agent_file_names(db, agent["id"])
+    system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, file_names)
     response, _ = await call_agent(
         prompt,
         provider=agent["provider"],
         model=agent["model"],
-        system_prompt=agent["system_prompt"] or None,
+        system_prompt=system_prompt,
         tool_names=agent["tools"] or None,
         tool_context={"db": db, "agent_id": agent["id"]},
     )

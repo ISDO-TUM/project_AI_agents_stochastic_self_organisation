@@ -239,7 +239,7 @@ export function App() {
       },
     },
     {
-      label: "Add Source",
+      label: "Add File",
       icon: "FileText",
       fn: () => {
         setPanel({ type: "source", id: null });
@@ -274,7 +274,7 @@ export function App() {
     setSelNode(null);
   }, [setPanel, setSelNode]);
 
-  const onAddSource = useCallback(() => {
+  const onAddFile = useCallback(() => {
     setPanel({ type: "source", id: null });
     setSelNode(null);
   }, [setPanel, setSelNode]);
@@ -372,7 +372,7 @@ export function App() {
           simMode={simMode}
           onToggleTheme={toggleTheme}
           onAddAgent={onAddAgent}
-          onAddSource={onAddSource}
+          onAddFile={onAddFile}
           onClear={onClear}
           onStop={stopSim}
           onAutoLayout={onAutoLayout}

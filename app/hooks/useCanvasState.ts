@@ -8,6 +8,12 @@ import {
   createAgent,
   updateAgent,
   deleteAgentApi,
+  createFile,
+  updateFileContent,
+  deleteFileApi,
+  attachFile,
+  detachFile,
+  patchAgentTools,
 } from "@/lib/api";
 
 function reducer(state: CanvasState, action: CanvasAction): CanvasState {
@@ -166,48 +172,98 @@ export function useCanvasState() {
   }, []);
 
   const saveSource = useCallback(
-    (data: Source) => {
-      if (sources.find((s) => s.id === data.id))
+    async (data: Source) => {
+      const exists = sources.find((s) => s.id === data.id);
+      if (exists) {
         dispatch({ type: "UPDATE_SOURCE", source: data });
-      else dispatch({ type: "ADD_SOURCE", source: data });
+        updateFileContent(data.id, data.name, data.content).catch(() => {});
+      } else {
+        dispatch({ type: "ADD_SOURCE", source: data });
+        createFile(data.name, data.content, data.id).catch(() => {});
+      }
     },
     [sources],
   );
 
-  const deleteSource = useCallback((id: string) => {
-    dispatch({ type: "DELETE_SOURCE", id });
-  }, []);
+  const deleteSource = useCallback(
+    (id: string) => {
+      dispatch({ type: "DELETE_SOURCE", id });
+      deleteFileApi(id).catch(() => {});
+    },
+    [],
+  );
 
   const connectNodes = useCallback(
     (from: string, to: string) => {
       dispatch({ type: "ADD_EDGE", edge: { id: uuid(), from, to } });
-      const ag = agents.find((a) => a.id === from);
-      if (ag && !ag.connections.includes(to))
+
+      // agent→agent: update connections list
+      const agFrom = agents.find((a) => a.id === from);
+      if (agFrom && !agFrom.connections.includes(to)) {
         dispatch({
           type: "UPDATE_AGENT",
-          agent: { ...ag, connections: [...ag.connections, to] },
+          agent: { ...agFrom, connections: [...agFrom.connections, to] },
         });
+      }
+
+      // source→agent: attach file + auto-check "files" tool
+      const srcFrom = sources.find((s) => s.id === from);
+      const agTo = agents.find((a) => a.id === to);
+      if (srcFrom && agTo) {
+        attachFile(agTo.id, srcFrom.id).catch(() => {});
+        if (!agTo.tools.includes("files")) {
+          const updatedTools = [...agTo.tools, "files"];
+          dispatch({
+            type: "UPDATE_AGENT",
+            agent: { ...agTo, tools: updatedTools },
+          });
+          patchAgentTools(agTo.id, updatedTools).catch(() => {});
+        }
+      }
     },
-    [agents],
+    [agents, sources],
   );
 
   const deleteEdge = useCallback(
     (id: string) => {
-      const e = edges.find((e) => e.id === id);
+      const e = edges.find((edge) => edge.id === id);
       if (e) {
-        const ag = agents.find((a) => a.id === e.from);
-        if (ag)
+        // agent→agent: remove from connections list
+        const agFrom = agents.find((a) => a.id === e.from);
+        if (agFrom) {
           dispatch({
             type: "UPDATE_AGENT",
             agent: {
-              ...ag,
-              connections: ag.connections.filter((c) => c !== e.to),
+              ...agFrom,
+              connections: agFrom.connections.filter((c) => c !== e.to),
             },
           });
+        }
+
+        // source→agent: detach file + maybe uncheck "files" tool
+        const srcFrom = sources.find((s) => s.id === e.from);
+        const agTo = agents.find((a) => a.id === e.to);
+        if (srcFrom && agTo) {
+          detachFile(agTo.id, srcFrom.id).catch(() => {});
+          const remainingSources = edges.filter(
+            (edge) =>
+              edge.id !== id &&
+              edge.to === agTo.id &&
+              sources.some((s) => s.id === edge.from),
+          );
+          if (remainingSources.length === 0) {
+            const updatedTools = agTo.tools.filter((t) => t !== "files");
+            dispatch({
+              type: "UPDATE_AGENT",
+              agent: { ...agTo, tools: updatedTools },
+            });
+            patchAgentTools(agTo.id, updatedTools).catch(() => {});
+          }
+        }
       }
       dispatch({ type: "DELETE_EDGE", id });
     },
-    [edges, agents],
+    [edges, agents, sources],
   );
 
   return {

@@ -25,7 +25,6 @@ export function useSimulation(
     };
   }, []);
 
-  // Highlight the active node/edge whenever the current step changes.
   useEffect(() => {
     if (!simMode || !steps.length) return;
     const s = steps[cur];
@@ -51,7 +50,6 @@ export function useSimulation(
     async (prompt: string) => {
       if (agents.length === 0) return;
 
-      // Open the log wall immediately with a status step.
       setSteps([
         {
           id: uuid(),
@@ -67,7 +65,6 @@ export function useSimulation(
       setSim(true);
       setLogExp(false);
 
-      // Animate particles on all edges.
       const pts: AnimatedParticle[] = edges.map((e, i) => ({
         id: uuid(),
         from: e.from,
@@ -79,34 +76,44 @@ export function useSimulation(
       if (particleTimerRef.current) clearTimeout(particleTimerRef.current);
       particleTimerRef.current = setTimeout(() => setParticles([]), 3500);
 
-      // Run all agents in parallel; append a step as each one completes.
       await Promise.allSettled(
         agents.map(async (agent) => {
-          let step: SimStep;
           try {
-            const { response } = await runAgent(agent.id, prompt);
-            step = {
-              id: uuid(),
-              ts: timestamp(),
-              label: agent.name,
-              msg: response,
-              type: "system",
-              nodeId: agent.id,
-            };
+            const { response, tools_used } = await runAgent(agent.id, prompt);
+
+            const newSteps: SimStep[] = [
+              ...tools_used.map((tool) => ({
+                id: uuid(),
+                ts: timestamp(),
+                label: tool.name,
+                msg: `**Input:** ${JSON.stringify(tool.input)}\n\n**Output:** ${tool.output}`,
+                type: "tool" as const,
+                nodeId: agent.id,
+              })),
+              {
+                id: uuid(),
+                ts: timestamp(),
+                label: agent.name,
+                msg: response,
+                type: "system" as const,
+                nodeId: agent.id,
+              },
+            ];
+
+            setSteps((prev) => [...prev, ...newSteps]);
+            setCur((c) => c + newSteps.length);
           } catch (err) {
-            step = {
+            const errStep: SimStep = {
               id: uuid(),
               ts: timestamp(),
               label: agent.name,
-              msg: `Error: ${
-                err instanceof Error ? err.message : "run failed"
-              }`,
+              msg: `Error: ${err instanceof Error ? err.message : "run failed"}`,
               type: "system",
               nodeId: agent.id,
             };
+            setSteps((prev) => [...prev, errStep]);
+            setCur((c) => c + 1);
           }
-          setSteps((prev) => [...prev, step]);
-          setCur((c) => c + 1);
         }),
       );
     },
