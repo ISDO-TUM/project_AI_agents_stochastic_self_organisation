@@ -1,12 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Agent, Source, Edge, SimStep, AnimatedParticle } from "@/lib/types";
+import { Agent, Edge, SimStep, AnimatedParticle } from "@/lib/types";
 import { uuid, timestamp } from "@/lib/utils";
 import { runAgent } from "@/lib/api";
 
 function formatToolMsg(tool: {
-  name: string;
   input: Record<string, unknown>;
   output: string;
 }): string {
@@ -22,11 +21,7 @@ function formatToolMsg(tool: {
   return `${inputLine}\n\n**Result:**\n${outputBlock}`;
 }
 
-export function useSimulation(
-  agents: Agent[],
-  _sources: Source[],
-  edges: Edge[],
-) {
+export function useSimulation(agents: Agent[], edges: Edge[]) {
   const [steps, setSteps] = useState<SimStep[]>([]);
   const [cur, setCur] = useState(0);
   const [simMode, setSim] = useState(false);

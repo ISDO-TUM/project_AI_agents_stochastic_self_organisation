@@ -63,7 +63,7 @@ export function App() {
     particles,
     runSim,
     stopSim,
-  } = useSimulation(agents, sources, edges);
+  } = useSimulation(agents, edges);
 
   const [logSidebarWidth, setLogSidebarWidth] = useState(290);
   const prevSidebarWidth = useRef(290);

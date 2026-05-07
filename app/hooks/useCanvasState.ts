@@ -106,57 +106,32 @@ export function useCanvasState() {
 
   const saveAgent = useCallback(
     async (data: Agent) => {
-      const exists = agents.find((a) => a.id === data.id);
+      const exists = !!agents.find((a) => a.id === data.id);
+
+      const apply = (agent: Agent) => {
+        const existingTargets = edges
+          .filter((e) => e.from === agent.id)
+          .map((e) => e.to);
+        if (exists) {
+          dispatch({ type: "UPDATE_AGENT", agent });
+          agent.connections
+            .filter((c) => !existingTargets.includes(c))
+            .forEach((toId) =>
+              dispatch({ type: "ADD_EDGE", edge: { id: uuid(), from: agent.id, to: toId } }),
+            );
+        } else {
+          dispatch({ type: "ADD_AGENT", agent });
+          agent.connections.forEach((toId) =>
+            dispatch({ type: "ADD_EDGE", edge: { id: uuid(), from: agent.id, to: toId } }),
+          );
+        }
+      };
+
       try {
-        const saved = exists
-          ? await updateAgent(data)
-          : await createAgent(data);
-        const withPos: Agent = { ...saved, position: data.position };
-        if (exists) {
-          dispatch({ type: "UPDATE_AGENT", agent: withPos });
-          const existing = edges
-            .filter((e) => e.from === data.id)
-            .map((e) => e.to);
-          withPos.connections
-            .filter((c) => !existing.includes(c))
-            .forEach((toId) =>
-              dispatch({
-                type: "ADD_EDGE",
-                edge: { id: uuid(), from: withPos.id, to: toId },
-              }),
-            );
-        } else {
-          dispatch({ type: "ADD_AGENT", agent: withPos });
-          withPos.connections.forEach((toId) =>
-            dispatch({
-              type: "ADD_EDGE",
-              edge: { id: uuid(), from: withPos.id, to: toId },
-            }),
-          );
-        }
+        const saved = exists ? await updateAgent(data) : await createAgent(data);
+        apply({ ...saved, position: data.position });
       } catch {
-        if (exists) {
-          dispatch({ type: "UPDATE_AGENT", agent: data });
-          const existing = edges
-            .filter((e) => e.from === data.id)
-            .map((e) => e.to);
-          data.connections
-            .filter((c) => !existing.includes(c))
-            .forEach((toId) =>
-              dispatch({
-                type: "ADD_EDGE",
-                edge: { id: uuid(), from: data.id, to: toId },
-              }),
-            );
-        } else {
-          dispatch({ type: "ADD_AGENT", agent: data });
-          data.connections.forEach((toId) =>
-            dispatch({
-              type: "ADD_EDGE",
-              edge: { id: uuid(), from: data.id, to: toId },
-            }),
-          );
-        }
+        apply(data);
       }
     },
     [agents, edges],
