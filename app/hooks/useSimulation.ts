@@ -5,6 +5,23 @@ import { Agent, Source, Edge, SimStep, AnimatedParticle } from "@/lib/types";
 import { uuid, timestamp } from "@/lib/utils";
 import { runAgent } from "@/lib/api";
 
+function formatToolMsg(tool: {
+  name: string;
+  input: Record<string, unknown>;
+  output: string;
+}): string {
+  const inputLine = Object.entries(tool.input)
+    .map(([k, v]) => `**${k}:** \`${String(v)}\``)
+    .join(" · ");
+
+  const output = tool.output.trim();
+  const outputBlock = output.includes("\n")
+    ? `\`\`\`\n${output}\n\`\`\``
+    : output;
+
+  return `${inputLine}\n\n**Result:**\n${outputBlock}`;
+}
+
 export function useSimulation(
   agents: Agent[],
   _sources: Source[],
@@ -86,7 +103,7 @@ export function useSimulation(
                 id: uuid(),
                 ts: timestamp(),
                 label: tool.name,
-                msg: `**Input:** ${JSON.stringify(tool.input)}\n\n**Output:** ${tool.output}`,
+                msg: formatToolMsg(tool),
                 type: "tool" as const,
                 nodeId: agent.id,
               })),

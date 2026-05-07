@@ -258,30 +258,24 @@ export function LogWall({
                   </div>
                   <div
                     style={{
-                      fontSize: 11,
+                      fontSize: isActive ? (expanded ? 13 : 11) : 11,
                       color: isActive ? t.text : t.textSub,
                       lineHeight: 1.45,
+                      ...(!isActive && {
+                        maxHeight: 52,
+                        overflow: "hidden",
+                        maskImage:
+                          "linear-gradient(to bottom, black 50%, transparent 100%)",
+                        WebkitMaskImage:
+                          "linear-gradient(to bottom, black 50%, transparent 100%)",
+                      }),
                     }}
                   >
-                    {isActive ? (
-                      <MarkdownRenderer
-                        content={step.msg}
-                        fontSize={expanded ? 13 : 11}
-                        compact
-                      />
-                    ) : (
-                      <span
-                        style={{
-                          fontFamily: "'JetBrains Mono', monospace",
-                          display: "-webkit-box",
-                          WebkitLineClamp: 2,
-                          WebkitBoxOrient: "vertical",
-                          overflow: "hidden",
-                        }}
-                      >
-                        {step.msg}
-                      </span>
-                    )}
+                    <MarkdownRenderer
+                      content={step.msg}
+                      fontSize={isActive && expanded ? 13 : 11}
+                      compact
+                    />
                   </div>
                   {isActive && (
                     <div style={{ marginTop: 6 }}>
