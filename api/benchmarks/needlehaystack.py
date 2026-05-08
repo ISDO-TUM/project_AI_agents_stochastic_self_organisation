@@ -18,8 +18,6 @@ from api.schemas import (
 
 router = APIRouter(prefix="/benchmark/needlehaystack", tags=["Benchmarks"])
 
-# In-memory storage is fine for local development and tests. Replace this with
-# Redis, Postgres, or SQLite before using benchmarks across processes or restarts.
 BENCHMARKS: dict[str, BenchmarkRecord] = {}
 
 PEOPLE = [
