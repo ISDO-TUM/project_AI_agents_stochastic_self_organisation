@@ -107,9 +107,13 @@ def hint_files_in_prompt(
     system_prompt: str | None,
     file_names: list[str],
 ) -> str | None:
-    """Append a one-line hint listing available file names so the agent can decide to read them."""
+    """Append an instruction to use the files tool before answering."""
     if not file_names:
         return system_prompt or None
     names = ", ".join(f'"{n}"' for n in file_names)
-    hint = f"\n\nYou have the following knowledge files available via the 'files' tool: {names}."
+    hint = (
+        f"\n\nYou have knowledge files attached: {names}. "
+        "Use the 'files' tool to read relevant files before answering. "
+        "Always check file contents first, then base your answer on what you find."
+    )
     return (system_prompt or "") + hint
