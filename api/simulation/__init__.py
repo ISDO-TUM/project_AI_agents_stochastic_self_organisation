@@ -28,7 +28,7 @@ import aiosqlite
 
 from api.db import deserialise_agent_row, hint_files_in_prompt, load_agent_file_names
 from api.llm import call_agent
-from api.schemas import SimulationStep
+from api.schemas import SimulationStep, ToolCall
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -42,11 +42,13 @@ def _step(**kwargs: Any) -> SimulationStep:
     return SimulationStep(id=str(uuid.uuid4()), ts=_ts(), **kwargs)
 
 
-async def _call_agent(agent: dict[str, Any], prompt: str, db: aiosqlite.Connection) -> str:
-    """Invoke an agent and return its text response."""
+async def _call_agent(
+    agent: dict[str, Any], prompt: str, db: aiosqlite.Connection
+) -> tuple[str, list[ToolCall]]:
+    """Invoke an agent and return (response_text, tools_used)."""
     file_names = await load_agent_file_names(db, agent["id"])
     system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, file_names)
-    response, _ = await call_agent(
+    response, tools_used = await call_agent(
         prompt,
         provider=agent["provider"],
         model=agent["model"],
@@ -54,7 +56,25 @@ async def _call_agent(agent: dict[str, Any], prompt: str, db: aiosqlite.Connecti
         tool_names=agent["tools"] or None,
         tool_context={"db": db, "agent_id": agent["id"]},
     )
-    return str(response)
+    return str(response), tools_used
+
+
+def _tool_steps(tools_used: list[ToolCall], node_id: str) -> list[SimulationStep]:
+    """Convert tool calls into SimulationStep log entries."""
+    out = []
+    for tool in tools_used:
+        input_summary = " · ".join(f"{k}: `{v}`" for k, v in tool.input.items())
+        output = tool.output.strip()
+        output_block = f"```\n{output}\n```" if "\n" in output else output
+        out.append(
+            _step(
+                label=tool.name,
+                msg=f"action: {input_summary}\n\n**Result:**\n{output_block}",
+                type="tool",
+                node_id=node_id,
+            )
+        )
+    return out
 
 
 # ── public interface ──────────────────────────────────────────────────────────
@@ -105,25 +125,24 @@ async def run_topology(
         )
     )
 
-    async def _broadcast(agent: dict[str, Any]) -> tuple[str, SimulationStep]:
+    async def _broadcast(agent: dict[str, Any]) -> tuple[str, list[SimulationStep]]:
         try:
-            response = await _call_agent(agent, prompt, db)
+            response, tools_used = await _call_agent(agent, prompt, db)
         except Exception as exc:
-            response = f"[error: {exc}]"
-        return response, _step(
-            label=agent["name"],
-            msg=response,
-            type="system",
-            node_id=agent["id"],
+            return f"[error: {exc}]", []
+        agent_steps = _tool_steps(tools_used, agent["id"])
+        agent_steps.append(
+            _step(label=agent["name"], msg=response, type="system", node_id=agent["id"])
         )
+        return response, agent_steps
 
     broadcast_results = await asyncio.gather(*[_broadcast(a) for a in agents])
 
     # Preserve agent order (gather returns results in input order).
     responses: dict[str, str] = {}
-    for agent, (response, step) in zip(agents, broadcast_results, strict=True):
+    for agent, (response, agent_steps) in zip(agents, broadcast_results, strict=True):
         responses[agent["id"]] = response
-        steps.append(step)
+        steps.extend(agent_steps)
 
     # ── Discussion rounds ─────────────────────────────────────────────────────
 
@@ -169,18 +188,15 @@ async def run_topology(
             ]
 
             try:
-                response = await _call_agent(agent, discussion_prompt, db)
+                response, tools_used = await _call_agent(agent, discussion_prompt, db)
             except Exception as exc:
-                response = f"[error: {exc}]"
+                return f"[error: {exc}]", []
 
-            reply_step = _step(
-                label=agent["name"],
-                msg=response,
-                type="system",
-                node_id=agent["id"],
+            reply_steps = _tool_steps(tools_used, agent["id"])
+            reply_steps.append(
+                _step(label=agent["name"], msg=response, type="system", node_id=agent["id"])
             )
-
-            return response, [*edge_steps, reply_step]
+            return response, [*edge_steps, *reply_steps]
 
         discuss_results = await asyncio.gather(*[_discuss(a) for a in agents])
 

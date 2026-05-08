@@ -5,7 +5,7 @@
  * No NEXT_PUBLIC_ env var needed — the proxy handles both dev and Docker.
  */
 
-import type { Agent, KnowledgeFile, Provider } from "./types";
+import type { Agent, KnowledgeFile, Provider, SimStep } from "./types";
 
 // ─── Wire types ──────────────────────────────────────────────────────────────
 
@@ -185,4 +185,44 @@ export async function runAgent(
   return request<AgentRunResponse>("POST", `/api/agents/${agentId}/run`, {
     prompt,
   });
+}
+
+// ─── Simulation run ───────────────────────────────────────────────────────────
+
+interface WireSimStep {
+  id: string;
+  ts: string;
+  label: string;
+  msg: string;
+  type: SimStep["type"];
+  target?: string | null;
+  node_id?: string | null;
+  from_id?: string | null;
+  to_id?: string | null;
+}
+
+function wireToSimStep(w: WireSimStep): SimStep {
+  return {
+    id: w.id,
+    ts: w.ts,
+    label: w.label,
+    msg: w.msg,
+    type: w.type,
+    ...(w.target != null && { target: w.target }),
+    ...(w.node_id != null && { nodeId: w.node_id }),
+    ...(w.from_id != null && { fromId: w.from_id }),
+    ...(w.to_id != null && { toId: w.to_id }),
+  };
+}
+
+export async function runSimulation(
+  prompt: string,
+  rounds = 1,
+): Promise<SimStep[]> {
+  const data = await request<{ steps: WireSimStep[] }>(
+    "POST",
+    "/api/simulation/run",
+    { prompt, rounds },
+  );
+  return data.steps.map(wireToSimStep);
 }
