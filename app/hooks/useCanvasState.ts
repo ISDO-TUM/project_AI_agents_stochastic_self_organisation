@@ -1,19 +1,15 @@
 "use client";
 
 import { useReducer, useEffect, useCallback } from "react";
-import { CanvasState, CanvasAction, Agent, Source } from "@/lib/types";
+import { CanvasState, CanvasAction, Agent, Edge, Source } from "@/lib/types";
 import { uuid, autoLayout } from "@/lib/utils";
 import {
   fetchAgents,
+  fetchFiles,
+  fetchAgentFiles,
   createAgent,
   updateAgent,
   deleteAgentApi,
-  createFile,
-  updateFileContent,
-  deleteFileApi,
-  attachFile,
-  detachFile,
-  patchAgentTools,
 } from "@/lib/api";
 
 function reducer(state: CanvasState, action: CanvasAction): CanvasState {
@@ -94,44 +90,113 @@ export function useCanvasState() {
   const { agents, sources, edges } = state;
 
   useEffect(() => {
-    fetchAgents()
-      .then((list) => {
-        dispatch({
-          type: "LOAD",
-          state: { agents: list, sources: [], edges: [] },
-        });
-      })
-      .catch(() => {});
+    async function load() {
+      const [agentList, fileList] = await Promise.all([
+        fetchAgents(),
+        fetchFiles(),
+      ]);
+
+      // Fetch each agent's attached files in parallel to build agent→file edges.
+      const agentFileIds = await Promise.all(
+        agentList.map(async (agent) => {
+          const files = await fetchAgentFiles(agent.id);
+          return { agentId: agent.id, fileIds: files.map((f) => f.id) };
+        }),
+      );
+
+      const sources: Source[] = fileList.map((f, i) => ({
+        id: f.id,
+        name: f.name,
+        type: "text" as const,
+        content: f.content,
+        position: {
+          x: 180 + (i % 4) * 220,
+          y: 480 + Math.floor(i / 4) * 180,
+        },
+      }));
+
+      const fileIdSet = new Set(fileList.map((f) => f.id));
+
+      // Agent→agent edges from stored connections.
+      const agentEdges: Edge[] = agentList.flatMap((a) =>
+        a.connections
+          .filter((toId) => agentList.some((b) => b.id === toId))
+          .map((toId) => ({ id: uuid(), from: a.id, to: toId })),
+      );
+
+      // Agent→file edges from the agent_files join table.
+      const fileEdges: Edge[] = agentFileIds.flatMap(({ agentId, fileIds }) =>
+        fileIds
+          .filter((fid) => fileIdSet.has(fid))
+          .map((fid) => ({ id: uuid(), from: agentId, to: fid })),
+      );
+
+      dispatch({
+        type: "LOAD",
+        state: {
+          agents: agentList,
+          sources,
+          edges: [...agentEdges, ...fileEdges],
+        },
+      });
+    }
+
+    load().catch(() => {});
   }, []);
 
   const saveAgent = useCallback(
     async (data: Agent) => {
-      const exists = !!agents.find((a) => a.id === data.id);
-
-      const apply = (agent: Agent) => {
-        const existingTargets = edges
-          .filter((e) => e.from === agent.id)
-          .map((e) => e.to);
+      const exists = agents.find((a) => a.id === data.id);
+      try {
+        const saved = exists
+          ? await updateAgent(data)
+          : await createAgent(data);
+        const withPos: Agent = { ...saved, position: data.position };
         if (exists) {
-          dispatch({ type: "UPDATE_AGENT", agent });
-          agent.connections
-            .filter((c) => !existingTargets.includes(c))
+          dispatch({ type: "UPDATE_AGENT", agent: withPos });
+          const existing = edges
+            .filter((e) => e.from === data.id)
+            .map((e) => e.to);
+          withPos.connections
+            .filter((c) => !existing.includes(c))
             .forEach((toId) =>
-              dispatch({ type: "ADD_EDGE", edge: { id: uuid(), from: agent.id, to: toId } }),
+              dispatch({
+                type: "ADD_EDGE",
+                edge: { id: uuid(), from: withPos.id, to: toId },
+              }),
             );
         } else {
-          dispatch({ type: "ADD_AGENT", agent });
-          agent.connections.forEach((toId) =>
-            dispatch({ type: "ADD_EDGE", edge: { id: uuid(), from: agent.id, to: toId } }),
+          dispatch({ type: "ADD_AGENT", agent: withPos });
+          withPos.connections.forEach((toId) =>
+            dispatch({
+              type: "ADD_EDGE",
+              edge: { id: uuid(), from: withPos.id, to: toId },
+            }),
           );
         }
-      };
-
-      try {
-        const saved = exists ? await updateAgent(data) : await createAgent(data);
-        apply({ ...saved, position: data.position });
       } catch {
-        apply(data);
+        if (exists) {
+          dispatch({ type: "UPDATE_AGENT", agent: data });
+          const existing = edges
+            .filter((e) => e.from === data.id)
+            .map((e) => e.to);
+          data.connections
+            .filter((c) => !existing.includes(c))
+            .forEach((toId) =>
+              dispatch({
+                type: "ADD_EDGE",
+                edge: { id: uuid(), from: data.id, to: toId },
+              }),
+            );
+        } else {
+          dispatch({ type: "ADD_AGENT", agent: data });
+          data.connections.forEach((toId) =>
+            dispatch({
+              type: "ADD_EDGE",
+              edge: { id: uuid(), from: data.id, to: toId },
+            }),
+          );
+        }
       }
     },
     [agents, edges],
@@ -147,98 +212,48 @@ export function useCanvasState() {
   }, []);
 
   const saveSource = useCallback(
-    async (data: Source) => {
-      const exists = sources.find((s) => s.id === data.id);
-      if (exists) {
+    (data: Source) => {
+      if (sources.find((s) => s.id === data.id))
         dispatch({ type: "UPDATE_SOURCE", source: data });
-        updateFileContent(data.id, data.name, data.content).catch(() => {});
-      } else {
-        dispatch({ type: "ADD_SOURCE", source: data });
-        createFile(data.name, data.content, data.id).catch(() => {});
-      }
+      else dispatch({ type: "ADD_SOURCE", source: data });
     },
     [sources],
   );
 
-  const deleteSource = useCallback(
-    (id: string) => {
-      dispatch({ type: "DELETE_SOURCE", id });
-      deleteFileApi(id).catch(() => {});
-    },
-    [],
-  );
+  const deleteSource = useCallback((id: string) => {
+    dispatch({ type: "DELETE_SOURCE", id });
+  }, []);
 
   const connectNodes = useCallback(
     (from: string, to: string) => {
       dispatch({ type: "ADD_EDGE", edge: { id: uuid(), from, to } });
-
-      // agent→agent: update connections list
-      const agFrom = agents.find((a) => a.id === from);
-      if (agFrom && !agFrom.connections.includes(to)) {
+      const ag = agents.find((a) => a.id === from);
+      if (ag && !ag.connections.includes(to))
         dispatch({
           type: "UPDATE_AGENT",
-          agent: { ...agFrom, connections: [...agFrom.connections, to] },
+          agent: { ...ag, connections: [...ag.connections, to] },
         });
-      }
-
-      // source→agent: attach file + auto-check "files" tool
-      const srcFrom = sources.find((s) => s.id === from);
-      const agTo = agents.find((a) => a.id === to);
-      if (srcFrom && agTo) {
-        attachFile(agTo.id, srcFrom.id).catch(() => {});
-        if (!agTo.tools.includes("files")) {
-          const updatedTools = [...agTo.tools, "files"];
-          dispatch({
-            type: "UPDATE_AGENT",
-            agent: { ...agTo, tools: updatedTools },
-          });
-          patchAgentTools(agTo.id, updatedTools).catch(() => {});
-        }
-      }
     },
-    [agents, sources],
+    [agents],
   );
 
   const deleteEdge = useCallback(
     (id: string) => {
-      const e = edges.find((edge) => edge.id === id);
+      const e = edges.find((e) => e.id === id);
       if (e) {
-        // agent→agent: remove from connections list
-        const agFrom = agents.find((a) => a.id === e.from);
-        if (agFrom) {
+        const ag = agents.find((a) => a.id === e.from);
+        if (ag)
           dispatch({
             type: "UPDATE_AGENT",
             agent: {
-              ...agFrom,
-              connections: agFrom.connections.filter((c) => c !== e.to),
+              ...ag,
+              connections: ag.connections.filter((c) => c !== e.to),
             },
           });
-        }
-
-        // source→agent: detach file + maybe uncheck "files" tool
-        const srcFrom = sources.find((s) => s.id === e.from);
-        const agTo = agents.find((a) => a.id === e.to);
-        if (srcFrom && agTo) {
-          detachFile(agTo.id, srcFrom.id).catch(() => {});
-          const remainingSources = edges.filter(
-            (edge) =>
-              edge.id !== id &&
-              edge.to === agTo.id &&
-              sources.some((s) => s.id === edge.from),
-          );
-          if (remainingSources.length === 0) {
-            const updatedTools = agTo.tools.filter((t) => t !== "files");
-            dispatch({
-              type: "UPDATE_AGENT",
-              agent: { ...agTo, tools: updatedTools },
-            });
-            patchAgentTools(agTo.id, updatedTools).catch(() => {});
-          }
-        }
       }
       dispatch({ type: "DELETE_EDGE", id });
     },
-    [edges, agents, sources],
+    [edges, agents],
   );
 
   return {

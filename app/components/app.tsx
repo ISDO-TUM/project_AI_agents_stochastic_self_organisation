@@ -129,13 +129,12 @@ export function App() {
         !e.ctrlKey
       ) {
         if (selNode) {
-          if (agents.some((a) => a.id === selNode))
-            dispatch({ type: "DELETE_AGENT", id: selNode });
-          else dispatch({ type: "DELETE_SOURCE", id: selNode });
+          if (agents.some((a) => a.id === selNode)) deleteAgent(selNode);
+          else deleteSource(selNode);
           setSelNode(null);
         }
         if (selEdge) {
-          dispatch({ type: "DELETE_EDGE", id: selEdge });
+          deleteEdge(selEdge);
           setSelEdge(null);
         }
       }
@@ -146,7 +145,9 @@ export function App() {
     selNode,
     selEdge,
     agents,
-    dispatch,
+    deleteAgent,
+    deleteSource,
+    deleteEdge,
     setPanel,
     setCtx,
     setSelNode,
