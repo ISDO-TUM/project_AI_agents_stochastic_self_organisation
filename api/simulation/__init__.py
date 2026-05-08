@@ -106,12 +106,19 @@ async def run_topology(
 
     agent_by_id: dict[str, dict[str, Any]] = {a["id"]: a for a in agents}
 
-    # incoming[agent_id] = list of agent IDs that have an edge pointing TO it
+    # Edges are bidirectional: each connection lets both endpoints hear each other.
     incoming: dict[str, list[str]] = {a["id"]: [] for a in agents}
+    seen: set[frozenset[str]] = set()
     for agent in agents:
         for target_id in agent["connections"]:
-            if target_id in incoming:
-                incoming[target_id].append(agent["id"])
+            if target_id not in agent_by_id:
+                continue
+            pair = frozenset({agent["id"], target_id})
+            if pair in seen:
+                continue
+            seen.add(pair)
+            incoming[target_id].append(agent["id"])
+            incoming[agent["id"]].append(target_id)
 
     steps: list[SimulationStep] = []
 
