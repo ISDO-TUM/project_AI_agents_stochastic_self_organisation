@@ -36,7 +36,8 @@ class FilesTool(Tool):
     async def execute(
         self, validated_input: BaseModel, context: dict[str, Any] | None = None
     ) -> str:
-        assert isinstance(validated_input, FilesInput)
+        if not isinstance(validated_input, FilesInput):
+            return "Invalid input."
         inp = validated_input
         ctx = context or {}
 

@@ -119,7 +119,9 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
               id: uuid(),
               ts: timestamp(),
               label: agent.name,
-              msg: `Error: ${err instanceof Error ? err.message : "run failed"}`,
+              msg: `Error: ${
+                err instanceof Error ? err.message : "run failed"
+              }`,
               type: "system",
               nodeId: agent.id,
             };

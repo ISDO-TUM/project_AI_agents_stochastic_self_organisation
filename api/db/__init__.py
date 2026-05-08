@@ -88,9 +88,7 @@ def deserialise_knowledge_file_row(row: aiosqlite.Row) -> dict[str, Any]:
     return dict(row)
 
 
-async def load_agent_file_names(
-    db: aiosqlite.Connection, agent_id: str
-) -> list[str]:
+async def load_agent_file_names(db: aiosqlite.Connection, agent_id: str) -> list[str]:
     """Return the names of all knowledge files attached to an agent."""
     async with db.execute(
         """

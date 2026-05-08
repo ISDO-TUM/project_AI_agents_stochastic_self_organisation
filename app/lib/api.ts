@@ -113,7 +113,10 @@ export async function deleteAgentApi(id: string): Promise<void> {
   await request<void>("DELETE", `/api/agents/${id}`);
 }
 
-export async function patchAgentTools(id: string, tools: string[]): Promise<void> {
+export async function patchAgentTools(
+  id: string,
+  tools: string[],
+): Promise<void> {
   await request<AgentOut>("PATCH", `/api/agents/${id}`, { tools });
 }
 
@@ -143,15 +146,23 @@ export async function deleteFileApi(id: string): Promise<void> {
   await request<void>("DELETE", `/api/files/${id}`);
 }
 
-export async function fetchAgentFiles(agentId: string): Promise<KnowledgeFile[]> {
+export async function fetchAgentFiles(
+  agentId: string,
+): Promise<KnowledgeFile[]> {
   return request<KnowledgeFile[]>("GET", `/api/agents/${agentId}/files`);
 }
 
-export async function attachFile(agentId: string, fileId: string): Promise<void> {
+export async function attachFile(
+  agentId: string,
+  fileId: string,
+): Promise<void> {
   await request<void>("POST", `/api/agents/${agentId}/files/${fileId}`);
 }
 
-export async function detachFile(agentId: string, fileId: string): Promise<void> {
+export async function detachFile(
+  agentId: string,
+  fileId: string,
+): Promise<void> {
   await request<void>("DELETE", `/api/agents/${agentId}/files/${fileId}`);
 }
 
