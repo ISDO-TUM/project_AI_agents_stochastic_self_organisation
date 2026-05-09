@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal
 
 from pydantic import BaseModel, Field
 
@@ -36,7 +36,9 @@ class FilesTool(Tool):
     async def execute(
         self, validated_input: BaseModel, context: dict[str, Any] | None = None
     ) -> str:
-        inp = cast(FilesInput, validated_input)
+        if not isinstance(validated_input, FilesInput):
+            return "Invalid input."
+        inp = validated_input
         ctx = context or {}
 
         # Support both pre-loaded files dict (tests) and live DB context (runtime)

@@ -25,7 +25,7 @@ _PATCHABLE_COLUMNS: frozenset[str] = frozenset(KnowledgeFileUpdate.model_fields.
     description="Persist a new knowledge file and return it with its generated UUID.",
 )
 async def create_knowledge_file(body: KnowledgeFileCreate, db: DBDep) -> KnowledgeFileResponse:
-    file_id = str(uuid.uuid4())
+    file_id = body.id or str(uuid.uuid4())
     await db.execute(
         "INSERT INTO knowledge_files (id, name, content) VALUES (?, ?, ?)",
         (file_id, body.name, body.content),
