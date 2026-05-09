@@ -4,6 +4,7 @@ from typing import Any
 from anthropic import AsyncAnthropic
 
 from .base_provider import BaseLLMProvider
+from .config import resolve_api_key
 from .normalizer import NormalizedToolCall, extract_anthropic_tool_calls
 
 _client: AsyncAnthropic | None = None
@@ -14,9 +15,20 @@ _DEFAULT_MAX_TOKENS = 1024
 
 
 def _get_anthropic_client() -> AsyncAnthropic:
+    """Return the shared AsyncAnthropic client, creating it on first call.
+
+    When ``ANTHROPIC_BASE_URL`` is set the client points to that URL instead
+    of Anthropic's public API — used to route calls through the local proxy.
+    The API key is resolved via ``resolve_api_key`` which accepts either
+    ``ANTHROPIC_API_KEY`` or the shared ``LLM_PROXY_API_KEY``.
+    """
     global _client
     if _client is None:
-        _client = AsyncAnthropic(api_key=os.environ["ANTHROPIC_API_KEY"])
+        kwargs: dict[str, Any] = {"api_key": resolve_api_key("ANTHROPIC_API_KEY")}
+        base_url = os.environ.get("ANTHROPIC_BASE_URL")
+        if base_url:
+            kwargs["base_url"] = base_url
+        _client = AsyncAnthropic(**kwargs)
     return _client
 
 

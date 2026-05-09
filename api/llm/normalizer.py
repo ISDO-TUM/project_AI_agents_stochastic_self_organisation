@@ -37,3 +37,26 @@ def extract_anthropic_tool_calls(response: Any) -> list[NormalizedToolCall]:
         for b in response.content
         if b.type == "tool_use"
     ]
+
+
+def extract_gemini_tool_calls(response: dict[str, Any]) -> list[NormalizedToolCall]:
+    """Extract function calls from a Gemini generateContent response.
+
+    Gemini does not issue unique tool-call IDs, so ``id`` is set to the
+    function name. This is safe because Gemini does not allow the same
+    function to be called twice in a single turn.
+    """
+    calls = []
+    for candidate in response.get("candidates", []):
+        for part in candidate.get("content", {}).get("parts", []):
+            fc = part.get("functionCall")
+            if not fc:
+                continue
+            calls.append(
+                NormalizedToolCall(
+                    id=fc["name"],
+                    name=fc["name"],
+                    arguments=fc.get("args", {}),
+                )
+            )
+    return calls
