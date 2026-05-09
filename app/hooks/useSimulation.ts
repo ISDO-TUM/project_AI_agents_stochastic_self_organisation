@@ -1,15 +1,27 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Agent, Source, Edge, SimStep, AnimatedParticle } from "@/lib/types";
-import { uuid } from "@/lib/utils";
-import { generateSimSteps } from "@/lib/simulation";
+import { Agent, Edge, SimStep, AnimatedParticle } from "@/lib/types";
+import { uuid, timestamp } from "@/lib/utils";
+import { runAgent } from "@/lib/api";
 
-export function useSimulation(
-  agents: Agent[],
-  sources: Source[],
-  edges: Edge[],
-) {
+function formatToolMsg(tool: {
+  input: Record<string, unknown>;
+  output: string;
+}): string {
+  const inputLine = Object.entries(tool.input)
+    .map(([k, v]) => `**${k}:** \`${String(v)}\``)
+    .join(" · ");
+
+  const output = tool.output.trim();
+  const outputBlock = output.includes("\n")
+    ? `\`\`\`\n${output}\n\`\`\``
+    : output;
+
+  return `${inputLine}\n\n**Result:**\n${outputBlock}`;
+}
+
+export function useSimulation(agents: Agent[], edges: Edge[]) {
   const [steps, setSteps] = useState<SimStep[]>([]);
   const [cur, setCur] = useState(0);
   const [simMode, setSim] = useState(false);
@@ -47,13 +59,24 @@ export function useSimulation(
   }, [cur, simMode, steps, edges]);
 
   const runSim = useCallback(
-    (prompt: string) => {
-      const s = generateSimSteps(agents, sources, prompt);
-      if (!s.length) return;
-      setSteps(s);
+    async (prompt: string) => {
+      if (agents.length === 0) return;
+
+      setSteps([
+        {
+          id: uuid(),
+          ts: timestamp(),
+          label: "SYSTEM",
+          msg: `Sending to ${agents.length} agent${
+            agents.length !== 1 ? "s" : ""
+          }…`,
+          type: "system",
+        },
+      ]);
       setCur(0);
       setSim(true);
       setLogExp(false);
+
       const pts: AnimatedParticle[] = edges.map((e, i) => ({
         id: uuid(),
         from: e.from,
@@ -64,8 +87,51 @@ export function useSimulation(
       setParticles(pts);
       if (particleTimerRef.current) clearTimeout(particleTimerRef.current);
       particleTimerRef.current = setTimeout(() => setParticles([]), 3500);
+
+      await Promise.allSettled(
+        agents.map(async (agent) => {
+          try {
+            const { response, tools_used } = await runAgent(agent.id, prompt);
+
+            const newSteps: SimStep[] = [
+              ...tools_used.map((tool) => ({
+                id: uuid(),
+                ts: timestamp(),
+                label: tool.name,
+                msg: formatToolMsg(tool),
+                type: "tool" as const,
+                nodeId: agent.id,
+              })),
+              {
+                id: uuid(),
+                ts: timestamp(),
+                label: agent.name,
+                msg: response,
+                type: "system" as const,
+                nodeId: agent.id,
+              },
+            ];
+
+            setSteps((prev) => [...prev, ...newSteps]);
+            setCur((c) => c + newSteps.length);
+          } catch (err) {
+            const errStep: SimStep = {
+              id: uuid(),
+              ts: timestamp(),
+              label: agent.name,
+              msg: `Error: ${
+                err instanceof Error ? err.message : "run failed"
+              }`,
+              type: "system",
+              nodeId: agent.id,
+            };
+            setSteps((prev) => [...prev, errStep]);
+            setCur((c) => c + 1);
+          }
+        }),
+      );
     },
-    [agents, sources, edges],
+    [agents, edges],
   );
 
   const stopSim = useCallback(() => {

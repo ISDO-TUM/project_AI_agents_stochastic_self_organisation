@@ -5,7 +5,6 @@ import { Agent, Provider } from "@/lib/types";
 import { uuid, shortId, PROVIDERS, TOOLS } from "@/lib/utils";
 import { BURG, BURG_LT, BURG_DIM, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
-
 import { LIcon, TOOL_ICON } from "@/lib/icons";
 import {
   FLabel,
@@ -38,7 +37,7 @@ const defaultForm = (): AgentForm => ({
   name: "",
   description: "",
   provider: "openai",
-  model: "GPT-4o",
+  model: PROVIDERS["openai"].models[0].value,
   systemPrompt: "",
   tools: [],
   connections: [],
@@ -68,6 +67,7 @@ export function AgentPanel({
 
   const set = <K extends keyof AgentForm>(k: K, v: AgentForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
+
   const toggleTool = (tool: string) =>
     set(
       "tools",
@@ -75,12 +75,15 @@ export function AgentPanel({
         ? form.tools.filter((t) => t !== tool)
         : [...form.tools, tool],
     );
-  const handleProv = (v: string) =>
+
+  const handleProv = (v: string) => {
+    const provider = v as Provider;
     setForm((f) => ({
       ...f,
-      provider: v as Provider,
-      model: PROVIDERS[v].models[0],
+      provider,
+      model: PROVIDERS[provider].models[0].value,
     }));
+  };
 
   const addConn = () => {
     const val = connIn.trim();
@@ -89,11 +92,13 @@ export function AgentPanel({
       setConnIn("");
     }
   };
+
   const nameById = useMemo(
     () => new Map(agents.map((a) => [a.id, a.name])),
     [agents],
   );
   const getName = (id: string) => nameById.get(id) ?? `${shortId(id)}…`;
+
   const handleSave = () => {
     const position = agent?.position ?? {
       x: 220 + Math.random() * 480,
@@ -127,18 +132,18 @@ export function AgentPanel({
       <FSelect
         value={form.provider}
         onChange={handleProv}
-        options={[
-          { value: "openai", label: "OpenAI" },
-          { value: "anthropic", label: "Anthropic" },
-        ]}
+        options={Object.entries(PROVIDERS).map(([value, { label }]) => ({
+          value,
+          label,
+        }))}
       />
       <FLabel>Model</FLabel>
       <FSelect
         value={form.model}
         onChange={(v) => set("model", v)}
         options={PROVIDERS[form.provider].models.map((m) => ({
-          value: m,
-          label: m,
+          value: m.value,
+          label: m.label,
         }))}
       />
       <FLabel>System Prompt</FLabel>
