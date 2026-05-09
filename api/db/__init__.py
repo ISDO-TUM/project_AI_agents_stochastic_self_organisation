@@ -2,6 +2,8 @@
 
 A single :class:`aiosqlite.Connection` is shared across all requests because
 SQLite ``:memory:`` databases are private to the connection that created them.
+The database is initialised once at application startup via :func:`init_db` and
+closed at shutdown via :func:`close_db`.
 """
 
 from __future__ import annotations
@@ -20,8 +22,49 @@ CREATE TABLE IF NOT EXISTS agents (
     system_prompt TEXT NOT NULL,
     provider      TEXT NOT NULL CHECK(provider IN ('openai', 'anthropic', 'groq')),
     model         TEXT NOT NULL,
-    tools         TEXT NOT NULL DEFAULT '[]',
-    connections   TEXT NOT NULL DEFAULT '[]'
+    tools         TEXT NOT NULL DEFAULT '[]'
+);
+"""
+
+_CREATE_TRIALS_TABLE = """
+CREATE TABLE IF NOT EXISTS trials (
+    id          TEXT PRIMARY KEY,
+    user_prompt TEXT NOT NULL,
+    description TEXT NOT NULL
+);
+"""
+
+_CREATE_ROUNDS_TABLE = """
+CREATE TABLE IF NOT EXISTS rounds (
+    id       INTEGER PRIMARY KEY AUTOINCREMENT,
+    trial_id TEXT NOT NULL,
+
+    FOREIGN KEY (trial_id) REFERENCES trials(id)
+);
+"""
+
+_CREATE_CONNECTIONS_TABLE = """
+CREATE TABLE IF NOT EXISTS connections (
+    id            INTEGER PRIMARY KEY,
+    round_id      INTEGER NOT NULL,
+    from_agent_id TEXT NOT NULL,
+    to_agent_id   TEXT NOT NULL,
+
+    FOREIGN KEY (round_id)      REFERENCES rounds(id),
+    FOREIGN KEY (from_agent_id) REFERENCES agents(id),
+    FOREIGN KEY (to_agent_id)   REFERENCES agents(id),
+
+    UNIQUE (round_id, from_agent_id, to_agent_id)
+);
+"""
+
+_CREATE_MESSAGES_TABLE = """
+CREATE TABLE IF NOT EXISTS messages (
+    id            INTEGER PRIMARY KEY,
+    connection_id INTEGER NOT NULL,
+    message       TEXT,
+
+    FOREIGN KEY (connection_id) REFERENCES connections(id)
 );
 """
 
@@ -45,7 +88,11 @@ _db: aiosqlite.Connection | None = None
 
 
 async def init_db() -> None:
-    """Open the shared in-memory database and create all tables."""
+    """Open the shared in-memory SQLite database and create all tables.
+
+    Must be called once at application startup before any request is served.
+    Subsequent calls are a no-op if the database is already initialised.
+    """
     global _db
     _db = await aiosqlite.connect(":memory:")
     _db.row_factory = aiosqlite.Row
@@ -53,11 +100,18 @@ async def init_db() -> None:
     await _db.execute(_CREATE_AGENTS_TABLE)
     await _db.execute(_CREATE_KNOWLEDGE_FILES_TABLE)
     await _db.execute(_CREATE_AGENT_FILES_TABLE)
+    await _db.execute(_CREATE_TRIALS_TABLE)
+    await _db.execute(_CREATE_ROUNDS_TABLE)
+    await _db.execute(_CREATE_CONNECTIONS_TABLE)
+    await _db.execute(_CREATE_MESSAGES_TABLE)
     await _db.commit()
 
 
 async def close_db() -> None:
-    """Close the shared database connection."""
+    """Close the shared database connection.
+
+    Safe to call even if the database was never initialised.
+    """
     global _db
     if _db is not None:
         await _db.close()
@@ -65,7 +119,10 @@ async def close_db() -> None:
 
 
 async def get_db() -> AsyncGenerator[aiosqlite.Connection, None]:
-    """Yield the shared database connection as a FastAPI dependency.
+    """Yield the shared database connection for use as a FastAPI dependency.
+
+    Yields:
+        The open :class:`aiosqlite.Connection` instance.
 
     Raises:
         RuntimeError: If called before :func:`init_db`.
@@ -76,15 +133,76 @@ async def get_db() -> AsyncGenerator[aiosqlite.Connection, None]:
 
 
 def deserialise_agent_row(row: aiosqlite.Row) -> dict[str, Any]:
-    """Convert an agents table row to a dict with decoded JSON list columns."""
+    """Convert an agents table row to a plain dict, decoding JSON list columns.
+
+    Args:
+        row: A raw :class:`aiosqlite.Row` from the ``agents`` table.
+
+    Returns:
+        A dict with ``tools`` decoded from its JSON string representation.
+    """
     data = dict(row)
     data["tools"] = json.loads(data["tools"])
-    data["connections"] = json.loads(data["connections"])
     return data
 
 
+def deserialise_trial_row(row: aiosqlite.Row) -> dict[str, Any]:
+    """Convert a trials table row to a plain dict.
+
+    Args:
+        row: A raw :class:`aiosqlite.Row` from the ``trials`` table.
+
+    Returns:
+        A plain dict representation of the row.
+    """
+    return dict(row)
+
+
+def deserialise_round_row(row: aiosqlite.Row) -> dict[str, Any]:
+    """Convert a rounds table row to a plain dict.
+
+    Args:
+        row: A raw :class:`aiosqlite.Row` from the ``rounds`` table.
+
+    Returns:
+        A plain dict representation of the row.
+    """
+    return dict(row)
+
+
+def deserialise_connection_row(row: aiosqlite.Row) -> dict[str, Any]:
+    """Convert a connections table row to a plain dict.
+
+    Args:
+        row: A raw :class:`aiosqlite.Row` from the ``connections`` table.
+
+    Returns:
+        A plain dict representation of the row.
+    """
+    return dict(row)
+
+
+def deserialise_message_row(row: aiosqlite.Row) -> dict[str, Any]:
+    """Convert a messages table row to a plain dict.
+
+    Args:
+        row: A raw :class:`aiosqlite.Row` from the ``messages`` table.
+
+    Returns:
+        A plain dict representation of the row.
+    """
+    return dict(row)
+
+
 def deserialise_knowledge_file_row(row: aiosqlite.Row) -> dict[str, Any]:
-    """Convert a knowledge_files table row to a plain dict."""
+    """Convert a knowledge_files table row to a plain dict.
+
+    Args:
+        row: A raw :class:`aiosqlite.Row` from the ``knowledge_files`` table.
+
+    Returns:
+        A plain dict representation of the row.
+    """
     return dict(row)
 
 

@@ -95,11 +95,3 @@ async def test_create_agent_invalid_provider(client: AsyncClient) -> None:
     payload = {**_AGENT_PAYLOAD, "provider": "google"}
     response = await client.post("/api/agents/", json=payload)
     assert response.status_code == 422
-
-
-async def test_connections_link_agents(client: AsyncClient) -> None:
-    agent_a = (await client.post("/api/agents/", json=_AGENT_PAYLOAD)).json()
-    agent_b_payload = {**_AGENT_PAYLOAD, "name": "RouterBot", "connections": [agent_a["id"]]}
-    agent_b = (await client.post("/api/agents/", json=agent_b_payload)).json()
-
-    assert agent_a["id"] in agent_b["connections"]
