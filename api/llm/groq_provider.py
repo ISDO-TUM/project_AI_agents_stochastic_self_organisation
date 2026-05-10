@@ -3,6 +3,7 @@ from typing import Any
 
 from groq import AsyncGroq
 
+from .config import resolve_api_key
 from .normalizer import NormalizedToolCall
 from .openai_provider import OpenAIProvider
 
@@ -10,9 +11,20 @@ _client: AsyncGroq | None = None
 
 
 def _get_groq_client() -> AsyncGroq:
+    """Return the shared AsyncGroq client, creating it on first call.
+
+    When ``GROQ_BASE_URL`` is set the client points to that URL instead of
+    Groq's public API — used to route calls through the local proxy.
+    The API key is resolved via ``resolve_api_key`` which accepts either
+    ``GROQ_API_KEY`` or the shared ``LLM_PROXY_API_KEY``.
+    """
     global _client
     if _client is None:
-        _client = AsyncGroq(api_key=os.environ["GROQ_API_KEY"])
+        kwargs: dict[str, Any] = {"api_key": resolve_api_key("GROQ_API_KEY")}
+        base_url = os.environ.get("GROQ_BASE_URL")
+        if base_url:
+            kwargs["base_url"] = base_url
+        _client = AsyncGroq(**kwargs)
     return _client
 
 

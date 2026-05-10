@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Agent, Provider } from "@/lib/types";
 import { uuid, shortId, PROVIDERS, TOOLS } from "@/lib/utils";
+import { fetchModels, ModelEntry } from "@/lib/api";
 import { BURG, BURG_LT, BURG_DIM, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { LIcon, TOOL_ICON } from "@/lib/icons";
@@ -50,6 +51,45 @@ export function AgentPanel({
   onDelete,
   onClose,
 }: AgentPanelProps) {
+  const [standardModels, setStandardModels] = useState<ModelEntry[]>([]);
+  const [sapModels, setSapModels] = useState<ModelEntry[]>([]);
+
+  useEffect(() => {
+    fetchModels(false).then(setStandardModels).catch(console.error);
+    fetchModels(true).then(setSapModels).catch(console.error);
+  }, []);
+
+  const providers = useMemo(() => {
+    const sapIds = new Set(sapModels.map((m) => m.id));
+    const standardIds = new Set(standardModels.map((m) => m.id));
+
+    const allModels = new Map<string, ModelEntry>();
+    for (const m of [...standardModels, ...sapModels]) {
+      allModels.set(m.id, m);
+    }
+
+    const map: Record<
+      string,
+      { label: string; models: Array<{ label: string; value: string }> }
+    > = {};
+    for (const m of allModels.values()) {
+      if (!map[m.provider]) {
+        map[m.provider] = {
+          label: m.provider.charAt(0).toUpperCase() + m.provider.slice(1),
+          models: [],
+        };
+      }
+      const inStandard = standardIds.has(m.id);
+      const inSap = sapIds.has(m.id);
+      let tag = "";
+      if (inStandard && inSap) tag = " [Standard + SAP]";
+      else if (inSap) tag = " [SAP]";
+      else if (inStandard) tag = " [Standard]";
+      map[m.provider].models.push({ label: `${m.name}${tag}`, value: m.id });
+    }
+    return map;
+  }, [standardModels, sapModels]);
+
   const [form, setForm] = useState<AgentForm>(
     agent
       ? {
@@ -78,10 +118,11 @@ export function AgentPanel({
 
   const handleProv = (v: string) => {
     const provider = v as Provider;
+    const firstModel = providers[provider]?.models[0]?.value ?? "";
     setForm((f) => ({
       ...f,
       provider,
-      model: PROVIDERS[provider].models[0].value,
+      model: firstModel,
     }));
   };
 
@@ -132,7 +173,7 @@ export function AgentPanel({
       <FSelect
         value={form.provider}
         onChange={handleProv}
-        options={Object.entries(PROVIDERS).map(([value, { label }]) => ({
+        options={Object.entries(providers).map(([value, { label }]) => ({
           value,
           label,
         }))}
@@ -141,7 +182,7 @@ export function AgentPanel({
       <FSelect
         value={form.model}
         onChange={(v) => set("model", v)}
-        options={PROVIDERS[form.provider].models.map((m) => ({
+        options={(providers[form.provider]?.models ?? []).map((m) => ({
           value: m.value,
           label: m.label,
         }))}

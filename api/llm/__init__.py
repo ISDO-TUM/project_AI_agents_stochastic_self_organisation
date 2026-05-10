@@ -9,6 +9,7 @@ from api.schemas import ToolCall
 from api.tools.registry import create_tool_handler, get_tools_for_provider
 
 from .anthropic_provider import call_anthropic
+from .gemini_provider import call_gemini
 from .groq_provider import call_groq
 from .openai_provider import call_openai
 
@@ -16,6 +17,7 @@ PROVIDERS: dict[str, Callable[..., Coroutine[Any, Any, str]]] = {
     "openai": call_openai,
     "groq": call_groq,
     "anthropic": call_anthropic,
+    "gemini": call_gemini,
 }
 
 
