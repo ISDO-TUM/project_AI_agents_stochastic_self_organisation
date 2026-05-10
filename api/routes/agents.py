@@ -56,8 +56,8 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
     await db.execute(
         """
         INSERT INTO agents
-            (id, name, description, system_prompt, provider, model, tools)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            (id, name, description, system_prompt, provider, model, tools, connections)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             agent_id,
@@ -67,6 +67,7 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
             body.provider,
             body.model,
             json.dumps(body.tools),
+            json.dumps(body.connections),
         ),
     )
     await db.commit()
@@ -148,7 +149,7 @@ async def replace_agent(agent_id: str, body: AgentCreate, db: DBDep) -> AgentRes
         """
         UPDATE agents
            SET name = ?, description = ?, system_prompt = ?,
-               provider = ?, model = ?, tools = ?
+               provider = ?, model = ?, tools = ?, connections = ?
          WHERE id = ?
         """,
         (
@@ -158,6 +159,7 @@ async def replace_agent(agent_id: str, body: AgentCreate, db: DBDep) -> AgentRes
             body.provider,
             body.model,
             json.dumps(body.tools),
+            json.dumps(body.connections),
             agent_id,
         ),
     )

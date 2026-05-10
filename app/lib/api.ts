@@ -42,8 +42,8 @@ function fromWire(a: AgentOut, position = { x: 220, y: 200 }): Agent {
     systemPrompt: a.system_prompt,
     provider: a.provider,
     model: a.model,
-    tools: a.tools,
-    connections: a.connections,
+    tools: a.tools ?? [],
+    connections: a.connections ?? [],
     position,
   };
 }

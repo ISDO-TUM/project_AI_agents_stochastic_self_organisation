@@ -128,14 +128,20 @@ export function AgentPanel({
 
   const addConn = () => {
     const val = connIn.trim();
-    if (val && !form.connections.includes(val)) {
-      set("connections", [...form.connections, val]);
+    if (!val) return;
+    const resolvedId = idByName.get(val.toLowerCase()) ?? val;
+    if (!form.connections.includes(resolvedId)) {
+      set("connections", [...form.connections, resolvedId]);
       setConnIn("");
     }
   };
 
   const nameById = useMemo(
     () => new Map(agents.map((a) => [a.id, a.name])),
+    [agents],
+  );
+  const idByName = useMemo(
+    () => new Map(agents.map((a) => [a.name.toLowerCase(), a.id])),
     [agents],
   );
   const getName = (id: string) => nameById.get(id) ?? `${shortId(id)}…`;

@@ -20,9 +20,10 @@ CREATE TABLE IF NOT EXISTS agents (
     name          TEXT NOT NULL,
     description   TEXT NOT NULL,
     system_prompt TEXT NOT NULL,
-    provider      TEXT NOT NULL CHECK(provider IN ('openai', 'anthropic', 'groq')),
+    provider      TEXT NOT NULL,
     model         TEXT NOT NULL,
-    tools         TEXT NOT NULL DEFAULT '[]'
+    tools         TEXT NOT NULL DEFAULT '[]',
+    connections   TEXT NOT NULL DEFAULT '[]'
 );
 """
 
@@ -139,10 +140,11 @@ def deserialise_agent_row(row: aiosqlite.Row) -> dict[str, Any]:
         row: A raw :class:`aiosqlite.Row` from the ``agents`` table.
 
     Returns:
-        A dict with ``tools`` decoded from its JSON string representation.
+        A dict with ``tools`` and ``connections`` decoded from their JSON string representations.
     """
     data = dict(row)
     data["tools"] = json.loads(data["tools"])
+    data["connections"] = json.loads(data.get("connections") or "[]")
     return data
 
 
