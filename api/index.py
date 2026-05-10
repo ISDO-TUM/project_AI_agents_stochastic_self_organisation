@@ -10,7 +10,13 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 
 from api.db import close_db, init_db
-from api.routes import agents_router, knowledge_files_router, simulation_router, test_router
+from api.routes import (
+    agents_router,
+    knowledge_files_router,
+    models_router,
+    simulation_router,
+    test_router,
+)
 
 load_dotenv()
 
@@ -50,6 +56,7 @@ app.add_middleware(
 
 app.include_router(agents_router)
 app.include_router(knowledge_files_router)
+app.include_router(models_router)
 app.include_router(simulation_router)
 app.include_router(test_router)
 
