@@ -95,17 +95,44 @@ def _normalize_answer(answer: str) -> str:
     "/create",
     response_model=CreateBenchmarkResponse,
     status_code=status.HTTP_201_CREATED,
-    summary="Create a needle-in-a-haystack benchmark",
+    summary="Create a majority-vote benchmark",
 )
 async def create_needlehaystack_benchmark(
     body: CreateBenchmarkRequest,
 ) -> CreateBenchmarkResponse:
+    """Seed a strict majority of agents with the correct answer.
+
+    The remaining agents receive a plausible-but-wrong needle (a different
+    person from the same pool), so plurality voting can demonstrably beat
+    the minority. Each agent's chunk also contains unrelated distractor
+    sentences.
+    """
     benchmark_id = str(uuid.uuid4())
     answer = _choice(PEOPLE)
     organisation = _choice(ORGANISATIONS)
     attribute = _choice(ATTRIBUTES)
     question = f"Which person in {organisation} has {attribute}?"
-    needle = f"The person in {organisation} who has {attribute} is {answer}."
+    correct_needle = f"The person in {organisation} who has {attribute} is {answer}."
+
+    # Strict majority: ceil((n + 1) / 2) — works for any n >= 2.
+    correct_count = body.num_agents // 2 + 1
+    incorrect_count = body.num_agents - correct_count
+
+    # Pick which agents get the correct vs wrong needles. Shuffling agent
+    # numbers (no positional bias) means the correct cluster isn't always
+    # the first k agents.
+    agent_numbers = list(range(1, body.num_agents + 1))
+    for i in range(len(agent_numbers) - 1, 0, -1):
+        j = secrets.randbelow(i + 1)
+        agent_numbers[i], agent_numbers[j] = agent_numbers[j], agent_numbers[i]
+    correct_agent_numbers = sorted(agent_numbers[:correct_count])
+    incorrect_agent_numbers = sorted(agent_numbers[correct_count:])
+
+    # Pick distinct wrong answers, one per misinformed agent.
+    other_people = [person for person in PEOPLE if person != answer]
+    wrong_answers: list[str] = []
+    for _ in range(incorrect_count):
+        wrong_answers.append(other_people[secrets.randbelow(len(other_people))])
 
     chunks_by_agent: dict[str, list[str]] = {}
     for agent_number in range(1, body.num_agents + 1):
@@ -115,16 +142,26 @@ async def create_needlehaystack_benchmark(
             for _ in range(body.sentences_per_agent)
         ]
 
-    needle_agent = f"agent_{secrets.randbelow(body.num_agents) + 1}"
-    insert_position = secrets.randbelow(body.sentences_per_agent + 1)
-    chunks_by_agent[needle_agent].insert(insert_position, needle)
+    # Insert the correct needle into each majority agent's chunk.
+    for agent_number in correct_agent_numbers:
+        agent_key = f"agent_{agent_number}"
+        insert_position = secrets.randbelow(body.sentences_per_agent + 1)
+        chunks_by_agent[agent_key].insert(insert_position, correct_needle)
+
+    # Insert a wrong needle into each minority agent's chunk.
+    for wrong_person, agent_number in zip(wrong_answers, incorrect_agent_numbers, strict=True):
+        agent_key = f"agent_{agent_number}"
+        wrong_needle = f"The person in {organisation} who has {attribute} is {wrong_person}."
+        insert_position = secrets.randbelow(body.sentences_per_agent + 1)
+        chunks_by_agent[agent_key].insert(insert_position, wrong_needle)
 
     chunks = {agent_key: " ".join(sentences) for agent_key, sentences in chunks_by_agent.items()}
+    correct_agent_keys = [f"agent_{n}" for n in correct_agent_numbers]
     BENCHMARKS[benchmark_id] = BenchmarkRecord(
         question=question,
         answer=answer,
-        needle=needle,
-        needle_agent=needle_agent,
+        needle=correct_needle,
+        correct_agents=correct_agent_keys,
         chunks=chunks,
     )
 
@@ -133,14 +170,15 @@ async def create_needlehaystack_benchmark(
         question=question,
         chunks=chunks,
         answer=answer if body.include_answer else None,
-        needle_agent=needle_agent if body.include_answer else None,
+        correct_agents=correct_agent_keys if body.include_answer else None,
+        correct_agent_count=correct_count,
     )
 
 
 @router.post(
     "/evaluate",
     response_model=EvaluateBenchmarkResponse,
-    summary="Evaluate a generated answer for a needle-in-a-haystack benchmark",
+    summary="Evaluate a generated answer for a majority-vote benchmark",
 )
 async def evaluate_needlehaystack_benchmark(
     body: EvaluateBenchmarkRequest,
@@ -154,17 +192,21 @@ async def evaluate_needlehaystack_benchmark(
 
     normalized_correct_answer = _normalize_answer(record.answer)
     normalized_generated_answer = _normalize_answer(body.generated_answer)
-    routing_correct = (
-        None if body.selected_agent is None else body.selected_agent == record.needle_agent
-    )
+
+    # Substring match — voting answers are normalised aggressively (stop-words
+    # stripped) so a bare "trump" still tallies, but the canonical answer may
+    # contain a multi-word name like "mira novak". Match either direction.
+    answer_correct = (
+        normalized_generated_answer == normalized_correct_answer
+        or normalized_correct_answer in normalized_generated_answer
+        or normalized_generated_answer in normalized_correct_answer
+    ) and bool(normalized_generated_answer)
 
     return EvaluateBenchmarkResponse(
-        answer_correct=normalized_generated_answer == normalized_correct_answer,
-        routing_correct=routing_correct,
+        answer_correct=answer_correct,
         correct_answer=record.answer,
         generated_answer=body.generated_answer,
         normalized_correct_answer=normalized_correct_answer,
         normalized_generated_answer=normalized_generated_answer,
-        needle_agent=record.needle_agent,
-        selected_agent=body.selected_agent,
+        correct_agents=record.correct_agents,
     )

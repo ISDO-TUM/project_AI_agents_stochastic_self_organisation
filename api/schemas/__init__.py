@@ -27,6 +27,14 @@ class AgentBase(BaseModel):
 class AgentCreate(AgentBase):
     """Request body for creating or fully replacing an agent."""
 
+    id: str | None = Field(
+        default=None,
+        description=(
+            "Optional caller-supplied UUID. When omitted the server generates one. "
+            "Useful for canvas imports that need to preserve cross-references."
+        ),
+    )
+
 
 class AgentUpdate(BaseModel):
     """Partial update body; only supplied fields are written to the database."""
@@ -79,6 +87,8 @@ class KnowledgeFileBase(BaseModel):
 
 class KnowledgeFileCreate(KnowledgeFileBase):
     """Request body for creating a knowledge file."""
+
+    id: str | None = None
 
 
 class KnowledgeFileUpdate(BaseModel):
@@ -157,13 +167,19 @@ class CreateBenchmarkRequest(BaseModel):
 
 
 class CreateBenchmarkResponse(BaseModel):
-    """Response body for a created needle-in-a-haystack benchmark."""
+    """Response body for a created majority-vote benchmark."""
 
     benchmark_id: str
     question: str
     chunks: dict[str, str]
     answer: str | None
-    needle_agent: str | None
+    correct_agents: list[str] | None = Field(
+        default=None,
+        description="Synthetic agent keys (agent_1, …) seeded with the correct answer.",
+    )
+    correct_agent_count: int = Field(
+        description="How many agents (out of num_agents) hold the correct answer."
+    )
 
 
 class EvaluateBenchmarkRequest(BaseModel):
@@ -171,27 +187,99 @@ class EvaluateBenchmarkRequest(BaseModel):
 
     benchmark_id: str
     generated_answer: str
-    selected_agent: str | None = None
 
 
 class EvaluateBenchmarkResponse(BaseModel):
-    """Response body for a needle-in-a-haystack benchmark evaluation."""
+    """Response body for a majority-vote benchmark evaluation."""
 
     answer_correct: bool
-    routing_correct: bool | None
     correct_answer: str
     generated_answer: str
     normalized_correct_answer: str
     normalized_generated_answer: str
-    needle_agent: str
-    selected_agent: str | None
+    correct_agents: list[str]
 
 
 class BenchmarkRecord(BaseModel):
-    """Server-side record for a created needle-in-a-haystack benchmark."""
+    """Server-side record for a created majority-vote benchmark."""
 
     question: str
     answer: str
     needle: str
-    needle_agent: str
+    correct_agents: list[str]
     chunks: dict[str, str]
+
+
+# ── Simulation ────────────────────────────────────────────────────────────────
+
+_SimStepType = Literal["system", "agent-to-agent", "tool", "agent-to-source"]
+
+
+class SimulationStep(BaseModel):
+    """A single event in the simulation log, mirroring the frontend SimStep type."""
+
+    id: str
+    ts: str
+    label: str
+    msg: str
+    type: _SimStepType
+    target: str | None = None
+    node_id: str | None = None
+    from_id: str | None = None
+    to_id: str | None = None
+
+
+_ConsensusMode = Literal["broadcast", "weighted", "voting"]
+
+
+class SimulationRunRequest(BaseModel):
+    """Request body for running a topology simulation."""
+
+    prompt: str = Field(description="The prompt broadcast to all agents.")
+    rounds: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Discussion rounds after the initial broadcast.",
+    )
+    mode: _ConsensusMode = Field(
+        default="broadcast",
+        description=(
+            "Consensus algorithm. 'broadcast' = current behaviour (no consensus). "
+            "'weighted' = per-agent trust vector over neighbours, weighted opinion pooling. "
+            "'voting' = global plurality voting via a coordinator function."
+        ),
+    )
+    agent_context: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "Optional per-agent private context, keyed by agent UUID. When set, "
+            "each agent's prompt is prefixed with its private context. Used by "
+            "benchmarks (e.g. needle-in-haystack) to seed each agent with a chunk."
+        ),
+    )
+
+
+class SimulationRunResponse(BaseModel):
+    """Result of a topology simulation."""
+
+    steps: list[SimulationStep]
+    consensus: str | None = Field(
+        default=None,
+        description="Final consensus answer when a consensus mode was used.",
+    )
+    consensus_agent_id: str | None = Field(
+        default=None,
+        description=(
+            "Agent whose answer was selected as the consensus, if applicable. "
+            "Used by benchmarks to evaluate routing/attribution correctness."
+        ),
+    )
+    converged: bool = Field(
+        default=False,
+        description="True if the consensus loop met its convergence criterion.",
+    )
+    rounds_used: int = Field(
+        default=0,
+        description="Number of discussion rounds actually executed.",
+    )

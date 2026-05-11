@@ -7,6 +7,15 @@ import { useTheme } from "@/lib/theme-context";
 import { useCanvasState } from "@/hooks/useCanvasState";
 import { useSimulation } from "@/hooks/useSimulation";
 import { useUIState } from "@/hooks/useUIState";
+import {
+  fetchAgents,
+  fetchFiles,
+  createAgent,
+  deleteAgentApi,
+  createFile,
+  deleteFileApi,
+  attachFile,
+} from "@/lib/api";
 import { Canvas } from "@/components/canvas";
 import { LogWall } from "@/components/log-wall";
 import { Toolbar } from "@/components/toolbar";
@@ -63,7 +72,19 @@ export function App() {
     particles,
     runSim,
     stopSim,
-  } = useSimulation(agents, sources, edges);
+  } = useSimulation(agents, edges);
+
+  const [logSidebarWidth, setLogSidebarWidth] = useState(290);
+  const prevSidebarWidth = useRef(290);
+  const [panAdjust, setPanAdjust] = useState({ dx: 0, seq: 0 });
+
+  const handleSidebarWidthChange = useCallback((w: number) => {
+    const delta = w - prevSidebarWidth.current;
+    prevSidebarWidth.current = w;
+    setLogSidebarWidth(w);
+    // Shift the canvas pan by half the width delta so the network stays centred.
+    setPanAdjust((p) => ({ dx: -delta / 2, seq: p.seq + 1 }));
+  }, []);
 
   const {
     selNode,
@@ -117,13 +138,12 @@ export function App() {
         !e.ctrlKey
       ) {
         if (selNode) {
-          if (agents.some((a) => a.id === selNode))
-            dispatch({ type: "DELETE_AGENT", id: selNode });
-          else dispatch({ type: "DELETE_SOURCE", id: selNode });
+          if (agents.some((a) => a.id === selNode)) deleteAgent(selNode);
+          else deleteSource(selNode);
           setSelNode(null);
         }
         if (selEdge) {
-          dispatch({ type: "DELETE_EDGE", id: selEdge });
+          deleteEdge(selEdge);
           setSelEdge(null);
         }
       }
@@ -134,7 +154,9 @@ export function App() {
     selNode,
     selEdge,
     agents,
-    dispatch,
+    deleteAgent,
+    deleteSource,
+    deleteEdge,
     setPanel,
     setCtx,
     setSelNode,
@@ -162,22 +184,66 @@ export function App() {
   }, []);
 
   const importCanvas = useCallback(
-    (raw: string) => {
+    async (raw: string) => {
+      let data: CanvasState;
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const data = JSON.parse(raw) as any;
+        const parsed = JSON.parse(raw) as any;
         if (
-          Array.isArray(data.agents) &&
-          Array.isArray(data.sources) &&
-          Array.isArray(data.edges)
-        )
-          dispatch({ type: "LOAD", state: data as CanvasState });
-        else
+          !Array.isArray(parsed.agents) ||
+          !Array.isArray(parsed.sources) ||
+          !Array.isArray(parsed.edges)
+        ) {
           showImportError(
             "Invalid canvas file — missing agents, sources, or edges",
           );
+          return;
+        }
+        data = parsed as CanvasState;
       } catch {
         showImportError("Invalid JSON file");
+        return;
+      }
+
+      // Render the imported canvas locally first so the user sees it instantly.
+      dispatch({ type: "LOAD", state: data });
+
+      // Persist to the backend so simulations have the same state. Do it on a
+      // best-effort basis — if the API is offline we keep the local view but
+      // surface the error.
+      try {
+        const [existingAgents, existingFiles] = await Promise.all([
+          fetchAgents(),
+          fetchFiles(),
+        ]);
+        await Promise.all([
+          ...existingAgents.map((a) => deleteAgentApi(a.id).catch(() => {})),
+          ...existingFiles.map((f) => deleteFileApi(f.id).catch(() => {})),
+        ]);
+
+        await Promise.all(
+          data.sources.map((s) =>
+            createFile(s.name, s.content, s.id).catch(() => {}),
+          ),
+        );
+        await Promise.all(
+          data.agents.map((a) => createAgent(a, { preserveId: true })),
+        );
+        const fileIds = new Set(data.sources.map((s) => s.id));
+        await Promise.all(
+          data.edges
+            .filter(
+              (e) =>
+                data.agents.some((a) => a.id === e.from) && fileIds.has(e.to),
+            )
+            .map((e) => attachFile(e.from, e.to).catch(() => {})),
+        );
+      } catch (err) {
+        showImportError(
+          `Imported locally, but failed to sync to API: ${
+            err instanceof Error ? err.message : "unknown error"
+          }`,
+        );
       }
     },
     [dispatch, showImportError],
@@ -227,7 +293,7 @@ export function App() {
       },
     },
     {
-      label: "Add Source",
+      label: "Add File",
       icon: "FileText",
       fn: () => {
         setPanel({ type: "source", id: null });
@@ -262,7 +328,7 @@ export function App() {
     setSelNode(null);
   }, [setPanel, setSelNode]);
 
-  const onAddSource = useCallback(() => {
+  const onAddFile = useCallback(() => {
     setPanel({ type: "source", id: null });
     setSelNode(null);
   }, [setPanel, setSelNode]);
@@ -324,9 +390,9 @@ export function App() {
 
       <div
         style={{
-          flex: 1,
+          width: simMode ? `calc(100vw - ${logSidebarWidth}px)` : "100%",
+          height: "100%",
           display: "flex",
-          overflow: "hidden",
           position: "relative",
         }}
         onClick={(e) => {
@@ -353,7 +419,24 @@ export function App() {
           animatedParticles={particles}
           tweaks={tweaks}
           onCanvasClick={onCanvasClick}
+          panAdjust={panAdjust}
         />
+
+        <Toolbar
+          simMode={simMode}
+          onToggleTheme={toggleTheme}
+          onAddAgent={onAddAgent}
+          onAddFile={onAddFile}
+          onClear={onClear}
+          onStop={stopSim}
+          onAutoLayout={onAutoLayout}
+          onExport={exportCanvas}
+          onImport={importCanvas}
+          showTweaks={showTweaks}
+          onToggleTweaks={onToggleTweaks}
+        />
+
+        <PromptBar simMode={simMode} onRun={runSim} />
       </div>
 
       {simMode && (
@@ -364,24 +447,10 @@ export function App() {
           onPrev={() => setCur((s) => Math.max(s - 1, 0))}
           expanded={logExp}
           onToggleExpand={() => setLogExp((x) => !x)}
+          sidebarWidth={logSidebarWidth}
+          onSidebarWidthChange={handleSidebarWidthChange}
         />
       )}
-
-      <Toolbar
-        simMode={simMode}
-        onToggleTheme={toggleTheme}
-        onAddAgent={onAddAgent}
-        onAddSource={onAddSource}
-        onClear={onClear}
-        onStop={stopSim}
-        onAutoLayout={onAutoLayout}
-        onExport={exportCanvas}
-        onImport={importCanvas}
-        showTweaks={showTweaks}
-        onToggleTweaks={onToggleTweaks}
-      />
-
-      <PromptBar simMode={simMode} onRun={runSim} />
 
       {showTweaks && (
         <TweaksPanel

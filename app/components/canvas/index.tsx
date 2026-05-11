@@ -27,6 +27,9 @@ interface CanvasProps {
   animatedParticles: AnimatedParticle[];
   tweaks: Tweaks;
   onCanvasClick: () => void;
+  /** Fired by parent when the available canvas width changes; dx is the
+   *  translation to apply to the current pan so nodes stay put visually. */
+  panAdjust?: { dx: number; seq: number };
 }
 
 interface ConnectingState {
@@ -59,6 +62,7 @@ export function Canvas({
   animatedParticles,
   tweaks,
   onCanvasClick,
+  panAdjust,
 }: CanvasProps) {
   const { dark } = useTheme();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -70,6 +74,13 @@ export function Canvas({
   const [connectLine, setConnectLine] = useState<ConnectLine | null>(null);
   const spaceDown = useRef(false);
 
+  // Apply external pan delta (e.g. from sidebar resize) to keep nodes stable.
+  // panAdjust is a new object reference on every resize tick (seq increments),
+  // so listing it as the dependency is both correct and exhaustive.
+  useEffect(() => {
+    if (!panAdjust || panAdjust.dx === 0) return;
+    setPan((p) => ({ ...p, x: p.x + panAdjust.dx }));
+  }, [panAdjust]);
   const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault();
     setZoom((z) => clamp(z * (e.deltaY > 0 ? 0.93 : 1.07), 0.15, 5));

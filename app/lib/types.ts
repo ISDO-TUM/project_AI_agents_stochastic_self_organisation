@@ -1,10 +1,12 @@
-export type Provider = "openai" | "anthropic";
+export type Provider = "openai" | "anthropic" | "groq";
 export type SourceType = "text" | "document";
 export type SimStepType =
   | "system"
   | "agent-to-agent"
   | "tool"
   | "agent-to-source";
+
+export type ConsensusMode = "broadcast" | "weighted" | "voting";
 
 export interface Position {
   x: number;
@@ -29,6 +31,12 @@ export interface Source {
   type: SourceType;
   content: string;
   position: Position;
+}
+
+export interface KnowledgeFile {
+  id: string;
+  name: string;
+  content: string;
 }
 
 export interface Edge {

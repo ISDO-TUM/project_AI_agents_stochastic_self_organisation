@@ -10,7 +10,13 @@ from typing import Annotated
 import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, status
 
-from api.db import deserialise_agent_row, deserialise_knowledge_file_row, get_db
+from api.db import (
+    deserialise_agent_row,
+    deserialise_knowledge_file_row,
+    get_db,
+    hint_files_in_prompt,
+    load_agent_file_names,
+)
 from api.llm import call_agent
 from api.schemas import (
     AgentCreate,
@@ -37,7 +43,13 @@ _PATCHABLE_COLUMNS: frozenset[str] = frozenset(AgentUpdate.model_fields.keys())
     description="Persist a new agent and return it with its generated UUID.",
 )
 async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
-    agent_id = str(uuid.uuid4())
+    agent_id = body.id or str(uuid.uuid4())
+    async with db.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)) as cur:
+        if await cur.fetchone() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Agent with this id already exists.",
+            )
     await db.execute(
         """
         INSERT INTO agents
@@ -188,14 +200,15 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
     agent = deserialise_agent_row(row)
 
     tool_names: list[str] = agent["tools"] or []
-    base_prompt = agent["system_prompt"] or ""
+    file_names = await load_agent_file_names(db, agent_id)
+    system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, file_names)
 
     try:
         response, tools_used = await call_agent(
             body.prompt,
             provider=agent["provider"],
             model=agent["model"],
-            system_prompt=base_prompt,
+            system_prompt=system_prompt,
             tool_names=tool_names or None,
             tool_context={"db": db, "agent_id": agent_id},
         )
