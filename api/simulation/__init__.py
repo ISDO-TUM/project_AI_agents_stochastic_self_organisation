@@ -131,6 +131,7 @@ def _centroid_response(responses: dict[str, str]) -> tuple[str | None, str | Non
 
 
 _VOTE_RE = re.compile(r"^\s*VOTE:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+_ZERO_SCORE_VOTES = frozenset({"unknown"})
 _VOTE_INSTRUCTION = (
     "\n\nIMPORTANT: End your response with a single line in this EXACT format:\n"
     "VOTE: <bare answer only — no preamble, no full sentence>\n"
@@ -191,10 +192,14 @@ def _extract_vote(text: str) -> str | None:
 
 
 def _tally(votes: dict[str, str | None]) -> tuple[str | None, dict[str, int]]:
-    """Count valid votes and return (plurality, counts)."""
+    """Count valid votes and return (plurality, counts).
+
+    ``unknown`` is an abstention: it records that an agent found no answer, but
+    contributes zero score to plurality voting.
+    """
     counts: dict[str, int] = {}
     for v in votes.values():
-        if v:
+        if v and v not in _ZERO_SCORE_VOTES:
             counts[v] = counts.get(v, 0) + 1
     if not counts:
         return None, counts

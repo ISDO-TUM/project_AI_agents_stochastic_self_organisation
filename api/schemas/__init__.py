@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
 # Agents
@@ -310,6 +310,96 @@ class BenchmarkRecord(BaseModel):
     needle: str
     correct_agents: list[str]
     chunks: dict[str, str]
+
+
+class CreateDemoBenchmarkRequest(BaseModel):
+    """Request body for creating a fixed three-agent importable demo canvas."""
+
+    num_needles: int = Field(1, ge=1, le=25)
+    sentences_per_needle: int = Field(5, ge=5, le=50)
+
+
+class CanvasPosition(BaseModel):
+    """Frontend canvas coordinates."""
+
+    x: int
+    y: int
+
+
+class DemoCanvasAgent(BaseModel):
+    """Agent object in the importable frontend canvas JSON format."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    name: str
+    description: str
+    system_prompt: str = Field(alias="systemPrompt")
+    provider: Literal["openai", "anthropic", "groq"]
+    model: str
+    tools: list[str]
+    connections: list[str]
+    position: CanvasPosition
+
+
+class DemoCanvasSource(BaseModel):
+    """Source object in the importable frontend canvas JSON format."""
+
+    id: str
+    name: str
+    type: Literal["text", "document"]
+    content: str
+    position: CanvasPosition
+
+
+class DemoCanvasEdge(BaseModel):
+    """Edge object in the importable frontend canvas JSON format."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    from_id: str = Field(alias="from")
+    to: str
+
+
+class DemoCanvas(BaseModel):
+    """Importable frontend canvas JSON."""
+
+    agents: list[DemoCanvasAgent]
+    sources: list[DemoCanvasSource]
+    edges: list[DemoCanvasEdge]
+
+
+class DemoNeedleRecord(BaseModel):
+    """Metadata for one generated needle inside a demo benchmark."""
+
+    question: str
+    answer: str
+    needle: str
+    agent_key: str
+    agent_id: str
+    source_id: str
+
+
+class CreateDemoBenchmarkResponse(BaseModel):
+    """Response body for an importable three-agent benchmark demo."""
+
+    benchmark_id: str
+    demo: DemoCanvas
+
+
+class GetDemoBenchmarkNeedlesResponse(BaseModel):
+    """Question/answer metadata for an importable demo benchmark."""
+
+    benchmark_id: str
+    needles: list[DemoNeedleRecord]
+
+
+class DemoBenchmarkRecord(BaseModel):
+    """Server-side record for a generated demo benchmark."""
+
+    demo: DemoCanvas
+    needles: list[DemoNeedleRecord]
 
 
 # ── Simulation ────────────────────────────────────────────────────────────────
