@@ -37,6 +37,8 @@ def get_tools_for_provider(provider: str, tool_names: list[str]) -> list[dict[st
             result.append(tool.to_openai())
         elif provider == "anthropic":
             result.append(tool.to_anthropic())
+        elif provider == "gemini":
+            result.append(tool.to_gemini())
     return result
 
 

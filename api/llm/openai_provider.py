@@ -4,15 +4,34 @@ from typing import Any
 from openai import AsyncOpenAI
 
 from .base_provider import BaseLLMProvider
+from .config import resolve_api_key
 from .normalizer import NormalizedToolCall, extract_openai_tool_calls
 
 _client: AsyncOpenAI | None = None
 
+# GPT-5 and GPT-5.4 families require max_completion_tokens (not max_tokens)
+# and do not accept a temperature parameter (it is deprecated for these models).
+_NEW_PARAM_MODELS: frozenset[str] = frozenset(
+    {"gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}
+)
+_DEFAULT_MAX_TOKENS = 1024
+
 
 def _get_openai_client() -> AsyncOpenAI:
+    """Return the shared AsyncOpenAI client, creating it on first call.
+
+    When ``OPENAI_BASE_URL`` is set the client points to that URL instead of
+    OpenAI's public API — used to route calls through the local proxy.
+    The API key is resolved via ``resolve_api_key`` which accepts either
+    ``OPENAI_API_KEY`` or the shared ``LLM_PROXY_API_KEY``.
+    """
     global _client
     if _client is None:
-        _client = AsyncOpenAI(api_key=os.environ["OPENAI_API_KEY"])
+        kwargs: dict[str, Any] = {"api_key": resolve_api_key("OPENAI_API_KEY")}
+        base_url = os.environ.get("OPENAI_BASE_URL")
+        if base_url:
+            kwargs["base_url"] = base_url
+        _client = AsyncOpenAI(**kwargs)
     return _client
 
 
@@ -34,6 +53,11 @@ class OpenAIProvider(BaseLLMProvider):
         tools: list[dict[str, Any]] | None,
     ) -> dict[str, Any]:
         kwargs: dict[str, Any] = {"model": model, "messages": messages}
+        if model in _NEW_PARAM_MODELS:
+            # gpt-5/5.4 family: temperature is deprecated; token limit uses new param name
+            kwargs["max_completion_tokens"] = _DEFAULT_MAX_TOKENS
+        else:
+            kwargs["max_tokens"] = _DEFAULT_MAX_TOKENS
         if tools:
             kwargs["tools"] = tools
         return kwargs

@@ -1,15 +1,11 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Agent, Source, Edge, SimStep, AnimatedParticle } from "@/lib/types";
+import { Agent, Edge, SimStep, AnimatedParticle } from "@/lib/types";
 import { uuid } from "@/lib/utils";
-import { generateSimSteps } from "@/lib/simulation";
+import { runSimulation } from "@/lib/api";
 
-export function useSimulation(
-  agents: Agent[],
-  sources: Source[],
-  edges: Edge[],
-) {
+export function useSimulation(agents: Agent[], edges: Edge[]) {
   const [steps, setSteps] = useState<SimStep[]>([]);
   const [cur, setCur] = useState(0);
   const [simMode, setSim] = useState(false);
@@ -47,13 +43,15 @@ export function useSimulation(
   }, [cur, simMode, steps, edges]);
 
   const runSim = useCallback(
-    (prompt: string) => {
-      const s = generateSimSteps(agents, sources, prompt);
-      if (!s.length) return;
-      setSteps(s);
-      setCur(0);
+    async (prompt: string) => {
+      if (agents.length === 0) return;
+
       setSim(true);
       setLogExp(false);
+      setSteps([]);
+      setCur(0);
+
+      // Animate particles along all edges during the run
       const pts: AnimatedParticle[] = edges.map((e, i) => ({
         id: uuid(),
         from: e.from,
@@ -64,8 +62,32 @@ export function useSimulation(
       setParticles(pts);
       if (particleTimerRef.current) clearTimeout(particleTimerRef.current);
       particleTimerRef.current = setTimeout(() => setParticles([]), 3500);
+
+      try {
+        const result = await runSimulation(prompt);
+        for (let i = 0; i < result.length; i++) {
+          setSteps(result.slice(0, i + 1));
+          setCur(i);
+          if (i < result.length - 1) {
+            await new Promise<void>((r) => setTimeout(r, 350));
+          }
+        }
+      } catch (err) {
+        setSteps([
+          {
+            id: uuid(),
+            ts: new Date().toLocaleTimeString("en-GB", { hour12: false }),
+            label: "SYSTEM",
+            msg: `Simulation failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+            type: "system",
+          },
+        ]);
+        setCur(0);
+      }
     },
-    [agents, sources, edges],
+    [agents, edges],
   );
 
   const stopSim = useCallback(() => {
