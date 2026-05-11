@@ -139,13 +139,74 @@ Request body:
 }
 ```
 
-The response uses the same top-level importable shape as `demos/test.json`:
-`benchmark_id`, `agents`, `sources`, `edges`, and `needles`. The demo is fixed
-to three agents. Each generated needle is assigned to exactly one agent/source;
-the other agents receive distractor text for that question and should answer
-`unknown`, which plurality voting treats as zero score. The top-level `needles`
-list contains each generated question, answer, needle sentence, and the
-agent/source that owns it.
+Fields:
+
+- `num_needles`: number of independent needle questions to generate, between 1
+  and 25.
+- `sentences_per_needle`: distractor sentences generated per agent for each
+  needle, between 5 and 50.
+
+The response is directly importable by the canvas and uses the same top-level
+shape as `demos/test.json`: `benchmark_id`, `agents`, `sources`, `edges`, and
+`needles`. There is no nested `demo` wrapper.
+
+The generated canvas is fixed to the same three-agent metadata as
+`demos/approved-supplier.json`: identical agent ids, source ids, names,
+positions, connections, and edge ids. Only the `sources[*].content` fields are
+generated dynamically.
+
+Each generated needle is assigned to exactly one agent/source; the other agents
+receive distractor text for that question and should answer `unknown`, which
+plurality voting treats as zero score. The top-level `needles` list contains
+each generated question, answer, needle sentence, and the agent/source that owns
+it.
+
+Example:
+
+```bash
+curl -X POST http://localhost:8000/benchmark/needlehaystack/demo \
+  -H "Content-Type: application/json" \
+  -d '{"num_needles":3,"sentences_per_needle":5}'
+```
+
+Abbreviated response:
+
+```json
+{
+  "benchmark_id": "360a6386-87bc-4350-b471-742522981071",
+  "agents": [
+    {
+      "id": "a1111111-1111-4111-8111-111111111111",
+      "name": "Procurement Lead",
+      "systemPrompt": "You answer questions about approved suppliers..."
+    }
+  ],
+  "sources": [
+    {
+      "id": "f1111111-1111-4111-8111-111111111111",
+      "name": "2026_supplier_contract.txt",
+      "content": "Generated context 1:\n..."
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-pl-cf",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "a2222222-2222-4222-8222-222222222222"
+    }
+  ],
+  "needles": [
+    {
+      "question": "Which person in Organisation Borealis has the emergency override badge?",
+      "answer": "Sofia Lind",
+      "needle": "The person in Organisation Borealis who has the emergency override badge is Sofia Lind.",
+      "agent_key": "agent_1",
+      "agent_id": "a1111111-1111-4111-8111-111111111111",
+      "source_id": "f1111111-1111-4111-8111-111111111111"
+    }
+  ]
+}
+```
 
 ## Driving the Benchmark
 
