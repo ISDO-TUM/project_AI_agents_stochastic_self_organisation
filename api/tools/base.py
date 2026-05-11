@@ -47,6 +47,22 @@ class Tool(ABC):
             "input_schema": self.schema(),
         }
 
+    def to_gemini(self) -> dict[str, Any]:
+        """Serialize this tool for the Gemini functionDeclarations format.
+
+        ``$defs`` and ``$schema`` are stripped because Gemini's parameter
+        validator rejects JSON Schema meta-keys that aren't part of its
+        supported subset.
+        """
+        schema = self.schema()
+        schema.pop("$defs", None)
+        schema.pop("$schema", None)
+        return {
+            "name": self.name,
+            "description": self.description,
+            "parameters": schema,
+        }
+
     # ── validation + execution ─────────────────────────────────────
 
     async def safe_execute(

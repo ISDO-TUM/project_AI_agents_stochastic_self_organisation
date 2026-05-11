@@ -202,6 +202,23 @@ export async function runAgent(
   });
 }
 
+// ─── Models endpoint ─────────────────────────────────────────────────────────
+
+export interface ModelEntry {
+  id: string;
+  name: string;
+  provider: string;
+  type: string;
+}
+
+export async function fetchModels(
+  isSapSupported?: boolean,
+): Promise<ModelEntry[]> {
+  const params =
+    isSapSupported !== undefined ? `?is_sap_supported=${isSapSupported}` : "";
+  return request<ModelEntry[]>("GET", `/api/models${params}`);
+}
+
 // ─── Simulation run ───────────────────────────────────────────────────────────
 
 interface WireSimStep {

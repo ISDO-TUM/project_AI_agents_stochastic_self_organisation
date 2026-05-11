@@ -14,6 +14,7 @@ from api.routes import (
     agents_router,
     benchmark_router,
     knowledge_files_router,
+    models_router,
     simulation_router,
     test_router,
 )
@@ -56,6 +57,7 @@ app.add_middleware(
 
 app.include_router(agents_router)
 app.include_router(knowledge_files_router)
+app.include_router(models_router)
 app.include_router(benchmark_router)
 app.include_router(simulation_router)
 app.include_router(test_router)
