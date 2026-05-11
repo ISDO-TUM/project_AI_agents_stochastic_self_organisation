@@ -385,20 +385,9 @@ class CreateDemoBenchmarkResponse(BaseModel):
     """Response body for an importable three-agent benchmark demo."""
 
     benchmark_id: str
-    demo: DemoCanvas
-
-
-class GetDemoBenchmarkNeedlesResponse(BaseModel):
-    """Question/answer metadata for an importable demo benchmark."""
-
-    benchmark_id: str
-    needles: list[DemoNeedleRecord]
-
-
-class DemoBenchmarkRecord(BaseModel):
-    """Server-side record for a generated demo benchmark."""
-
-    demo: DemoCanvas
+    agents: list[DemoCanvasAgent]
+    sources: list[DemoCanvasSource]
+    edges: list[DemoCanvasEdge]
     needles: list[DemoNeedleRecord]
 
 

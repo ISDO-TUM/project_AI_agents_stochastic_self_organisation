@@ -49,50 +49,51 @@ async def test_create_demo_benchmark_returns_importable_three_agent_canvas(
     assert response.status_code == 201
     data = response.json()
     assert data["benchmark_id"]
+    assert "demo" not in data
 
-    demo = data["demo"]
-    assert set(demo) == {"agents", "sources", "edges"}
-    assert len(demo["agents"]) == 3
-    assert len(demo["sources"]) == 3
-    assert len(demo["edges"]) == 6
+    assert set(data) == {"benchmark_id", "agents", "sources", "edges", "needles"}
+    assert len(data["agents"]) == 3
+    assert len(data["sources"]) == 3
+    assert len(data["edges"]) == 6
+    assert len(data["needles"]) == 3
 
-    assert [agent["id"] for agent in demo["agents"]] == _DEMO_AGENT_IDS
-    assert [agent["name"] for agent in demo["agents"]] == [
+    assert [agent["id"] for agent in data["agents"]] == _DEMO_AGENT_IDS
+    assert [agent["name"] for agent in data["agents"]] == [
         "Procurement Lead",
         "Compliance Officer",
         "Field Operations",
     ]
-    assert [agent["connections"] for agent in demo["agents"]] == [
+    assert [agent["connections"] for agent in data["agents"]] == [
         [_DEMO_AGENT_IDS[1], _DEMO_AGENT_IDS[2]],
         [_DEMO_AGENT_IDS[2]],
         [],
     ]
-    assert [source["id"] for source in demo["sources"]] == _DEMO_SOURCE_IDS
-    assert [source["name"] for source in demo["sources"]] == [
+    assert [source["id"] for source in data["sources"]] == _DEMO_SOURCE_IDS
+    assert [source["name"] for source in data["sources"]] == [
         "2026_supplier_contract.txt",
         "compliance_memo_2026.txt",
         "field_ops_legacy_note.txt",
     ]
-    assert [edge["id"] for edge in demo["edges"]] == _DEMO_EDGE_IDS
+    assert [edge["id"] for edge in data["edges"]] == _DEMO_EDGE_IDS
 
-    for agent in demo["agents"]:
+    for agent in data["agents"]:
         assert agent["systemPrompt"]
         assert agent["tools"] == ["files"]
         assert agent["provider"] == "openai"
 
-    source_ids = {source["id"] for source in demo["sources"]}
-    agent_ids = {agent["id"] for agent in demo["agents"]}
+    source_ids = {source["id"] for source in data["sources"]}
+    agent_ids = {agent["id"] for agent in data["agents"]}
     attached_source_edges = [
-        edge for edge in demo["edges"] if edge["from"] in agent_ids and edge["to"] in source_ids
+        edge for edge in data["edges"] if edge["from"] in agent_ids and edge["to"] in source_ids
     ]
     assert len(attached_source_edges) == 3
 
-    for source in demo["sources"]:
+    for source in data["sources"]:
         assert source["type"] == "text"
         assert source["content"].count("Generated context") == 3
 
 
-async def test_get_demo_benchmark_needles_returns_metadata_by_benchmark_id(
+async def test_create_demo_benchmark_returns_top_level_needle_metadata(
     client: AsyncClient,
 ) -> None:
     created = (
@@ -102,16 +103,12 @@ async def test_get_demo_benchmark_needles_returns_metadata_by_benchmark_id(
         )
     ).json()
 
-    response = await client.get(f"/benchmark/needlehaystack/{created['benchmark_id']}/needles")
+    assert created["benchmark_id"]
+    assert len(created["needles"]) == 4
 
-    assert response.status_code == 200
-    data = response.json()
-    assert data["benchmark_id"] == created["benchmark_id"]
-    assert len(data["needles"]) == 4
-
-    demo_agent_ids = {agent["id"] for agent in created["demo"]["agents"]}
-    demo_source_ids = {source["id"] for source in created["demo"]["sources"]}
-    for needle in data["needles"]:
+    demo_agent_ids = {agent["id"] for agent in created["agents"]}
+    demo_source_ids = {source["id"] for source in created["sources"]}
+    for needle in created["needles"]:
         assert needle["question"].startswith("Which person")
         assert needle["answer"]
         assert needle["answer"] in needle["needle"]
@@ -120,7 +117,7 @@ async def test_get_demo_benchmark_needles_returns_metadata_by_benchmark_id(
         assert needle["source_id"] in demo_source_ids
 
 
-async def test_get_demo_benchmark_needles_unknown_id_returns_404(
+async def test_demo_benchmark_needles_lookup_endpoint_is_removed(
     client: AsyncClient,
 ) -> None:
     response = await client.get("/benchmark/needlehaystack/missing/needles")

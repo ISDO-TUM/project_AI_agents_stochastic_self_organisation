@@ -16,21 +16,17 @@ from api.schemas import (
     CreateBenchmarkResponse,
     CreateDemoBenchmarkRequest,
     CreateDemoBenchmarkResponse,
-    DemoBenchmarkRecord,
-    DemoCanvas,
     DemoCanvasAgent,
     DemoCanvasEdge,
     DemoCanvasSource,
     DemoNeedleRecord,
     EvaluateBenchmarkRequest,
     EvaluateBenchmarkResponse,
-    GetDemoBenchmarkNeedlesResponse,
 )
 
 router = APIRouter(prefix="/benchmark/needlehaystack", tags=["Benchmarks"])
 
 BENCHMARKS: dict[str, BenchmarkRecord] = {}
-DEMO_BENCHMARKS: dict[str, DemoBenchmarkRecord] = {}
 
 _DEMO_AGENT_COUNT = 3
 _DEMO_SYSTEM_PROMPT = (
@@ -383,27 +379,13 @@ async def create_needlehaystack_demo(
         DemoCanvasEdge(id=edge_id, from_id=from_id, to=to_id)
         for edge_id, from_id, to_id in _DEMO_EDGE_TEMPLATES
     ]
-    demo = DemoCanvas(agents=agents, sources=sources, edges=edges)
-    DEMO_BENCHMARKS[benchmark_id] = DemoBenchmarkRecord(demo=demo, needles=needles)
-
-    return CreateDemoBenchmarkResponse(benchmark_id=benchmark_id, demo=demo)
-
-
-@router.get(
-    "/{benchmark_id}/needles",
-    response_model=GetDemoBenchmarkNeedlesResponse,
-    summary="Get questions, answers, and ownership for a generated demo benchmark",
-)
-async def get_needlehaystack_demo_needles(
-    benchmark_id: str,
-) -> GetDemoBenchmarkNeedlesResponse:
-    record = DEMO_BENCHMARKS.get(benchmark_id)
-    if record is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Demo benchmark not found.",
-        )
-    return GetDemoBenchmarkNeedlesResponse(benchmark_id=benchmark_id, needles=record.needles)
+    return CreateDemoBenchmarkResponse(
+        benchmark_id=benchmark_id,
+        agents=agents,
+        sources=sources,
+        edges=edges,
+        needles=needles,
+    )
 
 
 @router.post(

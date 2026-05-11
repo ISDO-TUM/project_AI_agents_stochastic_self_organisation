@@ -139,23 +139,13 @@ Request body:
 }
 ```
 
-The response contains a `benchmark_id` and a `demo` object with the same
-top-level shape as `demos/approved-supplier.json`: `agents`, `sources`, and
-`edges`. The demo is fixed to three agents. Each generated needle is assigned
-to exactly one agent/source; the other agents receive distractor text for that
-question and should answer `unknown`, which plurality voting treats as zero
-score.
-
-## Inspect Demo Needles
-
-Endpoint:
-
-```text
-GET /benchmark/needlehaystack/{benchmark_id}/needles
-```
-
-The response lists each generated question, answer, needle sentence, and the
-agent/source that owns it. Unknown demo benchmark ids return `404`.
+The response uses the same top-level importable shape as `demos/test.json`:
+`benchmark_id`, `agents`, `sources`, `edges`, and `needles`. The demo is fixed
+to three agents. Each generated needle is assigned to exactly one agent/source;
+the other agents receive distractor text for that question and should answer
+`unknown`, which plurality voting treats as zero score. The top-level `needles`
+list contains each generated question, answer, needle sentence, and the
+agent/source that owns it.
 
 ## Driving the Benchmark
 
