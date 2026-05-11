@@ -7,9 +7,10 @@ Broadcast phase
     and in parallel.
 
 Discussion phase (repeated `rounds` times)
-    For each agent that has at least one neighbour, we build a context
-    message from those neighbours' most-recent responses and ask the
-    agent to reply. Agents without neighbours stay silent.
+    For each agent that has at least one *incoming* edge (i.e. another agent
+    has it in their ``connections`` list), we build a context message from
+    those senders' most-recent responses and ask the receiving agent to reply.
+    Agents without incoming edges are silent during discussion rounds.
 
 Three consensus modes are supported via `mode`:
 
@@ -25,8 +26,9 @@ Three consensus modes are supported via `mode`:
   stable across two consecutive vote rounds — the broadcast counts as
   the first round, so a single matching follow-up is enough to stop.
 
-An agent that fails during any phase has its error recorded as its
-response; subsequent rounds will include the error text as context.
+An agent that fails during any phase has its error recorded as its response
+for that round; subsequent rounds will include the error text as context so
+other agents remain aware of the failure.
 """
 
 from __future__ import annotations
