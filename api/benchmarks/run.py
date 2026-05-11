@@ -107,8 +107,11 @@ def _delete_bench_agents(client: httpx.Client, agents: list[dict[str, Any]]) -> 
     for agent in agents:
         try:
             client.delete(f"/api/agents/{agent['id']}")
-        except httpx.HTTPError:
-            pass
+        except httpx.HTTPError as exc:
+            print(
+                f"Warning: failed to delete benchmark agent {agent.get('id')}: {exc}",
+                file=sys.stderr,
+            )
 
 
 def _create_benchmark(client: httpx.Client, num_agents: int, sentences: int) -> dict[str, Any]:
@@ -185,12 +188,18 @@ def _detach_files(client: httpx.Client, created: list[tuple[str, str]]) -> None:
     for agent_id, file_id in created:
         try:
             client.delete(f"/api/agents/{agent_id}/files/{file_id}")
-        except httpx.HTTPError:
-            pass
+        except httpx.HTTPError as exc:
+            print(
+                f"Warning: failed to detach file {file_id} from agent {agent_id}: {exc}",
+                file=sys.stderr,
+            )
         try:
             client.delete(f"/api/files/{file_id}")
-        except httpx.HTTPError:
-            pass
+        except httpx.HTTPError as exc:
+            print(
+                f"Warning: failed to delete file {file_id}: {exc}",
+                file=sys.stderr,
+            )
 
 
 def _evaluate(
