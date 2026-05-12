@@ -7,6 +7,23 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
+# Models
+# ---------------------------------------------------------------------------
+
+ProviderType = Literal["openai", "anthropic", "groq", "gemini"]
+ModelType = Literal["chat", "embedding"]
+
+
+class Model(BaseModel):
+    """Available LLM model metadata."""
+
+    id: str = Field(description="Model identifier, e.g. 'gpt-4o'.")
+    name: str = Field(description="Display name, e.g. 'GPT-4o'.")
+    provider: ProviderType
+    type: ModelType
+
+
+# ---------------------------------------------------------------------------
 # Agents
 # ---------------------------------------------------------------------------
 
@@ -17,7 +34,7 @@ class AgentBase(BaseModel):
     name: str
     description: str = Field(description="Role description, e.g. 'Sales agent'.")
     system_prompt: str = Field(description="System prompt prepended to every LLM call.")
-    provider: Literal["openai", "anthropic", "groq"]
+    provider: ProviderType
     model: str = Field(description="Model identifier, e.g. 'gpt-4o'.")
     tools: list[str] = Field(
         default_factory=list, description="Tool names available to this agent."
@@ -46,7 +63,7 @@ class AgentUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     system_prompt: str | None = None
-    provider: Literal["openai", "anthropic", "groq"] | None = None
+    provider: ProviderType | None = None
     model: str | None = None
     tools: list[str] | None = None
     connections: list[str] | None = None
@@ -335,7 +352,7 @@ class DemoCanvasAgent(BaseModel):
     name: str
     description: str
     system_prompt: str = Field(alias="systemPrompt")
-    provider: Literal["openai", "anthropic", "groq"]
+    provider: ProviderType
     model: str
     tools: list[str]
     connections: list[str]
