@@ -99,6 +99,24 @@ MODELS = [
         provider="groq",
         type="chat",
     ),
+    Model(
+        id="gemini-2.5-pro",
+        name="Gemini 2.5 Pro",
+        provider="gemini",
+        type="chat",
+    ),
+    Model(
+        id="gemini-2.5-flash",
+        name="Gemini 2.5 Flash",
+        provider="gemini",
+        type="chat",
+    ),
+    Model(
+        id="gemini-2.5-flash-lite",
+        name="Gemini 2.5 Flash Lite",
+        provider="gemini",
+        type="chat",
+    ),
 ]
 
 SAP_SUPPORTED_MODELS = [
@@ -187,8 +205,9 @@ SAP_SUPPORTED_MODELS = [
     "",
     summary="List available models",
     description=(
-        "Returns chat models available through the LLM proxy. "
-        "Use is_sap_supported=true to get only SAP-supported models."
+        "Returns chat models available based on configured environment variables. "
+        "Providers with a base URL override return SAP model IDs; "
+        "providers without one return standard model IDs."
     ),
 )
 async def list_models(

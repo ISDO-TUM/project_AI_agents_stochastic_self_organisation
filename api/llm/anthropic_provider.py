@@ -101,10 +101,14 @@ class AnthropicProvider(BaseLLMProvider):
         response: Any,
         tool_results: list[tuple[NormalizedToolCall, str]],
     ) -> None:
-        assistant_content = [
-            b.model_dump() if hasattr(b, "model_dump") else {"type": b.type, "text": b.text}
-            for b in response.content
-        ]
+        assistant_content = []
+        for b in response.content:
+            if b.type == "tool_use":
+                assistant_content.append(
+                    {"type": "tool_use", "id": b.id, "name": b.name, "input": b.input}
+                )
+            elif b.type == "text":
+                assistant_content.append({"type": "text", "text": b.text})
         messages.append({"role": "assistant", "content": assistant_content})
         messages.append(
             {
