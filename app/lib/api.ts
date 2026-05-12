@@ -128,6 +128,10 @@ export async function deleteAgentApi(id: string): Promise<void> {
   await request<void>("DELETE", `/api/agents/${id}`);
 }
 
+export async function clearAll(): Promise<void> {
+  await request<void>("DELETE", "/api/agents/");
+}
+
 export async function patchAgentTools(
   id: string,
   tools: string[],
