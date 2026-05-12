@@ -211,12 +211,8 @@ export interface ModelEntry {
   type: string;
 }
 
-export async function fetchModels(
-  isSapSupported?: boolean,
-): Promise<ModelEntry[]> {
-  const params =
-    isSapSupported !== undefined ? `?is_sap_supported=${isSapSupported}` : "";
-  return request<ModelEntry[]>("GET", `/api/models${params}`);
+export async function fetchModels(): Promise<ModelEntry[]> {
+  return request<ModelEntry[]>("GET", "/api/models");
 }
 
 // ─── Simulation run ───────────────────────────────────────────────────────────

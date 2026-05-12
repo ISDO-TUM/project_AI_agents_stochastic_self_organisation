@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter
+
+from api.llm.config import get_available_models
 
 router = APIRouter(prefix="/api/models", tags=["Models"])
 
@@ -185,13 +187,11 @@ SAP_SUPPORTED_MODELS = [
     "",
     summary="List available models",
     description=(
-        "Returns chat models available through the LLM proxy. "
-        "Use is_sap_supported=true to get only SAP-supported models."
+        "Returns chat models available based on configured environment variables. "
+        "Providers with a base URL override return SAP model IDs; "
+        "providers without one return standard model IDs."
     ),
 )
-async def list_models(
-    is_sap_supported: bool = Query(default=False),
-) -> list[dict[str, str]]:
-    if is_sap_supported:
-        return SAP_SUPPORTED_MODELS
-    return MODELS
+async def list_models() -> list[dict[str, str]]:
+    result: list[dict[str, str]] = get_available_models(MODELS, SAP_SUPPORTED_MODELS)
+    return result
