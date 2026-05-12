@@ -79,9 +79,13 @@ async def _call_agent(
 
 
 def _tool_steps(tools_used: list[ToolCall], node_id: str) -> list[SimulationStep]:
-    """Convert tool calls into SimulationStep log entries."""
-    out = []
+    """Convert tool calls into SimulationStep log entries, one entry per tool name."""
+    # Keep only the last call per tool (e.g. files: list → read → show the read)
+    last_by_name: dict[str, ToolCall] = {}
     for tool in tools_used:
+        last_by_name[tool.name] = tool
+    out = []
+    for tool in last_by_name.values():
         input_summary = " · ".join(f"**{k}:** `{v}`" for k, v in tool.input.items())
         output = tool.output.strip()
         output_block = f"```\n{output}\n```" if "\n" in output else output
@@ -696,6 +700,20 @@ async def _run_voting(
             nbrs = [n for n in incoming[agent["id"]] if n in responses]
             own_prev = responses.get(agent["id"], "")
 
+            was_unknown = (votes.get(agent["id"]) or "unknown") in _ZERO_SCORE_VOTES
+            unknown_nudge = (
+                "\nYou voted 'unknown' last round because you lacked information. "
+                "One of your connected agents may now have provided that information — "
+                "if their reason is grounded in a file or specific source, adopt their "
+                "answer rather than staying 'unknown'."
+                if was_unknown
+                else ""
+            )
+            source_nudge = (
+                "\nWhen two agents disagree, prefer the answer backed by a specific "
+                "file, quote, or source over an unsupported opinion."
+            )
+
             if nbrs:
                 # Topology-aware: agent sees its own previous answer + only
                 # connected neighbours' votes and reasons.
@@ -723,7 +741,10 @@ async def _run_voting(
                     + "\n".join(neighbour_lines)
                     + "\n\nReconsider your answer in light of your connected agents' "
                     "reasoning. Keep your REASON grounded in quotes and "
-                    "files/sources when available." + _VOTE_INSTRUCTION
+                    "files/sources when available."
+                    + unknown_nudge
+                    + source_nudge
+                    + _VOTE_INSTRUCTION
                 )
             else:
                 # Isolated agent: fall back to global tally so it isn't blind.
@@ -735,6 +756,8 @@ async def _run_voting(
                     f"Reasons submitted by agents:\n{reasons_msg}\n\n"
                     "Reconsider your answer in light of the reasoning of other agents. "
                     "Keep your REASON grounded in quotes and files/sources when available."
+                    + unknown_nudge
+                    + source_nudge
                     + _VOTE_INSTRUCTION
                 )
 

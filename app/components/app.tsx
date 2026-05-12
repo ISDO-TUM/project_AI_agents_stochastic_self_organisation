@@ -445,6 +445,7 @@ export function App() {
           currentStep={cur}
           onNext={() => setCur((s) => Math.min(s + 1, steps.length - 1))}
           onPrev={() => setCur((s) => Math.max(s - 1, 0))}
+          onJumpTo={(idx) => setCur(idx)}
           expanded={logExp}
           onToggleExpand={() => setLogExp((x) => !x)}
           sidebarWidth={logSidebarWidth}

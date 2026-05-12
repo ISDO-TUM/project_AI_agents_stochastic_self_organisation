@@ -15,6 +15,7 @@ interface LogWallProps {
   currentStep: number;
   onNext: () => void;
   onPrev: () => void;
+  onJumpTo: (idx: number) => void;
   expanded: boolean;
   onToggleExpand: () => void;
   sidebarWidth: number;
@@ -55,6 +56,7 @@ export function LogWall({
   currentStep,
   onNext,
   onPrev,
+  onJumpTo,
   expanded,
   onToggleExpand,
   sidebarWidth,
@@ -191,6 +193,7 @@ export function LogWall({
             <div
               key={step.id}
               data-active={isActive ? "true" : "false"}
+              onClick={() => onJumpTo(idx)}
               style={{
                 padding: "11px 18px",
                 borderLeft: `2.5px solid ${isActive ? BURG : "transparent"}`,
@@ -201,6 +204,7 @@ export function LogWall({
                   : "transparent",
                 opacity: isFuture ? 0.15 : isPast ? 0.45 : 1,
                 transition: "all 0.2s",
+                cursor: "pointer",
               }}
             >
               <div
