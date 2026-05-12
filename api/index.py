@@ -60,6 +60,7 @@ app.include_router(knowledge_files_router)
 app.include_router(models_router)
 app.include_router(benchmark_router)
 app.include_router(simulation_router)
+app.include_router(benchmark_router)
 app.include_router(test_router)
 
 
