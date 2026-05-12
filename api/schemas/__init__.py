@@ -282,3 +282,52 @@ class SimulationRunResponse(BaseModel):
     """Ordered list of simulation steps returned after the run completes."""
 
     steps: list[SimulationStep]
+
+
+class CreateBenchmarkRequest(BaseModel):
+    """Request body for creating a needle-in-a-haystack benchmark."""
+
+    num_agents: int = Field(..., ge=2, le=50)
+    sentences_per_agent: int = Field(6, ge=5, le=50)
+    include_answer: bool = False
+
+
+class CreateBenchmarkResponse(BaseModel):
+    """Response body for a created needle-in-a-haystack benchmark."""
+
+    benchmark_id: str
+    question: str
+    chunks: dict[str, str]
+    answer: str | None
+    needle_agent: str | None
+
+
+class EvaluateBenchmarkRequest(BaseModel):
+    """Request body for evaluating a generated benchmark answer."""
+
+    benchmark_id: str
+    generated_answer: str
+    selected_agent: str | None = None
+
+
+class EvaluateBenchmarkResponse(BaseModel):
+    """Response body for a needle-in-a-haystack benchmark evaluation."""
+
+    answer_correct: bool
+    routing_correct: bool | None
+    correct_answer: str
+    generated_answer: str
+    normalized_correct_answer: str
+    normalized_generated_answer: str
+    needle_agent: str
+    selected_agent: str | None
+
+
+class BenchmarkRecord(BaseModel):
+    """Server-side record for a created needle-in-a-haystack benchmark."""
+
+    question: str
+    answer: str
+    needle: str
+    needle_agent: str
+    chunks: dict[str, str]
