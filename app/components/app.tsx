@@ -15,6 +15,7 @@ import {
   createFile,
   deleteFileApi,
   attachFile,
+  clearAll,
 } from "@/lib/api";
 import { Canvas } from "@/components/canvas";
 import { LogWall } from "@/components/log-wall";
@@ -333,7 +334,10 @@ export function App() {
     setSelNode(null);
   }, [setPanel, setSelNode]);
 
-  const onClear = useCallback(() => dispatch({ type: "CLEAR" }), [dispatch]);
+  const onClear = useCallback(async () => {
+    await clearAll().catch(() => {});
+    dispatch({ type: "CLEAR" });
+  }, [dispatch]);
   const onAutoLayout = useCallback(
     () => dispatch({ type: "AUTO_LAYOUT" }),
     [dispatch],
