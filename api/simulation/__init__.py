@@ -136,14 +136,23 @@ _VOTE_RE = re.compile(r"^\s*VOTE:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
 _ZERO_SCORE_VOTES = frozenset({"unknown"})
 _VOTE_INSTRUCTION = (
     "\n\nIMPORTANT: End your response with these two lines in this EXACT format:\n"
-    "REASON: <why you chose the answer, including quote and file/source "
+    "REASON: <why you chose the answer, including a quote and/or file/source "
     "if available>\n"
-    "VOTE: <bare answer only — no preamble, no full sentence>\n"
+    "VOTE: <bare answer only — no preamble, no full sentence >\n"
     "Examples:\n"
-    "  GOOD: REASON: Acme Computers was chosen due to the quote "
-    "'approved supplier' from 2026_supplier_contract.txt\n"
-    "        VOTE: Acme Computers\n"
-    "  BAD:  VOTE: The approved supplier is Acme Computers"
+    "  GOOD: REASON: Dylan was chosen due to the quote "
+    "'Dylan is the manager of organisation delta' from 2026_information.txt\n"
+    "        VOTE: Dylan\n"
+    "  BAD:  VOTE: The manager is Dylan\n"
+    "if you dont have an answer, vote with: 'unknown'\n"
+    "if you dont think there is a correct answer, vote with: none"
+    "Examples:\n"
+    "  GOOD: REASON: No information regarding the question was found "
+    "        VOTE: unknown\n"
+    "  BAD:  unknown\n"
+    "  GOOD: REASON: No other agent has provided any valid alternative answer"
+    "        VOTE: none\n"
+    "  BAD: none\n"
 )
 
 # Strip stop-words and common framing prefixes so semantically equivalent
@@ -687,8 +696,7 @@ async def _run_voting(
                 f"Original question: {prompt}\n\n"
                 f"Current vote tally:\n{tally_msg}\n\n"
                 f"Reasons submitted by agents:\n{reasons_msg}\n\n"
-                "Reconsider your answer in light of the tally. If you still "
-                "disagree with the plurality, say so and explain briefly. "
+                "Reconsider your answer in light of the reasoning of other agents"
                 "Keep your REASON grounded in quotes and files/sources when available."
                 + _VOTE_INSTRUCTION
             )
