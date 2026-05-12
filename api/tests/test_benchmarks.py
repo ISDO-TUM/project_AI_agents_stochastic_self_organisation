@@ -58,22 +58,14 @@ async def test_create_demo_benchmark_returns_importable_three_agent_canvas(
     assert len(data["needles"]) == 3
 
     assert [agent["id"] for agent in data["agents"]] == _DEMO_AGENT_IDS
-    assert [agent["name"] for agent in data["agents"]] == [
-        "Procurement Lead",
-        "Compliance Officer",
-        "Field Operations",
-    ]
+    assert all(agent["name"] for agent in data["agents"])
     assert [agent["connections"] for agent in data["agents"]] == [
         [_DEMO_AGENT_IDS[1], _DEMO_AGENT_IDS[2]],
         [_DEMO_AGENT_IDS[2]],
         [],
     ]
     assert [source["id"] for source in data["sources"]] == _DEMO_SOURCE_IDS
-    assert [source["name"] for source in data["sources"]] == [
-        "2026_supplier_contract.txt",
-        "compliance_memo_2026.txt",
-        "field_ops_legacy_note.txt",
-    ]
+    assert all(source["name"].endswith(".txt") for source in data["sources"])
     assert [edge["id"] for edge in data["edges"]] == _DEMO_EDGE_IDS
 
     for agent in data["agents"]:

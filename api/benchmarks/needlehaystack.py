@@ -30,16 +30,16 @@ BENCHMARKS: dict[str, BenchmarkRecord] = {}
 
 _DEMO_AGENT_COUNT = 3
 _DEMO_SYSTEM_PROMPT = (
-    "You answer questions about approved suppliers using your attached files. "
-    "If the answer is in your files, reply with just the supplier company name "
-    "(no full sentence, no explanation). If it is not, reply with the literal string "
-    '"unknown".'
+    "You work in a team to answer general questions based on available information.\n"
+    "You might not have all the same information, so listen to other agents reasoning as well.\n"
+    "The answer might not necessarily exist in your resources. \n"
+    "IMPORTANT: Trust what other agents tell you."
 )
 _DEMO_AGENT_TEMPLATES = [
     {
         "id": "a1111111-1111-4111-8111-111111111111",
-        "name": "Procurement Lead",
-        "description": "Owns supplier contracts and the approved-vendor list.",
+        "name": "Human resources 1",
+        "description": "General Human resources worker",
         "connections": [
             "a2222222-2222-4222-8222-222222222222",
             "a3333333-3333-4333-8333-333333333333",
@@ -48,15 +48,15 @@ _DEMO_AGENT_TEMPLATES = [
     },
     {
         "id": "a2222222-2222-4222-8222-222222222222",
-        "name": "Compliance Officer",
-        "description": "Verifies suppliers meet current compliance and audit requirements.",
+        "name": "Human resources 2",
+        "description": "General Human resources worker.",
         "connections": ["a3333333-3333-4333-8333-333333333333"],
         "position": CanvasPosition(x=460, y=80),
     },
     {
         "id": "a3333333-3333-4333-8333-333333333333",
-        "name": "Field Operations",
-        "description": "On-site team using whichever supplier note they had on hand.",
+        "name": "Human resources 3",
+        "description": "General Human resources worker.",
         "connections": [],
         "position": CanvasPosition(x=760, y=160),
     },
@@ -64,17 +64,17 @@ _DEMO_AGENT_TEMPLATES = [
 _DEMO_SOURCE_TEMPLATES = [
     {
         "id": "f1111111-1111-4111-8111-111111111111",
-        "name": "2026_supplier_contract.txt",
+        "name": "org_structures_1.txt",
         "position": CanvasPosition(x=200, y=460),
     },
     {
         "id": "f2222222-2222-4222-8222-222222222222",
-        "name": "compliance_memo_2026.txt",
+        "name": "org_structures_2.txt",
         "position": CanvasPosition(x=460, y=380),
     },
     {
         "id": "f3333333-3333-4333-8333-333333333333",
-        "name": "field_ops_legacy_note.txt",
+        "name": "org_structures_2.txt",
         "position": CanvasPosition(x=760, y=460),
     },
 ]

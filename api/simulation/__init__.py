@@ -20,11 +20,12 @@ Three consensus modes are supported via `mode`:
   neighbours. Replies are presented to the agent labelled with weights;
   weights are updated each round based on textual agreement (Jaccard).
   Converges when weights stop changing across a round.
-- ``voting``: every agent emits a structured ``VOTE: ...`` line. A pure
-  tally function (no separate agent) counts the votes and broadcasts
-  the plurality back to every agent. Converges when the plurality is
-  stable across two consecutive vote rounds — the broadcast counts as
-  the first round, so a single matching follow-up is enough to stop.
+- ``voting``: every agent emits structured ``REASON: ...`` and ``VOTE: ...``
+  lines. A pure tally function (no separate agent) counts the votes and
+  broadcasts the plurality plus submitted reasons back to every agent.
+  Converges when the plurality is stable across two consecutive vote rounds —
+  the broadcast counts as the first round, so a single matching follow-up is
+  enough to stop.
 
 An agent that fails during any phase has its error recorded as its response
 for that round; subsequent rounds will include the error text as context so
@@ -78,9 +79,13 @@ async def _call_agent(
 
 
 def _tool_steps(tools_used: list[ToolCall], node_id: str) -> list[SimulationStep]:
-    """Convert tool calls into SimulationStep log entries."""
-    out = []
+    """Convert tool calls into SimulationStep log entries, one entry per tool name."""
+    # Keep only the last call per tool (e.g. files: list → read → show the read)
+    last_by_name: dict[str, ToolCall] = {}
     for tool in tools_used:
+        last_by_name[tool.name] = tool
+    out = []
+    for tool in last_by_name.values():
         input_summary = " · ".join(f"**{k}:** `{v}`" for k, v in tool.input.items())
         output = tool.output.strip()
         output_block = f"```\n{output}\n```" if "\n" in output else output
@@ -130,14 +135,28 @@ def _centroid_response(responses: dict[str, str]) -> tuple[str | None, str | Non
     return best_text, best_id
 
 
+_REASON_RE = re.compile(r"^\s*REASON:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
 _VOTE_RE = re.compile(r"^\s*VOTE:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
 _ZERO_SCORE_VOTES = frozenset({"unknown"})
 _VOTE_INSTRUCTION = (
-    "\n\nIMPORTANT: End your response with a single line in this EXACT format:\n"
-    "VOTE: <bare answer only — no preamble, no full sentence>\n"
+    "\n\nIMPORTANT: End your response with these two lines in this EXACT format:\n"
+    "REASON: <why you chose the answer, including a quote and/or file/source "
+    "if available>\n"
+    "VOTE: <bare answer only — no preamble, no full sentence >\n"
     "Examples:\n"
-    "  GOOD: VOTE: Trump\n"
-    "  BAD:  VOTE: The president of America is Trump"
+    "  GOOD: REASON: Dylan was chosen due to the quote "
+    "'Dylan is the manager of organisation delta' from 2026_information.txt\n"
+    "        VOTE: Dylan\n"
+    "  BAD:  VOTE: The manager is Dylan\n"
+    "if you dont have an answer, vote with: 'unknown'\n"
+    "if you dont think there is a correct answer, vote with: none"
+    "Examples:\n"
+    "  GOOD: REASON: No information regarding the question was found "
+    "        VOTE: unknown\n"
+    "  BAD:  unknown\n"
+    "  GOOD: REASON: No other agent has provided any valid alternative answer"
+    "        VOTE: none\n"
+    "  BAD: none\n"
 )
 
 # Strip stop-words and common framing prefixes so semantically equivalent
@@ -191,6 +210,15 @@ def _extract_vote(text: str) -> str | None:
     return _normalise_vote(matches[-1]) or None
 
 
+def _extract_reason(text: str) -> str | None:
+    """Pull the last REASON: ... line from a response."""
+    matches = _REASON_RE.findall(text)
+    if not matches:
+        return None
+    reason = matches[-1].strip()
+    return reason or None
+
+
 def _tally(votes: dict[str, str | None]) -> tuple[str | None, dict[str, int]]:
     """Count valid votes and return (plurality, counts).
 
@@ -213,6 +241,21 @@ def _format_tally(plurality: str | None, counts: dict[str, int]) -> str:
     sorted_counts = sorted(counts.items(), key=lambda kv: -kv[1])
     lines = [f"- '{ans}': {n} vote{'s' if n != 1 else ''}" for ans, n in sorted_counts]
     return f"**Plurality:** '{plurality}'\n\n" + "\n".join(lines)
+
+
+def _format_vote_reasons(
+    agents: list[dict[str, Any]],
+    votes: dict[str, str | None],
+    reasons: dict[str, str | None],
+) -> str:
+    """Format per-agent vote reasons for the next voting round."""
+    lines = []
+    for agent in agents:
+        agent_id = agent["id"]
+        vote = votes.get(agent_id) or "no valid vote"
+        reason = reasons.get(agent_id) or "No reason provided."
+        lines.append(f"- {agent['name']} voted '{vote}': {reason}")
+    return "\n".join(lines)
 
 
 def _build_incoming(agents: list[dict[str, Any]]) -> dict[str, list[str]]:
@@ -588,6 +631,7 @@ async def _run_voting(
     rounds: int,
     agent_context: dict[str, str] | None,
 ) -> SimulationOutcome:
+    agent_by_id = {a["id"]: a for a in agents}
     steps: list[SimulationStep] = [
         _step(
             label="SYSTEM",
@@ -596,7 +640,9 @@ async def _run_voting(
         )
     ]
 
-    async def _broadcast(agent: dict[str, Any]) -> tuple[str, str | None, list[SimulationStep]]:
+    async def _broadcast(
+        agent: dict[str, Any],
+    ) -> tuple[str, str | None, str | None, list[SimulationStep]]:
         full_prompt = _with_context(prompt, agent["id"], agent_context) + _VOTE_INSTRUCTION
         try:
             response, tools = await _call_agent(agent, full_prompt, db)
@@ -605,21 +651,25 @@ async def _run_voting(
             return (
                 err,
                 None,
+                None,
                 [_step(label=agent["name"], msg=err, type="system", node_id=agent["id"])],
             )
         vote = _extract_vote(response)
+        reason = _extract_reason(response)
         agent_steps = _tool_steps(tools, agent["id"])
         agent_steps.append(
             _step(label=agent["name"], msg=response, type="system", node_id=agent["id"])
         )
-        return response, vote, agent_steps
+        return response, vote, reason, agent_steps
 
     bcast = await asyncio.gather(*[_broadcast(a) for a in agents])
     responses: dict[str, str] = {}
     votes: dict[str, str | None] = {}
-    for agent, (resp, vote, agent_steps) in zip(agents, bcast, strict=True):
+    reasons: dict[str, str | None] = {}
+    for agent, (resp, vote, reason, agent_steps) in zip(agents, bcast, strict=True):
         responses[agent["id"]] = resp
         votes[agent["id"]] = vote
+        reasons[agent["id"]] = reason
         steps.extend(agent_steps)
 
     # Snapshot the round-0 votes for provenance-based routing attribution.
@@ -640,17 +690,77 @@ async def _run_voting(
         rounds_used = round_num
         steps.append(_step(label="SYSTEM", msg=f"Voting round {round_num}.", type="system"))
         tally_msg = _format_tally(plurality, counts)
+        reasons_msg = _format_vote_reasons(agents, votes, reasons)
 
         async def _discuss(
             agent: dict[str, Any],
             tally_msg: str = tally_msg,
-        ) -> tuple[str, str | None, list[SimulationStep]]:
-            full_prompt = (
-                f"Original question: {prompt}\n\n"
-                f"Current vote tally:\n{tally_msg}\n\n"
-                "Reconsider your answer in light of the tally. If you still "
-                "disagree with the plurality, say so and explain briefly." + _VOTE_INSTRUCTION
+            reasons_msg: str = reasons_msg,
+        ) -> tuple[str, str | None, str | None, list[SimulationStep]]:
+            nbrs = [n for n in incoming[agent["id"]] if n in responses]
+            own_prev = responses.get(agent["id"], "")
+
+            was_unknown = (votes.get(agent["id"]) or "unknown") in _ZERO_SCORE_VOTES
+            unknown_nudge = (
+                "\nYou voted 'unknown' last round because you lacked information. "
+                "One of your connected agents may now have provided that information — "
+                "if their reason is grounded in a file or specific source, adopt their "
+                "answer rather than staying 'unknown'."
+                if was_unknown
+                else ""
             )
+            source_nudge = (
+                "\nWhen two agents disagree, prefer the answer backed by a specific "
+                "file, quote, or source over an unsupported opinion."
+            )
+
+            if nbrs:
+                # Topology-aware: agent sees its own previous answer + only
+                # connected neighbours' votes and reasons.
+                neighbour_lines = [
+                    f"- {agent_by_id[n]['name']} voted "
+                    f"'{votes.get(n) or 'unknown'}': "
+                    f"{reasons.get(n) or 'No reason provided.'}"
+                    for n in nbrs
+                ]
+                edge_steps = [
+                    _step(
+                        label=agent_by_id[n]["name"],
+                        msg=responses[n],
+                        type="agent-to-agent",
+                        target=agent["name"],
+                        from_id=n,
+                        to_id=agent["id"],
+                    )
+                    for n in nbrs
+                ]
+                full_prompt = (
+                    f"Original question: {prompt}\n\n"
+                    f"Your previous answer:\n{own_prev}\n\n"
+                    "Your connected agents responded:\n"
+                    + "\n".join(neighbour_lines)
+                    + "\n\nReconsider your answer in light of your connected agents' "
+                    "reasoning. Keep your REASON grounded in quotes and "
+                    "files/sources when available."
+                    + unknown_nudge
+                    + source_nudge
+                    + _VOTE_INSTRUCTION
+                )
+            else:
+                # Isolated agent: fall back to global tally so it isn't blind.
+                edge_steps = []
+                full_prompt = (
+                    f"Original question: {prompt}\n\n"
+                    f"Your previous answer:\n{own_prev}\n\n"
+                    f"Current vote tally:\n{tally_msg}\n\n"
+                    f"Reasons submitted by agents:\n{reasons_msg}\n\n"
+                    "Reconsider your answer in light of the reasoning of other agents. "
+                    "Keep your REASON grounded in quotes and files/sources when available."
+                    + unknown_nudge
+                    + source_nudge
+                    + _VOTE_INSTRUCTION
+                )
+
             try:
                 resp, tools = await _call_agent(agent, full_prompt, db)
             except Exception as exc:
@@ -658,18 +768,24 @@ async def _run_voting(
                 return (
                     err,
                     None,
-                    [_step(label=agent["name"], msg=err, type="system", node_id=agent["id"])],
+                    None,
+                    [
+                        *edge_steps,
+                        _step(label=agent["name"], msg=err, type="system", node_id=agent["id"]),
+                    ],
                 )
             v = _extract_vote(resp)
+            r = _extract_reason(resp)
             tool_s = _tool_steps(tools, agent["id"])
             tool_s.append(_step(label=agent["name"], msg=resp, type="system", node_id=agent["id"]))
-            return resp, v, tool_s
+            return resp, v, r, [*edge_steps, *tool_s]
 
         results = await asyncio.gather(*[_discuss(a) for a in agents])
 
-        for agent, (resp, vote, agent_steps) in zip(agents, results, strict=True):
+        for agent, (resp, vote, reason, agent_steps) in zip(agents, results, strict=True):
             responses[agent["id"]] = resp
             votes[agent["id"]] = vote
+            reasons[agent["id"]] = reason
             steps.extend(agent_steps)
 
         plurality, counts = _tally(votes)
