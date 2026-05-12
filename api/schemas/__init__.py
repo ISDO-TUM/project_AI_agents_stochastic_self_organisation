@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, ConfigDict, Field
 
 # ---------------------------------------------------------------------------
 # Agents
@@ -22,10 +22,22 @@ class AgentBase(BaseModel):
     tools: list[str] = Field(
         default_factory=list, description="Tool names available to this agent."
     )
+    connections: list[str] = Field(
+        default_factory=list,
+        description="UUIDs of agents this agent may delegate work to.",
+    )
 
 
 class AgentCreate(AgentBase):
     """Request body for creating or fully replacing an agent."""
+
+    id: str | None = Field(
+        default=None,
+        description=(
+            "Optional caller-supplied UUID. When omitted the server generates one. "
+            "Useful for canvas imports that need to preserve cross-references."
+        ),
+    )
 
 
 class AgentUpdate(BaseModel):
@@ -37,6 +49,7 @@ class AgentUpdate(BaseModel):
     provider: Literal["openai", "anthropic", "groq"] | None = None
     model: str | None = None
     tools: list[str] | None = None
+    connections: list[str] | None = None
 
 
 class AgentResponse(AgentBase):
@@ -247,6 +260,137 @@ class FilesToolResponse(BaseModel):
     result: str
 
 
+class CreateBenchmarkRequest(BaseModel):
+    """Request body for creating a needle-in-a-haystack benchmark."""
+
+    num_agents: int = Field(..., ge=2, le=50)
+    sentences_per_agent: int = Field(6, ge=5, le=50)
+    include_answer: bool = False
+
+
+class CreateBenchmarkResponse(BaseModel):
+    """Response body for a created majority-vote benchmark."""
+
+    benchmark_id: str
+    question: str
+    chunks: dict[str, str]
+    answer: str | None
+    correct_agents: list[str] | None = Field(
+        default=None,
+        description="Synthetic agent keys (agent_1, …) seeded with the correct answer.",
+    )
+    correct_agent_count: int = Field(
+        description="How many agents (out of num_agents) hold the correct answer."
+    )
+
+
+class EvaluateBenchmarkRequest(BaseModel):
+    """Request body for evaluating a generated benchmark answer."""
+
+    benchmark_id: str
+    generated_answer: str
+
+
+class EvaluateBenchmarkResponse(BaseModel):
+    """Response body for a majority-vote benchmark evaluation."""
+
+    answer_correct: bool
+    correct_answer: str
+    generated_answer: str
+    normalized_correct_answer: str
+    normalized_generated_answer: str
+    correct_agents: list[str]
+
+
+class BenchmarkRecord(BaseModel):
+    """Server-side record for a created majority-vote benchmark."""
+
+    question: str
+    answer: str
+    needle: str
+    correct_agents: list[str]
+    chunks: dict[str, str]
+
+
+class CreateDemoBenchmarkRequest(BaseModel):
+    """Request body for creating a fixed three-agent importable demo canvas."""
+
+    num_needles: int = Field(1, ge=1, le=25)
+    sentences_per_needle: int = Field(5, ge=5, le=50)
+
+
+class CanvasPosition(BaseModel):
+    """Frontend canvas coordinates."""
+
+    x: int
+    y: int
+
+
+class DemoCanvasAgent(BaseModel):
+    """Agent object in the importable frontend canvas JSON format."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    name: str
+    description: str
+    system_prompt: str = Field(alias="systemPrompt")
+    provider: Literal["openai", "anthropic", "groq"]
+    model: str
+    tools: list[str]
+    connections: list[str]
+    position: CanvasPosition
+
+
+class DemoCanvasSource(BaseModel):
+    """Source object in the importable frontend canvas JSON format."""
+
+    id: str
+    name: str
+    type: Literal["text", "document"]
+    content: str
+    position: CanvasPosition
+
+
+class DemoCanvasEdge(BaseModel):
+    """Edge object in the importable frontend canvas JSON format."""
+
+    model_config = ConfigDict(populate_by_name=True)
+
+    id: str
+    from_id: str = Field(alias="from")
+    to: str
+
+
+class DemoCanvas(BaseModel):
+    """Importable frontend canvas JSON."""
+
+    agents: list[DemoCanvasAgent]
+    sources: list[DemoCanvasSource]
+    edges: list[DemoCanvasEdge]
+
+
+class DemoNeedleRecord(BaseModel):
+    """Metadata for one generated needle inside a demo benchmark."""
+
+    question: str
+    answer: str
+    needle: str
+    agent_key: str
+    agent_id: str
+    source_id: str
+
+
+class CreateDemoBenchmarkResponse(BaseModel):
+    """Response body for an importable three-agent benchmark demo."""
+
+    benchmark_id: str
+    agents: list[DemoCanvasAgent]
+    sources: list[DemoCanvasSource]
+    edges: list[DemoCanvasEdge]
+    needles: list[DemoNeedleRecord]
+
+
 # ── Simulation ────────────────────────────────────────────────────────────────
 
 _SimStepType = Literal["system", "agent-to-agent", "tool", "agent-to-source"]
@@ -266,68 +410,57 @@ class SimulationStep(BaseModel):
     to_id: str | None = None
 
 
+_ConsensusMode = Literal["broadcast", "weighted", "voting"]
+
+
 class SimulationRunRequest(BaseModel):
     """Request body for running a topology simulation."""
 
     prompt: str = Field(description="The prompt broadcast to all agents.")
     rounds: int = Field(
-        default=1,
+        default=3,
         ge=1,
         le=10,
         description="Discussion rounds after the initial broadcast.",
     )
+    mode: _ConsensusMode = Field(
+        default="broadcast",
+        description=(
+            "Consensus algorithm. 'broadcast' = current behaviour (no consensus). "
+            "'weighted' = per-agent trust vector over neighbours, weighted opinion pooling. "
+            "'voting' = global plurality voting via a coordinator function."
+        ),
+    )
+    agent_context: dict[str, str] | None = Field(
+        default=None,
+        description=(
+            "Optional per-agent private context, keyed by agent UUID. When set, "
+            "each agent's prompt is prefixed with its private context. Used by "
+            "benchmarks (e.g. needle-in-haystack) to seed each agent with a chunk."
+        ),
+    )
 
 
 class SimulationRunResponse(BaseModel):
-    """Ordered list of simulation steps returned after the run completes."""
+    """Result of a topology simulation."""
 
     steps: list[SimulationStep]
-
-
-class CreateBenchmarkRequest(BaseModel):
-    """Request body for creating a needle-in-a-haystack benchmark."""
-
-    num_agents: int = Field(..., ge=2, le=50)
-    sentences_per_agent: int = Field(6, ge=5, le=50)
-    include_answer: bool = False
-
-
-class CreateBenchmarkResponse(BaseModel):
-    """Response body for a created needle-in-a-haystack benchmark."""
-
-    benchmark_id: str
-    question: str
-    chunks: dict[str, str]
-    answer: str | None
-    needle_agent: str | None
-
-
-class EvaluateBenchmarkRequest(BaseModel):
-    """Request body for evaluating a generated benchmark answer."""
-
-    benchmark_id: str
-    generated_answer: str
-    selected_agent: str | None = None
-
-
-class EvaluateBenchmarkResponse(BaseModel):
-    """Response body for a needle-in-a-haystack benchmark evaluation."""
-
-    answer_correct: bool
-    routing_correct: bool | None
-    correct_answer: str
-    generated_answer: str
-    normalized_correct_answer: str
-    normalized_generated_answer: str
-    needle_agent: str
-    selected_agent: str | None
-
-
-class BenchmarkRecord(BaseModel):
-    """Server-side record for a created needle-in-a-haystack benchmark."""
-
-    question: str
-    answer: str
-    needle: str
-    needle_agent: str
-    chunks: dict[str, str]
+    consensus: str | None = Field(
+        default=None,
+        description="Final consensus answer when a consensus mode was used.",
+    )
+    consensus_agent_id: str | None = Field(
+        default=None,
+        description=(
+            "Agent whose answer was selected as the consensus, if applicable. "
+            "Used by benchmarks to evaluate routing/attribution correctness."
+        ),
+    )
+    converged: bool = Field(
+        default=False,
+        description="True if the consensus loop met its convergence criterion.",
+    )
+    rounds_used: int = Field(
+        default=0,
+        description="Number of discussion rounds actually executed.",
+    )

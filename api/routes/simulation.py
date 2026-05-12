@@ -35,5 +35,17 @@ async def run_simulation(body: SimulationRunRequest, db: DBDep) -> SimulationRun
             detail="No agents found. Add at least one agent before running a simulation.",
         )
 
-    steps = await run_topology(body.prompt, db, rounds=body.rounds)
-    return SimulationRunResponse(steps=steps)
+    outcome = await run_topology(
+        body.prompt,
+        db,
+        rounds=body.rounds,
+        mode=body.mode,
+        agent_context=body.agent_context,
+    )
+    return SimulationRunResponse(
+        steps=outcome.steps,
+        consensus=outcome.consensus,
+        consensus_agent_id=outcome.consensus_agent_id,
+        converged=outcome.converged,
+        rounds_used=outcome.rounds_used,
+    )

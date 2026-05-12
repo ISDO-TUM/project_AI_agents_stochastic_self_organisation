@@ -7,6 +7,15 @@ import { useTheme } from "@/lib/theme-context";
 import { useCanvasState } from "@/hooks/useCanvasState";
 import { useSimulation } from "@/hooks/useSimulation";
 import { useUIState } from "@/hooks/useUIState";
+import {
+  fetchAgents,
+  fetchFiles,
+  createAgent,
+  deleteAgentApi,
+  createFile,
+  deleteFileApi,
+  attachFile,
+} from "@/lib/api";
 import { Canvas } from "@/components/canvas";
 import { LogWall } from "@/components/log-wall";
 import { Toolbar } from "@/components/toolbar";
@@ -175,22 +184,66 @@ export function App() {
   }, []);
 
   const importCanvas = useCallback(
-    (raw: string) => {
+    async (raw: string) => {
+      let data: CanvasState;
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const data = JSON.parse(raw) as any;
+        const parsed = JSON.parse(raw) as any;
         if (
-          Array.isArray(data.agents) &&
-          Array.isArray(data.sources) &&
-          Array.isArray(data.edges)
-        )
-          dispatch({ type: "LOAD", state: data as CanvasState });
-        else
+          !Array.isArray(parsed.agents) ||
+          !Array.isArray(parsed.sources) ||
+          !Array.isArray(parsed.edges)
+        ) {
           showImportError(
             "Invalid canvas file — missing agents, sources, or edges",
           );
+          return;
+        }
+        data = parsed as CanvasState;
       } catch {
         showImportError("Invalid JSON file");
+        return;
+      }
+
+      // Render the imported canvas locally first so the user sees it instantly.
+      dispatch({ type: "LOAD", state: data });
+
+      // Persist to the backend so simulations have the same state. Do it on a
+      // best-effort basis — if the API is offline we keep the local view but
+      // surface the error.
+      try {
+        const [existingAgents, existingFiles] = await Promise.all([
+          fetchAgents(),
+          fetchFiles(),
+        ]);
+        await Promise.all([
+          ...existingAgents.map((a) => deleteAgentApi(a.id).catch(() => {})),
+          ...existingFiles.map((f) => deleteFileApi(f.id).catch(() => {})),
+        ]);
+
+        await Promise.all(
+          data.sources.map((s) =>
+            createFile(s.name, s.content, s.id).catch(() => {}),
+          ),
+        );
+        await Promise.all(
+          data.agents.map((a) => createAgent(a, { preserveId: true })),
+        );
+        const fileIds = new Set(data.sources.map((s) => s.id));
+        await Promise.all(
+          data.edges
+            .filter(
+              (e) =>
+                data.agents.some((a) => a.id === e.from) && fileIds.has(e.to),
+            )
+            .map((e) => attachFile(e.from, e.to).catch(() => {})),
+        );
+      } catch (err) {
+        showImportError(
+          `Imported locally, but failed to sync to API: ${
+            err instanceof Error ? err.message : "unknown error"
+          }`,
+        );
       }
     },
     [dispatch, showImportError],

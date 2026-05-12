@@ -45,19 +45,28 @@ _PATCHABLE_COLUMNS: frozenset[str] = frozenset(AgentUpdate.model_fields.keys())
 async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
     """Create a new agent and persist it to the database.
 
+    Honours an optional caller-supplied ``id`` so canvas imports can preserve
+    cross-references (returns 409 on collision). Otherwise generates a UUID.
+
     Args:
         body: Agent creation payload.
         db: Shared database connection injected by FastAPI.
 
     Returns:
-        The newly created agent including its generated UUID.
+        The newly created agent including its UUID.
     """
-    agent_id = str(uuid.uuid4())
+    agent_id = body.id or str(uuid.uuid4())
+    async with db.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)) as cur:
+        if await cur.fetchone() is not None:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="Agent with this id already exists.",
+            )
     await db.execute(
         """
         INSERT INTO agents
-            (id, name, description, system_prompt, provider, model, tools)
-        VALUES (?, ?, ?, ?, ?, ?, ?)
+            (id, name, description, system_prompt, provider, model, tools, connections)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
             agent_id,
@@ -67,6 +76,7 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
             body.provider,
             body.model,
             json.dumps(body.tools),
+            json.dumps(body.connections),
         ),
     )
     await db.commit()
@@ -148,7 +158,7 @@ async def replace_agent(agent_id: str, body: AgentCreate, db: DBDep) -> AgentRes
         """
         UPDATE agents
            SET name = ?, description = ?, system_prompt = ?,
-               provider = ?, model = ?, tools = ?
+               provider = ?, model = ?, tools = ?, connections = ?
          WHERE id = ?
         """,
         (
@@ -158,6 +168,7 @@ async def replace_agent(agent_id: str, body: AgentCreate, db: DBDep) -> AgentRes
             body.provider,
             body.model,
             json.dumps(body.tools),
+            json.dumps(body.connections),
             agent_id,
         ),
     )

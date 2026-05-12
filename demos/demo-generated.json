@@ -1,0 +1,124 @@
+{
+  "benchmark_id": "360a6386-87bc-4350-b471-742522981071",
+  "agents": [
+    {
+      "id": "a1111111-1111-4111-8111-111111111111",
+      "name": "Procurement Lead",
+      "description": "Owns supplier contracts and the approved-vendor list.",
+      "systemPrompt": "You answer questions about approved suppliers using your attached files. If the answer is in your files, reply with just the supplier company name (no full sentence, no explanation). If it is not, reply with the literal string \"unknown\".",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["files"],
+      "connections": [
+        "a2222222-2222-4222-8222-222222222222",
+        "a3333333-3333-4333-8333-333333333333"
+      ],
+      "position": {
+        "x": 200,
+        "y": 160
+      }
+    },
+    {
+      "id": "a2222222-2222-4222-8222-222222222222",
+      "name": "Compliance Officer",
+      "description": "Verifies suppliers meet current compliance and audit requirements.",
+      "systemPrompt": "You answer questions about approved suppliers using your attached files. If the answer is in your files, reply with just the supplier company name (no full sentence, no explanation). If it is not, reply with the literal string \"unknown\".",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["files"],
+      "connections": ["a3333333-3333-4333-8333-333333333333"],
+      "position": {
+        "x": 460,
+        "y": 80
+      }
+    },
+    {
+      "id": "a3333333-3333-4333-8333-333333333333",
+      "name": "Field Operations",
+      "description": "On-site team using whichever supplier note they had on hand.",
+      "systemPrompt": "You answer questions about approved suppliers using your attached files. If the answer is in your files, reply with just the supplier company name (no full sentence, no explanation). If it is not, reply with the literal string \"unknown\".",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["files"],
+      "connections": [],
+      "position": {
+        "x": 760,
+        "y": 160
+      }
+    }
+  ],
+  "sources": [
+    {
+      "id": "f1111111-1111-4111-8111-111111111111",
+      "name": "2026_supplier_contract.txt",
+      "type": "text",
+      "content": "Generated context 1:\nDaniel Cho supports internal reporting within Organisation Delta. The person in Organisation Borealis who has the emergency override badge is Sofia Lind. Jonas Berg works in Organisation Meridian and is responsible for data governance. Jonas Berg works in Organisation Delta and is responsible for internal reporting. Organisation Meridian lists Mira Novak as the contact for data governance. Jonas Berg works in Organisation Atlas and is responsible for regional coordination.",
+      "position": {
+        "x": 200,
+        "y": 460
+      }
+    },
+    {
+      "id": "f2222222-2222-4222-8222-222222222222",
+      "name": "compliance_memo_2026.txt",
+      "type": "text",
+      "content": "Generated context 1:\nOrganisation Atlas lists Elena Rossi as the contact for quarterly audit reviews. Organisation Delta lists Noah Klein as the contact for quarterly audit reviews. Clara Jensen supports data governance within Organisation Borealis. Mira Novak works in Organisation Atlas and is responsible for regional coordination. In Organisation Cygnus, Clara Jensen manages data governance.",
+      "position": {
+        "x": 460,
+        "y": 380
+      }
+    },
+    {
+      "id": "f3333333-3333-4333-8333-333333333333",
+      "name": "field_ops_legacy_note.txt",
+      "type": "text",
+      "content": "Generated context 1:\nNoah Klein supports quarterly audit reviews within Organisation Meridian. Organisation Cygnus lists Alice Moreno as the contact for regional coordination. In Organisation Atlas, Clara Jensen manages internal reporting. Organisation Borealis lists Lukas Meyer as the contact for procurement records. In Organisation Meridian, Martin Weber manages data governance.",
+      "position": {
+        "x": 760,
+        "y": 460
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-pl-cf",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "a2222222-2222-4222-8222-222222222222"
+    },
+    {
+      "id": "e-pl-fo",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "a3333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-cf-fo",
+      "from": "a2222222-2222-4222-8222-222222222222",
+      "to": "a3333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-pl-f1",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "f1111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "e-cf-f2",
+      "from": "a2222222-2222-4222-8222-222222222222",
+      "to": "f2222222-2222-4222-8222-222222222222"
+    },
+    {
+      "id": "e-fo-f3",
+      "from": "a3333333-3333-4333-8333-333333333333",
+      "to": "f3333333-3333-4333-8333-333333333333"
+    }
+  ],
+  "needles": [
+    {
+      "question": "Which person in Organisation Borealis has the emergency override badge?",
+      "answer": "Sofia Lind",
+      "needle": "The person in Organisation Borealis who has the emergency override badge is Sofia Lind.",
+      "agent_key": "agent_1",
+      "agent_id": "a1111111-1111-4111-8111-111111111111",
+      "source_id": "f1111111-1111-4111-8111-111111111111"
+    }
+  ]
+}
