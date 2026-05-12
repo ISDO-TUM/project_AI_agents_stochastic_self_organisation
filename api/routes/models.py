@@ -99,6 +99,24 @@ MODELS = [
         "provider": "groq",
         "type": "chat",
     },
+    {
+        "id": "gemini-2.5-pro",
+        "name": "Gemini 2.5 Pro",
+        "provider": "gemini",
+        "type": "chat",
+    },
+    {
+        "id": "gemini-2.5-flash",
+        "name": "Gemini 2.5 Flash",
+        "provider": "gemini",
+        "type": "chat",
+    },
+    {
+        "id": "gemini-2.5-flash-lite",
+        "name": "Gemini 2.5 Flash Lite",
+        "provider": "gemini",
+        "type": "chat",
+    },
 ]
 
 SAP_SUPPORTED_MODELS = [

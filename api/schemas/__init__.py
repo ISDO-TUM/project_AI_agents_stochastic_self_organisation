@@ -17,7 +17,7 @@ class AgentBase(BaseModel):
     name: str
     description: str = Field(description="Role description, e.g. 'Sales agent'.")
     system_prompt: str = Field(description="System prompt prepended to every LLM call.")
-    provider: Literal["openai", "anthropic", "groq"]
+    provider: Literal["openai", "anthropic", "groq", "gemini"]
     model: str = Field(description="Model identifier, e.g. 'gpt-4o'.")
     tools: list[str] = Field(
         default_factory=list, description="Tool names available to this agent."
@@ -46,7 +46,7 @@ class AgentUpdate(BaseModel):
     name: str | None = None
     description: str | None = None
     system_prompt: str | None = None
-    provider: Literal["openai", "anthropic", "groq"] | None = None
+    provider: Literal["openai", "anthropic", "groq", "gemini"] | None = None
     model: str | None = None
     tools: list[str] | None = None
     connections: list[str] | None = None
@@ -335,7 +335,7 @@ class DemoCanvasAgent(BaseModel):
     name: str
     description: str
     system_prompt: str = Field(alias="systemPrompt")
-    provider: Literal["openai", "anthropic", "groq"]
+    provider: Literal["openai", "anthropic", "groq", "gemini"]
     model: str
     tools: list[str]
     connections: list[str]
