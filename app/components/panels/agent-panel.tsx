@@ -51,44 +51,40 @@ export function AgentPanel({
   onDelete,
   onClose,
 }: AgentPanelProps) {
-  const [standardModels, setStandardModels] = useState<ModelEntry[]>([]);
-  const [sapModels, setSapModels] = useState<ModelEntry[]>([]);
+  const [availableModels, setAvailableModels] = useState<ModelEntry[]>([]);
 
   useEffect(() => {
-    fetchModels(false).then(setStandardModels).catch(console.error);
-    fetchModels(true).then(setSapModels).catch(console.error);
+    fetchModels().then(setAvailableModels).catch(console.error);
   }, []);
 
   const providers = useMemo(() => {
-    const sapIds = new Set(sapModels.map((m) => m.id));
-    const standardIds = new Set(standardModels.map((m) => m.id));
-
-    const allModels = new Map<string, ModelEntry>();
-    for (const m of [...standardModels, ...sapModels]) {
-      allModels.set(m.id, m);
-    }
-
     const map: Record<
       string,
       { label: string; models: Array<{ label: string; value: string }> }
     > = {};
-    for (const m of allModels.values()) {
+    for (const m of availableModels) {
       if (!map[m.provider]) {
         map[m.provider] = {
           label: m.provider.charAt(0).toUpperCase() + m.provider.slice(1),
           models: [],
         };
       }
-      const inStandard = standardIds.has(m.id);
-      const inSap = sapIds.has(m.id);
-      let tag = "";
-      if (inStandard && inSap) tag = " [Standard + SAP]";
-      else if (inSap) tag = " [SAP]";
-      else if (inStandard) tag = " [Standard]";
-      map[m.provider].models.push({ label: `${m.name}${tag}`, value: m.id });
+      map[m.provider].models.push({ label: m.name, value: m.id });
     }
     return map;
-  }, [standardModels, sapModels]);
+  }, [availableModels]);
+
+  useEffect(() => {
+    if (!availableModels.length) return;
+    setForm((f) => {
+      const providerModels = providers[f.provider]?.models ?? [];
+      const isValid = providerModels.some((m) => m.value === f.model);
+      if (!isValid && providerModels.length > 0) {
+        return { ...f, model: providerModels[0].value };
+      }
+      return f;
+    });
+  }, [availableModels, providers]);
 
   const [form, setForm] = useState<AgentForm>(
     agent

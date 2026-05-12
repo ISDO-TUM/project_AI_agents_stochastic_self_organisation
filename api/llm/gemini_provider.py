@@ -29,7 +29,7 @@ _DEFAULT_MAX_TOKENS = 1024
 
 
 def _get_base_url() -> str:
-    return os.environ.get("GEMINI_BASE_URL", "http://localhost:6655/gemini")
+    return os.environ.get("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com")
 
 
 def _get_api_key() -> str:
@@ -66,16 +66,19 @@ class GeminiProvider(BaseLLMProvider):
     async def _send(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         model = kwargs["model"]
         body = kwargs["body"]
-        url = f"{_get_base_url()}/v1beta/models/{model}:generateContent"
+        base_url = _get_base_url()
+        api_key = _get_api_key()
+        url = f"{base_url}/v1beta/models/{model}:generateContent"
+        # Proxy expects Bearer token; Google's direct API expects x-goog-api-key.
+        using_proxy = bool(os.environ.get("GEMINI_BASE_URL"))
+        headers = (
+            {"Authorization": f"Bearer {api_key}"} if using_proxy else {"x-goog-api-key": api_key}
+        )
         async with httpx.AsyncClient() as client:
-            resp = client.build_request(
-                "POST",
-                url,
-                json=body,
-                headers={"Authorization": f"Bearer {_get_api_key()}"},
-            )
-            response = await client.send(resp)
-            response.raise_for_status()
+            req = client.build_request("POST", url, json=body, headers=headers)
+            response = await client.send(req)
+            if not response.is_success:
+                raise RuntimeError(f"Gemini {response.status_code}: {response.text}")
             return cast(dict[str, Any], response.json())
 
     def _extract_tool_calls(self, response: dict[str, Any]) -> list[NormalizedToolCall]:
@@ -85,7 +88,7 @@ class GeminiProvider(BaseLLMProvider):
         parts = []
         for candidate in response.get("candidates", []):
             for part in candidate.get("content", {}).get("parts", []):
-                if "text" in part:
+                if "text" in part and not part.get("thought", False):
                     parts.append(part["text"])
         return "\n".join(parts)
 
@@ -95,10 +98,14 @@ class GeminiProvider(BaseLLMProvider):
         response: dict[str, Any],
         tool_results: list[tuple[NormalizedToolCall, str]],
     ) -> None:
-        # Replay the model's function call turn
+        # Replay the model's function call turn, excluding thought parts.
+        # Gemini 2.5 thinking models generate thought parts before tool calls;
+        # echoing them back in history confuses the model and breaks subsequent replies.
         model_parts = []
         for candidate in response.get("candidates", []):
-            model_parts.extend(candidate.get("content", {}).get("parts", []))
+            for part in candidate.get("content", {}).get("parts", []):
+                if not part.get("thought", False):
+                    model_parts.append(part)
         messages.append({"role": "model", "parts": model_parts})
 
         # One functionResponse part per tool result

@@ -52,7 +52,10 @@ export function AgentNode({
   const ns = tweaks.nodeSize;
   const half = ns / 2;
   const initial = (agent.name || "A")[0].toUpperCase();
-  const provider = agent.provider === "anthropic" ? "Anthropic" : "OpenAI";
+  const PROVIDER_DISPLAY: Record<string, string> = { openai: "OpenAI" };
+  const provider =
+    PROVIDER_DISPLAY[agent.provider] ??
+    agent.provider.charAt(0).toUpperCase() + agent.provider.slice(1);
 
   const glow = active
     ? `0 0 0 2px ${accent}, 0 0 30px 8px rgba(139,26,47,0.38), 0 0 60px 16px rgba(139,26,47,0.12)`
