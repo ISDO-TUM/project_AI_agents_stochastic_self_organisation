@@ -227,6 +227,22 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: DBDep) -> AgentResp
 
 
 @router.delete(
+    "/",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete all agents, knowledge files, and simulation history",
+)
+async def delete_all(db: DBDep) -> None:
+    """Wipe every agent, knowledge file, and simulation record from the database.
+
+    Deletion order respects foreign-key constraints:
+    messages → connections → rounds → trials → agents (cascades agent_files) → knowledge_files.
+    """
+    for table in ("messages", "connections", "rounds", "trials", "agents", "knowledge_files"):
+        await db.execute(f"DELETE FROM {table}")  # noqa: S608
+    await db.commit()
+
+
+@router.delete(
     "/{agent_id}",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete an agent",
