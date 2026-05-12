@@ -627,6 +627,7 @@ async def _run_voting(
     rounds: int,
     agent_context: dict[str, str] | None,
 ) -> SimulationOutcome:
+    agent_by_id = {a["id"]: a for a in agents}
     steps: list[SimulationStep] = [
         _step(
             label="SYSTEM",
@@ -692,14 +693,51 @@ async def _run_voting(
             tally_msg: str = tally_msg,
             reasons_msg: str = reasons_msg,
         ) -> tuple[str, str | None, str | None, list[SimulationStep]]:
-            full_prompt = (
-                f"Original question: {prompt}\n\n"
-                f"Current vote tally:\n{tally_msg}\n\n"
-                f"Reasons submitted by agents:\n{reasons_msg}\n\n"
-                "Reconsider your answer in light of the reasoning of other agents"
-                "Keep your REASON grounded in quotes and files/sources when available."
-                + _VOTE_INSTRUCTION
-            )
+            nbrs = [n for n in incoming[agent["id"]] if n in responses]
+            own_prev = responses.get(agent["id"], "")
+
+            if nbrs:
+                # Topology-aware: agent sees its own previous answer + only
+                # connected neighbours' votes and reasons.
+                neighbour_lines = [
+                    f"- {agent_by_id[n]['name']} voted "
+                    f"'{votes.get(n) or 'unknown'}': "
+                    f"{reasons.get(n) or 'No reason provided.'}"
+                    for n in nbrs
+                ]
+                edge_steps = [
+                    _step(
+                        label=agent_by_id[n]["name"],
+                        msg=responses[n],
+                        type="agent-to-agent",
+                        target=agent["name"],
+                        from_id=n,
+                        to_id=agent["id"],
+                    )
+                    for n in nbrs
+                ]
+                full_prompt = (
+                    f"Original question: {prompt}\n\n"
+                    f"Your previous answer:\n{own_prev}\n\n"
+                    "Your connected agents responded:\n"
+                    + "\n".join(neighbour_lines)
+                    + "\n\nReconsider your answer in light of your connected agents' "
+                    "reasoning. Keep your REASON grounded in quotes and "
+                    "files/sources when available." + _VOTE_INSTRUCTION
+                )
+            else:
+                # Isolated agent: fall back to global tally so it isn't blind.
+                edge_steps = []
+                full_prompt = (
+                    f"Original question: {prompt}\n\n"
+                    f"Your previous answer:\n{own_prev}\n\n"
+                    f"Current vote tally:\n{tally_msg}\n\n"
+                    f"Reasons submitted by agents:\n{reasons_msg}\n\n"
+                    "Reconsider your answer in light of the reasoning of other agents. "
+                    "Keep your REASON grounded in quotes and files/sources when available."
+                    + _VOTE_INSTRUCTION
+                )
+
             try:
                 resp, tools = await _call_agent(agent, full_prompt, db)
             except Exception as exc:
@@ -708,13 +746,16 @@ async def _run_voting(
                     err,
                     None,
                     None,
-                    [_step(label=agent["name"], msg=err, type="system", node_id=agent["id"])],
+                    [
+                        *edge_steps,
+                        _step(label=agent["name"], msg=err, type="system", node_id=agent["id"]),
+                    ],
                 )
             v = _extract_vote(resp)
             r = _extract_reason(resp)
             tool_s = _tool_steps(tools, agent["id"])
             tool_s.append(_step(label=agent["name"], msg=resp, type="system", node_id=agent["id"]))
-            return resp, v, r, tool_s
+            return resp, v, r, [*edge_steps, *tool_s]
 
         results = await asyncio.gather(*[_discuss(a) for a in agents])
 
