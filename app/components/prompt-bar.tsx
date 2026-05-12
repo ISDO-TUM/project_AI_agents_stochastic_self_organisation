@@ -5,15 +5,22 @@ import { LIcon } from "@/lib/icons";
 import { BURG, BURG_LT, BURG_GLOW, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
+import type { ConsensusMode } from "@/lib/types";
 
 interface PromptBarProps {
   simMode: boolean;
-  onRun: (prompt: string) => void;
+  onRun: (prompt: string, mode: ConsensusMode) => void;
 }
+
+const MODE_LABELS: Partial<Record<ConsensusMode, string>> = {
+  weighted: "Weighted pooling",
+  voting: "Plurality voting",
+};
 
 export function PromptBar({ simMode, onRun }: PromptBarProps) {
   const [val, setVal] = useState("");
   const [preview, setPreview] = useState(false);
+  const [mode, setMode] = useState<ConsensusMode>("weighted");
   const { dark } = useTheme();
   const t = getTheme(dark);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -21,10 +28,10 @@ export function PromptBar({ simMode, onRun }: PromptBarProps) {
 
   const handleSubmit = useCallback(() => {
     if (!canRun) return;
-    onRun(val);
+    onRun(val, mode);
     setVal("");
     setPreview(false);
-  }, [canRun, onRun, val]);
+  }, [canRun, onRun, val, mode]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -163,6 +170,37 @@ export function PromptBar({ simMode, onRun }: PromptBarProps) {
             />
           </button>
         )}
+
+        {/* Consensus mode selector */}
+        <select
+          value={mode}
+          onChange={(e) => setMode(e.target.value as ConsensusMode)}
+          disabled={simMode}
+          title="Consensus algorithm"
+          style={{
+            background: t.inputBg,
+            color: simMode ? t.textDim : t.text,
+            border: `1px solid ${t.pillBorder}`,
+            borderRadius: 100,
+            fontSize: 12,
+            fontWeight: 600,
+            padding: "5px 10px",
+            marginRight: 6,
+            cursor: simMode ? "not-allowed" : "pointer",
+            outline: "none",
+            colorScheme: dark ? "dark" : "light",
+            flexShrink: 0,
+            opacity: simMode ? 0.5 : 1,
+          }}
+        >
+          {(Object.entries(MODE_LABELS) as [ConsensusMode, string][]).map(
+            ([m, label]) => (
+              <option key={m} value={m}>
+                {label}
+              </option>
+            ),
+          )}
+        </select>
 
         {/* Run button */}
         <button

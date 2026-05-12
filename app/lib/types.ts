@@ -6,6 +6,8 @@ export type SimStepType =
   | "tool"
   | "agent-to-source";
 
+export type ConsensusMode = "broadcast" | "weighted" | "voting";
+
 export interface Position {
   x: number;
   y: number;

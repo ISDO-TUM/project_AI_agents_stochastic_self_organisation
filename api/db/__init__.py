@@ -140,11 +140,12 @@ def deserialise_agent_row(row: aiosqlite.Row) -> dict[str, Any]:
         row: A raw :class:`aiosqlite.Row` from the ``agents`` table.
 
     Returns:
-        A dict with ``tools`` and ``connections`` decoded from their JSON string representations.
+        A dict with ``tools`` and ``connections`` decoded from their JSON
+        string representations.
     """
     data = dict(row)
     data["tools"] = json.loads(data["tools"])
-    data["connections"] = json.loads(data.get("connections") or "[]")
+    data["connections"] = json.loads(data["connections"])
     return data
 
 

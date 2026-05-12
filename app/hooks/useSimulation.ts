@@ -1,9 +1,15 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { Agent, Edge, SimStep, AnimatedParticle } from "@/lib/types";
+import {
+  Agent,
+  ConsensusMode,
+  Edge,
+  SimStep,
+  AnimatedParticle,
+} from "@/lib/types";
 import { uuid } from "@/lib/utils";
-import { runSimulation } from "@/lib/api";
+import { runSimulation, SimulationResult } from "@/lib/api";
 
 export function useSimulation(agents: Agent[], edges: Edge[]) {
   const [steps, setSteps] = useState<SimStep[]>([]);
@@ -13,6 +19,10 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
   const [activeNode, setActNode] = useState<string | null>(null);
   const [activeEdge, setActEdge] = useState<string | null>(null);
   const [particles, setParticles] = useState<AnimatedParticle[]>([]);
+  const [outcome, setOutcome] = useState<Omit<
+    SimulationResult,
+    "steps"
+  > | null>(null);
   const particleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   useEffect(() => {
@@ -43,13 +53,14 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
   }, [cur, simMode, steps, edges]);
 
   const runSim = useCallback(
-    async (prompt: string) => {
+    async (prompt: string, mode: ConsensusMode = "broadcast") => {
       if (agents.length === 0) return;
 
       setSim(true);
       setLogExp(false);
       setSteps([]);
       setCur(0);
+      setOutcome(null);
 
       // Animate particles along all edges during the run
       const pts: AnimatedParticle[] = edges.map((e, i) => ({
@@ -64,11 +75,13 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
       particleTimerRef.current = setTimeout(() => setParticles([]), 3500);
 
       try {
-        const result = await runSimulation(prompt);
-        for (let i = 0; i < result.length; i++) {
-          setSteps(result.slice(0, i + 1));
+        const result = await runSimulation(prompt, { mode });
+        const { steps: simSteps, ...rest } = result;
+        setOutcome(rest);
+        for (let i = 0; i < simSteps.length; i++) {
+          setSteps(simSteps.slice(0, i + 1));
           setCur(i);
-          if (i < result.length - 1) {
+          if (i < simSteps.length - 1) {
             await new Promise<void>((r) => setTimeout(r, 350));
           }
         }
@@ -98,6 +111,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     setActNode(null);
     setActEdge(null);
     setParticles([]);
+    setOutcome(null);
   }, []);
 
   return {
@@ -112,5 +126,6 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     particles,
     runSim,
     stopSim,
+    outcome,
   };
 }

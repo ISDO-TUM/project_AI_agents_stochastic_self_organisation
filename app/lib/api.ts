@@ -5,7 +5,13 @@
  * No NEXT_PUBLIC_ env var needed — the proxy handles both dev and Docker.
  */
 
-import type { Agent, KnowledgeFile, Provider, SimStep } from "./types";
+import type {
+  Agent,
+  ConsensusMode,
+  KnowledgeFile,
+  Provider,
+  SimStep,
+} from "./types";
 
 // ─── Wire types ──────────────────────────────────────────────────────────────
 
@@ -28,6 +34,10 @@ interface AgentPayload {
   model: string;
   tools: string[];
   connections: string[];
+}
+
+interface AgentCreatePayload extends AgentPayload {
+  id?: string;
 }
 
 type AgentUpdate = Partial<AgentPayload>;
@@ -95,8 +105,13 @@ export async function fetchAgents(
   );
 }
 
-export async function createAgent(agent: Agent): Promise<Agent> {
-  const out = await request<AgentOut>("POST", "/api/agents/", toWire(agent));
+export async function createAgent(
+  agent: Agent,
+  options: { preserveId?: boolean } = {},
+): Promise<Agent> {
+  const payload: AgentCreatePayload = toWire(agent);
+  if (options.preserveId) payload.id = agent.id;
+  const out = await request<AgentOut>("POST", "/api/agents/", payload);
   return fromWire(out, agent.position);
 }
 
@@ -232,14 +247,46 @@ function wireToSimStep(w: WireSimStep): SimStep {
   };
 }
 
+export interface SimulationResult {
+  steps: SimStep[];
+  consensus: string | null;
+  consensusAgentId: string | null;
+  converged: boolean;
+  roundsUsed: number;
+}
+
+interface WireSimulationResponse {
+  steps: WireSimStep[];
+  consensus: string | null;
+  consensus_agent_id: string | null;
+  converged: boolean;
+  rounds_used: number;
+}
+
 export async function runSimulation(
   prompt: string,
-  rounds = 1,
-): Promise<SimStep[]> {
-  const data = await request<{ steps: WireSimStep[] }>(
+  options: {
+    rounds?: number;
+    mode?: ConsensusMode;
+    agentContext?: Record<string, string>;
+  } = {},
+): Promise<SimulationResult> {
+  const { rounds = 3, mode = "broadcast", agentContext } = options;
+  const data = await request<WireSimulationResponse>(
     "POST",
     "/api/simulation/run",
-    { prompt, rounds },
+    {
+      prompt,
+      rounds,
+      mode,
+      ...(agentContext && { agent_context: agentContext }),
+    },
   );
-  return data.steps.map(wireToSimStep);
+  return {
+    steps: data.steps.map(wireToSimStep),
+    consensus: data.consensus,
+    consensusAgentId: data.consensus_agent_id,
+    converged: data.converged,
+    roundsUsed: data.rounds_used,
+  };
 }
