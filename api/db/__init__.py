@@ -20,7 +20,7 @@ CREATE TABLE IF NOT EXISTS agents (
     name          TEXT NOT NULL,
     description   TEXT NOT NULL,
     system_prompt TEXT NOT NULL,
-    provider      TEXT NOT NULL CHECK(provider IN ('openai', 'anthropic', 'groq')),
+    provider      TEXT NOT NULL CHECK(provider IN ('openai', 'anthropic', 'groq', 'gemini')),
     model         TEXT NOT NULL,
     tools         TEXT NOT NULL DEFAULT '[]',
     connections   TEXT NOT NULL DEFAULT '[]'
