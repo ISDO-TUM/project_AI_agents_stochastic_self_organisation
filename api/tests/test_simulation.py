@@ -1,4 +1,4 @@
-from api.simulation import _extract_vote, _tally
+from api.simulation import _extract_reason, _extract_vote, _tally
 
 
 def test_tally_ignores_unknown_votes() -> None:
@@ -26,3 +26,18 @@ def test_unknown_vote_is_normalized_before_tallying() -> None:
 
     assert vote == "unknown"
     assert _tally({"agent_1": vote}) == (None, {})
+
+
+def test_extract_reason_returns_last_reason_line() -> None:
+    reason = _extract_reason(
+        "REASON: preliminary note\n"
+        "Some explanation.\n"
+        "REASON: Acme Computers was chosen due to the quote 'approved supplier' "
+        "from 2026_supplier_contract.txt\n"
+        "VOTE: Acme Computers"
+    )
+
+    assert (
+        reason == "Acme Computers was chosen due to the quote 'approved supplier' "
+        "from 2026_supplier_contract.txt"
+    )
