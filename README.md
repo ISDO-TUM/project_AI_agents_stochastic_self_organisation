@@ -1,3 +1,10 @@
+---
+title: "TUM Agentic Demo"
+sdk: docker
+python_version: "3.12"
+pinned: false
+---
+
 <div align="center">
 
 # 🤖 Self-Organising Agentic System
