@@ -15,11 +15,9 @@ jobs:
           fetch-depth: 0
           lfs: true
 
-      - name: Push to HuggingFace Spaces
-        env:
-          HF_TOKEN: ${{ secrets.HF_TOKEN }}
-        run: |
-          git config user.email "ci@github-actions"
-          git config user.name "GitHub Actions"
-          git remote add hf https://user:${HF_TOKEN}@huggingface.co/spaces/TUM-Agentic-AI-2/Demo
-          git push hf main --force
+      - name: Push to Hugging Face
+        uses: huggingface/hub-sync@v0.1.0
+        with:
+          github_repo_id: ${{ github.repository }}
+          huggingface_repo_id: TUM-Agentic-AI-2/Demo
+          hf_token: ${{ secrets.HF_TOKEN }}
