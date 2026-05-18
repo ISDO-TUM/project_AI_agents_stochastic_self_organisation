@@ -18,7 +18,9 @@ FROM node-base AS node-deps
 WORKDIR /workspace
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY app/package.json ./app/package.json
-RUN pnpm install --frozen-lockfile
+
+# Allow build scripts to run so sharp compiles successfully
+RUN pnpm install --frozen-lockfile --config.dangerously-allow-all-builds=true
 
 # ─── Stage 2b: Next.js standalone build ──────────────────────────────────────
 FROM node-base AS node-builder
