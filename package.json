@@ -9,11 +9,6 @@
   "devDependencies": {
     "concurrently": "^9.2.1"
   },
-  "pnpm": {
-    "overrides": {
-      "postcss": "^8.5.10"
-    }
-  },
   "commitlint": {
     "extends": [
       "@commitlint/config-conventional"

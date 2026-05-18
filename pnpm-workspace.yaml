@@ -1,6 +1,9 @@
 packages:
   - 'app'
 
+overrides:
+  postcss: ^8.5.10
+
 ignoredBuiltDependencies:
   - sharp
   - unrs-resolver
