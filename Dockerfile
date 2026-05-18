@@ -48,7 +48,6 @@ COPY api/ api/
 
 # Next.js standalone output
 WORKDIR /app/web
-COPY --from=node-builder /workspace/app/public ./public
 COPY --from=node-builder /workspace/app/.next/standalone ./
 COPY --from=node-builder /workspace/app/.next/static ./.next/static
 
