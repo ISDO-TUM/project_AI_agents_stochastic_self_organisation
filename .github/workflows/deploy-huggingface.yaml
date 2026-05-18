@@ -1,0 +1,25 @@
+name: Deploy to HuggingFace Spaces
+
+on:
+  push:
+    branches: [main, feat/59-deployment]
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          lfs: true
+
+      - name: Push to HuggingFace Spaces
+        env:
+          HF_TOKEN: ${{ secrets.HF_TOKEN }}
+        run: |
+          git config user.email "ci@github-actions"
+          git config user.name "GitHub Actions"
+          git remote add hf https://user:${HF_TOKEN}@huggingface.co/spaces/TUM-Agentic-AI-2/Demo
+          git push hf main --force
