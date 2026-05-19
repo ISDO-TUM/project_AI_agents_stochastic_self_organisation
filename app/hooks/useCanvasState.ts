@@ -249,14 +249,24 @@ export function useCanvasState() {
       const agent = agFrom ?? agTo;
       const src = srcTo ?? srcFrom;
 
-      // agent→agent: persist the new connection to the backend
-      if (agFrom && agTo && !agFrom.connections.includes(agTo.id)) {
-        const updated = {
-          ...agFrom,
-          connections: [...agFrom.connections, agTo.id],
-        };
-        dispatch({ type: "UPDATE_AGENT", agent: updated });
-        updateAgent(updated).catch(() => {});
+      // agent→agent: persist the new connection to both agents
+      if (agFrom && agTo) {
+        if (!agFrom.connections.includes(agTo.id)) {
+          const updated = {
+            ...agFrom,
+            connections: [...agFrom.connections, agTo.id],
+          };
+          dispatch({ type: "UPDATE_AGENT", agent: updated });
+          updateAgent(updated).catch(() => {});
+        }
+        if (!agTo.connections.includes(agFrom.id)) {
+          const updated = {
+            ...agTo,
+            connections: [...agTo.connections, agFrom.id],
+          };
+          dispatch({ type: "UPDATE_AGENT", agent: updated });
+          updateAgent(updated).catch(() => {});
+        }
       }
 
       // agent↔file (either direction): attach in DB and auto-enable the files tool
@@ -284,14 +294,20 @@ export function useCanvasState() {
         const srcFrom = sources.find((s) => s.id === e.from);
         const srcTo = sources.find((s) => s.id === e.to);
 
-        // agent→agent: remove from backend connections list
+        // agent→agent: remove from both agents' connection lists
         if (agFrom && agTo) {
-          const updated = {
+          const updatedFrom = {
             ...agFrom,
-            connections: agFrom.connections.filter((c) => c !== e.to),
+            connections: agFrom.connections.filter((c) => c !== agTo.id),
           };
-          dispatch({ type: "UPDATE_AGENT", agent: updated });
-          updateAgent(updated).catch(() => {});
+          dispatch({ type: "UPDATE_AGENT", agent: updatedFrom });
+          updateAgent(updatedFrom).catch(() => {});
+          const updatedTo = {
+            ...agTo,
+            connections: agTo.connections.filter((c) => c !== agFrom.id),
+          };
+          dispatch({ type: "UPDATE_AGENT", agent: updatedTo });
+          updateAgent(updatedTo).catch(() => {});
         }
 
         // agent↔file (either direction): detach and remove tool if no files remain
