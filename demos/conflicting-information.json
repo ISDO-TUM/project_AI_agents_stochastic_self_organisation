@@ -1,0 +1,110 @@
+{
+  "agents": [
+    {
+      "id": "18a93e82-0550-4a4d-b9ff-0209b8e274cb",
+      "name": "",
+      "description": "",
+      "systemPrompt": "",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["files"],
+      "connections": [
+        "c418c7bd-61fd-4274-ad1c-c1e521f7ad51",
+        "c02ea75f-c8fa-40ca-bda3-ed2bb1de4f69"
+      ],
+      "position": {
+        "x": 550.8372177257722,
+        "y": 176.81071724245507
+      }
+    },
+    {
+      "id": "c418c7bd-61fd-4274-ad1c-c1e521f7ad51",
+      "name": "",
+      "description": "",
+      "systemPrompt": "",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["files"],
+      "connections": [
+        "18a93e82-0550-4a4d-b9ff-0209b8e274cb",
+        "c02ea75f-c8fa-40ca-bda3-ed2bb1de4f69"
+      ],
+      "position": {
+        "x": 435.4880888600349,
+        "y": 369.9226031633949
+      }
+    },
+    {
+      "id": "c02ea75f-c8fa-40ca-bda3-ed2bb1de4f69",
+      "name": "",
+      "description": "",
+      "systemPrompt": "",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["files"],
+      "connections": [
+        "c418c7bd-61fd-4274-ad1c-c1e521f7ad51",
+        "18a93e82-0550-4a4d-b9ff-0209b8e274cb"
+      ],
+      "position": {
+        "x": 686.9571100316573,
+        "y": 365.95278543301765
+      }
+    }
+  ],
+  "sources": [
+    {
+      "id": "febf0337-d00c-4c30-b20e-c6ebb5e5e354",
+      "name": "nexora_overview_2023",
+      "type": "text",
+      "content": "Date: 2023-04-10\n\nNexora Technologies — Internal Fact Sheet\n\nHeadquarters: Austin, Texas\nCEO: Margaret Hollis (appointed 2019)\nAnnual Revenue: $42 million (FY2022)\nEmployees: 310\nCore Product: NexoCloud — an enterprise data pipeline platform\nStrategic Focus: European market expansion\nFunding Stage: Series B, $18 million raised",
+      "position": {
+        "x": 298.2809907717693,
+        "y": 236.7540819157383
+      }
+    },
+    {
+      "id": "f6aed766-18f3-4869-b8ff-3f4f3020aac8",
+      "name": "nexora_overview_2024",
+      "type": "text",
+      "content": "Date: 2024-09-01\n\nNexora Technologies — Internal Fact Sheet\n\nHeadquarters: Austin, Texas\nCEO: Daniel Park (appointed September 2024, replacing Margaret Hollis after board restructure)\nAnnual Revenue: $67 million (FY2024)\nEmployees: 480\nCore Product: NexoCloud — an enterprise data pipeline platform\nStrategic Focus: Asia-Pacific expansion and AI-native features\nFunding Stage: Series C, $55 million raised",
+      "position": {
+        "x": 661.7342496659364,
+        "y": 504.59009126840834
+      }
+    }
+  ],
+  "edges": [
+    {
+      "id": "a7c8d256-cb08-4595-976f-7deb4fbaefed",
+      "from": "18a93e82-0550-4a4d-b9ff-0209b8e274cb",
+      "to": "c418c7bd-61fd-4274-ad1c-c1e521f7ad51"
+    },
+    {
+      "id": "461f6779-f2a6-405b-941b-473acd23b7f0",
+      "from": "c418c7bd-61fd-4274-ad1c-c1e521f7ad51",
+      "to": "c02ea75f-c8fa-40ca-bda3-ed2bb1de4f69"
+    },
+    {
+      "id": "10f58ead-4916-490c-9785-01bb9c6ef2ad",
+      "from": "18a93e82-0550-4a4d-b9ff-0209b8e274cb",
+      "to": "c02ea75f-c8fa-40ca-bda3-ed2bb1de4f69"
+    },
+    {
+      "id": "1b2d6d2e-5594-4f6d-ace3-470fbee82bfc",
+      "from": "c02ea75f-c8fa-40ca-bda3-ed2bb1de4f69",
+      "to": "f6aed766-18f3-4869-b8ff-3f4f3020aac8"
+    },
+    {
+      "id": "09b3cafb-ba7f-4f34-95fd-0e8f44a7df7c",
+      "from": "c418c7bd-61fd-4274-ad1c-c1e521f7ad51",
+      "to": "febf0337-d00c-4c30-b20e-c6ebb5e5e354"
+    },
+    {
+      "id": "045f94c8-7012-435d-bdbe-6a429c951120",
+      "from": "18a93e82-0550-4a4d-b9ff-0209b8e274cb",
+      "to": "febf0337-d00c-4c30-b20e-c6ebb5e5e354"
+    }
+  ],
+  "ruleset": "You are an agent working together with the other agent to reach a common answer. When conflicting information exist, take these rulesets into account:\n\nDETAILED EXPLANATION: Based on the rulesets below this one, you must as best as possible provide information regarded in those points, such as date, so that it can be used as reference by other agents\n\nTEMPORAL REASONING: When agents hold conflicting information, treat document recency as a proxy for ground truth. A claim from a newer source supersedes the same claim from an older source, regardless of how many agents hold the older version. In your REASON, always cite the date of your source. If another agent's source is more recent than yours, defer to their answer and explain why in your REASON."
+}

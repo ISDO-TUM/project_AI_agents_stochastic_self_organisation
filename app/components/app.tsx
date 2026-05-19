@@ -100,6 +100,7 @@ export function App() {
     setShowTweaks,
   } = useUIState();
 
+  const [ruleset, setRuleset] = useState("");
   const [importError, setImportError] = useState<string | null>(null);
   const importErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -166,17 +167,18 @@ export function App() {
   ]);
 
   const exportCanvas = useCallback(() => {
-    const blob = new Blob(
-      [JSON.stringify({ agents, sources, edges }, null, 2)],
-      { type: "application/json" },
-    );
+    const payload: CanvasState = { agents, sources, edges };
+    if (ruleset.trim()) payload.ruleset = ruleset.trim();
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = "canvas.json";
     a.click();
     URL.revokeObjectURL(url);
-  }, [agents, sources, edges]);
+  }, [agents, sources, edges, ruleset]);
 
   const showImportError = useCallback((msg: string) => {
     if (importErrorTimerRef.current) clearTimeout(importErrorTimerRef.current);
@@ -208,6 +210,7 @@ export function App() {
 
       // Render the imported canvas locally first so the user sees it instantly.
       dispatch({ type: "LOAD", state: data });
+      if (typeof data.ruleset === "string") setRuleset(data.ruleset);
 
       // Persist to the backend so simulations have the same state. Do it on a
       // best-effort basis — if the API is offline we keep the local view but
@@ -440,7 +443,12 @@ export function App() {
           onToggleTweaks={onToggleTweaks}
         />
 
-        <PromptBar simMode={simMode} onRun={runSim} />
+        <PromptBar
+          simMode={simMode}
+          onRun={runSim}
+          ruleset={ruleset}
+          onRulesetChange={setRuleset}
+        />
       </div>
 
       {simMode && (

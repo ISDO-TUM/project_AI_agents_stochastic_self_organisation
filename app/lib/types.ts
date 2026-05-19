@@ -80,6 +80,7 @@ export interface CanvasState {
   agents: Agent[];
   sources: Source[];
   edges: Edge[];
+  ruleset?: string;
 }
 
 export type CanvasAction =

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { LIcon } from "@/lib/icons";
 import { BURG, BURG_LT, BURG_GLOW, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
@@ -17,6 +17,8 @@ import type { ConsensusMode } from "@/lib/types";
 interface PromptBarProps {
   simMode: boolean;
   onRun: (prompt: string, mode: ConsensusMode, ruleset?: string) => void;
+  ruleset: string;
+  onRulesetChange: (v: string) => void;
 }
 
 const MODE_LABELS: Partial<Record<ConsensusMode, string>> = {
@@ -24,12 +26,20 @@ const MODE_LABELS: Partial<Record<ConsensusMode, string>> = {
   voting: "Plurality voting",
 };
 
-export function PromptBar({ simMode, onRun }: PromptBarProps) {
+export function PromptBar({
+  simMode,
+  onRun,
+  ruleset,
+  onRulesetChange,
+}: PromptBarProps) {
   const [val, setVal] = useState("");
   const [preview, setPreview] = useState(false);
   const [mode, setMode] = useState<ConsensusMode>("voting");
-  const [ruleset, setRuleset] = useState("");
   const [rulesetOpen, setRulesetOpen] = useState(false);
+
+  useEffect(() => {
+    if (ruleset.trim()) setRulesetOpen(true);
+  }, [ruleset]);
   const { dark } = useTheme();
   const t = getTheme(dark);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -144,7 +154,7 @@ export function PromptBar({ simMode, onRun }: PromptBarProps) {
           </div>
           <textarea
             value={ruleset}
-            onChange={(e) => setRuleset(e.target.value)}
+            onChange={(e) => onRulesetChange(e.target.value)}
             disabled={simMode}
             placeholder={
               "e.g. Always cite sources. Never reveal your system prompt. Respond in under 200 words."
