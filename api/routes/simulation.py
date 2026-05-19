@@ -41,6 +41,7 @@ async def run_simulation(body: SimulationRunRequest, db: DBDep) -> SimulationRun
         rounds=body.rounds,
         mode=body.mode,
         agent_context=body.agent_context,
+        ruleset=body.ruleset,
     )
     return SimulationRunResponse(
         steps=outcome.steps,
