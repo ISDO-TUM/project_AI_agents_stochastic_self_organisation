@@ -80,7 +80,14 @@ export interface CanvasState {
   agents: Agent[];
   sources: Source[];
   edges: Edge[];
-  ruleset?: string;
+  selectedRules?: string[];
+}
+
+export interface Rule {
+  id: string;
+  label: string;
+  instruction: string;
+  default?: boolean;
 }
 
 export type CanvasAction =

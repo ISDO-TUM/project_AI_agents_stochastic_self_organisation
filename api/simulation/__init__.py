@@ -39,7 +39,7 @@ import re
 import uuid
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 import aiosqlite
@@ -77,6 +77,7 @@ async def _call_agent(
     system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, file_names)
     if ruleset and ruleset.strip():
         system_prompt = f"## RULESET\n{ruleset.strip()}\n\n{system_prompt or ''}"
+    system_prompt = f"## CURRENT DATE\n{date.today().isoformat()}\n\n{system_prompt or ''}"
     response, tools_used = await call_agent(
         prompt,
         provider=agent["provider"],

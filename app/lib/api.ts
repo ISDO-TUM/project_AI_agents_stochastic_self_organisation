@@ -10,6 +10,7 @@ import type {
   ConsensusMode,
   KnowledgeFile,
   Provider,
+  Rule,
   SimStep,
 } from "./types";
 
@@ -291,4 +292,10 @@ export async function runSimulation(
     converged: data.converged,
     roundsUsed: data.rounds_used,
   };
+}
+
+// ─── Rules ───────────────────────────────────────────────────────────────────
+
+export async function fetchRules(): Promise<Rule[]> {
+  return request<Rule[]>("GET", "/api/rules/");
 }

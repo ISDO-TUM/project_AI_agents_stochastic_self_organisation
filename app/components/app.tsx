@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { CanvasState, Tweaks } from "@/lib/types";
+import { CanvasState, ConsensusMode, Rule, Tweaks } from "@/lib/types";
 import { BURG } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { useCanvasState } from "@/hooks/useCanvasState";
@@ -10,6 +10,7 @@ import { useUIState } from "@/hooks/useUIState";
 import {
   fetchAgents,
   fetchFiles,
+  fetchRules,
   createAgent,
   deleteAgentApi,
   createFile,
@@ -41,12 +42,7 @@ const defaultTweaks: Tweaks = {
 export function App() {
   const { dark, toggle: toggleTheme } = useTheme();
 
-  const [tweaks, setTweaks] = useState<Tweaks>(defaultTweaks);
-  const setTweak = useCallback(
-    (k: keyof Tweaks, v: Tweaks[keyof Tweaks]) =>
-      setTweaks((t) => ({ ...t, [k]: v })),
-    [],
-  );
+  const [tweaks] = useState<Tweaks>(defaultTweaks);
 
   const {
     agents,
@@ -100,8 +96,41 @@ export function App() {
     setShowTweaks,
   } = useUIState();
 
-  const [ruleset, setRuleset] = useState("");
+  const [rules, setRules] = useState<Rule[]>([]);
+  const [selectedRules, setSelectedRules] = useState<Set<string>>(new Set());
   const [importError, setImportError] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchRules()
+      .then((rs) => {
+        setRules(rs);
+        setSelectedRules((prev) => {
+          if (prev.size > 0) return prev;
+          return new Set(rs.filter((r) => r.default).map((r) => r.id));
+        });
+      })
+      .catch(() => {});
+  }, []);
+
+  const toggleRule = useCallback((id: string) => {
+    setSelectedRules((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleRun = useCallback(
+    (prompt: string, mode: ConsensusMode) => {
+      const active = rules.filter((r) => selectedRules.has(r.id));
+      const ruleset = active.length
+        ? active.map((r) => `- ${r.instruction}`).join("\n")
+        : undefined;
+      runSim(prompt, mode, ruleset);
+    },
+    [rules, selectedRules, runSim],
+  );
   const importErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -168,7 +197,7 @@ export function App() {
 
   const exportCanvas = useCallback(() => {
     const payload: CanvasState = { agents, sources, edges };
-    if (ruleset.trim()) payload.ruleset = ruleset.trim();
+    if (selectedRules.size > 0) payload.selectedRules = [...selectedRules];
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
       type: "application/json",
     });
@@ -178,7 +207,7 @@ export function App() {
     a.download = "canvas.json";
     a.click();
     URL.revokeObjectURL(url);
-  }, [agents, sources, edges, ruleset]);
+  }, [agents, sources, edges, selectedRules]);
 
   const showImportError = useCallback((msg: string) => {
     if (importErrorTimerRef.current) clearTimeout(importErrorTimerRef.current);
@@ -210,7 +239,11 @@ export function App() {
 
       // Render the imported canvas locally first so the user sees it instantly.
       dispatch({ type: "LOAD", state: data });
-      if (typeof data.ruleset === "string") setRuleset(data.ruleset);
+      if (Array.isArray(data.selectedRules)) {
+        setSelectedRules(
+          new Set(data.selectedRules.filter((x) => typeof x === "string")),
+        );
+      }
 
       // Persist to the backend so simulations have the same state. Do it on a
       // best-effort basis — if the API is offline we keep the local view but
@@ -443,12 +476,7 @@ export function App() {
           onToggleTweaks={onToggleTweaks}
         />
 
-        <PromptBar
-          simMode={simMode}
-          onRun={runSim}
-          ruleset={ruleset}
-          onRulesetChange={setRuleset}
-        />
+        <PromptBar simMode={simMode} onRun={handleRun} />
       </div>
 
       {simMode && (
@@ -467,8 +495,9 @@ export function App() {
 
       {showTweaks && (
         <TweaksPanel
-          tweaks={tweaks}
-          onChange={setTweak}
+          rules={rules}
+          selectedRules={selectedRules}
+          onToggleRule={toggleRule}
           onClose={() => setShowTweaks(false)}
         />
       )}

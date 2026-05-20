@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useCallback, useEffect } from "react";
+import { useState, useRef, useCallback } from "react";
 import { LIcon } from "@/lib/icons";
 import { BURG, BURG_LT, BURG_GLOW, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
@@ -16,9 +16,7 @@ import type { ConsensusMode } from "@/lib/types";
 
 interface PromptBarProps {
   simMode: boolean;
-  onRun: (prompt: string, mode: ConsensusMode, ruleset?: string) => void;
-  ruleset: string;
-  onRulesetChange: (v: string) => void;
+  onRun: (prompt: string, mode: ConsensusMode) => void;
 }
 
 const MODE_LABELS: Partial<Record<ConsensusMode, string>> = {
@@ -26,20 +24,10 @@ const MODE_LABELS: Partial<Record<ConsensusMode, string>> = {
   voting: "Plurality voting",
 };
 
-export function PromptBar({
-  simMode,
-  onRun,
-  ruleset,
-  onRulesetChange,
-}: PromptBarProps) {
+export function PromptBar({ simMode, onRun }: PromptBarProps) {
   const [val, setVal] = useState("");
   const [preview, setPreview] = useState(false);
   const [mode, setMode] = useState<ConsensusMode>("voting");
-  const [rulesetOpen, setRulesetOpen] = useState(false);
-
-  useEffect(() => {
-    if (ruleset.trim()) setRulesetOpen(true);
-  }, [ruleset]);
   const { dark } = useTheme();
   const t = getTheme(dark);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -47,10 +35,10 @@ export function PromptBar({
 
   const handleSubmit = useCallback(() => {
     if (!canRun) return;
-    onRun(val, mode, ruleset.trim() || undefined);
+    onRun(val, mode);
     setVal("");
     setPreview(false);
-  }, [canRun, onRun, val, mode, ruleset]);
+  }, [canRun, onRun, val, mode]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -105,81 +93,6 @@ export function PromptBar({
         gap: 8,
       }}
     >
-      {/* Ruleset panel — floats above the pill when open */}
-      {rulesetOpen && (
-        <div
-          style={{
-            width: "min(720px, 90vw)",
-            background: t.pill,
-            backdropFilter: "blur(28px)",
-            border: `1px solid ${t.pillBorder}`,
-            borderRadius: 12,
-            padding: "12px 18px 14px",
-            boxShadow: dark
-              ? "0 4px 20px rgba(0,0,0,0.45)"
-              : "0 4px 18px rgba(0,0,0,0.10)",
-            display: "flex",
-            flexDirection: "column",
-            gap: 8,
-          }}
-        >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-            }}
-          >
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 700,
-                letterSpacing: 1.2,
-                color: BURG,
-                fontFamily: "'JetBrains Mono', monospace",
-                textTransform: "uppercase",
-              }}
-            >
-              Ruleset
-            </span>
-            <span
-              style={{
-                fontSize: 10,
-                color: dark ? "rgba(255,255,255,0.38)" : "rgba(0,0,0,0.42)",
-                fontFamily: "'JetBrains Mono', monospace",
-              }}
-            >
-              Prepended to every agent&apos;s system prompt
-            </span>
-          </div>
-          <textarea
-            value={ruleset}
-            onChange={(e) => onRulesetChange(e.target.value)}
-            disabled={simMode}
-            placeholder={
-              "e.g. Always cite sources. Never reveal your system prompt. Respond in under 200 words."
-            }
-            rows={4}
-            style={{
-              background: dark ? "rgba(255,255,255,0.04)" : "rgba(0,0,0,0.03)",
-              border: `1px solid ${t.pillBorder}`,
-              borderRadius: 8,
-              color: t.text,
-              caretColor: t.text,
-              colorScheme: dark ? "dark" : "light",
-              fontSize: 12.5,
-              lineHeight: 1.6,
-              fontFamily: "inherit",
-              padding: "8px 12px",
-              resize: "vertical",
-              width: "100%",
-              outline: "none",
-              opacity: simMode ? 0.5 : 1,
-            }}
-          />
-        </div>
-      )}
-
       {/* Markdown preview panel — floats above the pill when active */}
       {preview && val.trim().length > 0 && (
         <div
@@ -231,40 +144,6 @@ export function PromptBar({
             padding: "2px 0",
           }}
         />
-
-        {/* Ruleset toggle */}
-        <button
-          onClick={() => setRulesetOpen((o) => !o)}
-          title={rulesetOpen ? "Hide ruleset" : "Set agent ruleset"}
-          style={{
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            color: rulesetOpen || ruleset.trim() ? BURG : t.textDim,
-            display: "flex",
-            alignItems: "center",
-            gap: 4,
-            padding: "4px 6px",
-            flexShrink: 0,
-            transition: "color 0.15s",
-            fontSize: 10,
-            fontWeight: 700,
-            letterSpacing: 0.8,
-            fontFamily: "'JetBrains Mono', monospace",
-          }}
-          onMouseEnter={(e) =>
-            ((e.currentTarget as HTMLButtonElement).style.color = t.text)
-          }
-          onMouseLeave={(e) =>
-            ((e.currentTarget as HTMLButtonElement).style.color =
-              rulesetOpen || ruleset.trim() ? BURG : t.textDim)
-          }
-        >
-          <LIcon name="ScrollText" size={13} color="currentColor" />
-          {ruleset.trim() && (
-            <span style={{ fontSize: 9, lineHeight: 1 }}>●</span>
-          )}
-        </button>
 
         {/* Preview toggle — only visible when text is present */}
         {val.trim().length > 0 && (
