@@ -1,7 +1,7 @@
 services:
-  api:
+  server:
     build:
-      context: ./api
+      context: ./server
     ports:
       - "8000:8000"
     env_file:
@@ -10,22 +10,20 @@ services:
     develop:
       watch:
         - action: sync
-          path: ./api
-          target: /app/api
+          path: ./server
+          target: /app/server
 
-  app:
+  client:
     build:
       context: .
-      dockerfile: app/Dockerfile
+      dockerfile: client/Dockerfile
     ports:
       - "3000:3000"
     env_file:
       - .env
     environment:
-      # Server-side only: used by Next.js rewrites to reach the API container.
-      # Never reaches the browser bundle.
-      - INTERNAL_API_URL=http://api:8000
+      - INTERNAL_API_URL=http://server:8000
     restart: unless-stopped
     depends_on:
-      api:
+      server:
         condition: service_healthy

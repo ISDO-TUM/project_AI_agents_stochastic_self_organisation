@@ -1,5 +1,5 @@
 packages:
-  - 'app'
+  - 'client'
 
 overrides:
   postcss: ^8.5.10

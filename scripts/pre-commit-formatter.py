@@ -310,9 +310,9 @@ def _fallback(raw: str, returncode: int) -> None:
 
 def _run_tests(repo_root: str, uv: str) -> tuple[bool, str, str]:
     """Run pytest with coverage for the API and return (passed, coverage_pct, detail)."""
-    api_dir = os.path.join(repo_root, "api")
+    server_dir = os.path.join(repo_root, "server")
     # Skip entirely when no test files exist yet
-    test_dir = os.path.join(api_dir, "tests")
+    test_dir = os.path.join(server_dir, "tests")
     if not os.path.isdir(test_dir) or not any(
         f.startswith("test_") and f.endswith(".py") for f in os.listdir(test_dir)
     ):
@@ -328,7 +328,7 @@ def _run_tests(repo_root: str, uv: str) -> tuple[bool, str, str]:
             "--cov-report=term-missing:skip-covered",
             "-q",
         ],
-        cwd=api_dir,
+        cwd=server_dir,
         capture_output=True,
         text=True,
     )
@@ -406,7 +406,7 @@ def main() -> None:
     try:
         proc = subprocess.run(
             [uv, "run", "pre-commit", "run", "--hook-stage=pre-commit", *sys.argv[1:]],
-            cwd=os.path.join(repo_root, "api"),
+            cwd=os.path.join(repo_root, "server"),
             capture_output=True,
             text=True,
         )

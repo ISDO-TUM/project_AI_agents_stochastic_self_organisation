@@ -27,7 +27,7 @@ if [ ! -f .env ]; then
 fi
 
 pnpm install
-cd api
+cd server
 uv venv
 uv pip install -r requirements-dev.txt
 uv run pre-commit install -t pre-commit -t commit-msg
@@ -42,7 +42,7 @@ cat > .git/hooks/pre-commit << 'HOOK'
 # even when git invokes this hook with a stripped PATH.
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.local/share/pnpm:$PATH"
 ROOT=$(git rev-parse --show-toplevel)
-exec "$ROOT/api/.venv/bin/python" "$ROOT/scripts/pre-commit-formatter.py" "$@"
+exec "$ROOT/server/.venv/bin/python" "$ROOT/scripts/pre-commit-formatter.py" "$@"
 HOOK
 chmod +x .git/hooks/pre-commit
 
