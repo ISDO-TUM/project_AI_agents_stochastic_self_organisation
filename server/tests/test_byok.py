@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -40,9 +41,6 @@ def _fake_openai_response(text: str) -> MagicMock:
     resp = MagicMock()
     resp.choices = [choice]
     return resp
-
-
-from collections.abc import Callable
 
 
 def _capturing_openai_ctor(
@@ -105,7 +103,7 @@ async def test_key_not_leaked_on_provider_error(
         inst.chat.completions.create = AsyncMock(side_effect=RuntimeError("upstream boom"))
         return inst
 
-    secret = "sk-leak-SECRET-DO-NOT-LOG"
+    secret = "sk-leak-SECRET-DO-NOT-LOG"  # noqa: S105
     with patch("server.llm.openai_provider.AsyncOpenAI", side_effect=_boom):
         with caplog.at_level(logging.DEBUG):
             resp = await client.post(
