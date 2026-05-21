@@ -43,9 +43,6 @@ COPY --from=builder --chown=nextjs:nodejs /workspace/client/.next/standalone ./
 # Copy static files to the correct subfolder
 COPY --from=builder --chown=nextjs:nodejs /workspace/client/.next/static ./client/.next/static
 
-# Copy public folder (if you use one for favicons, images, etc.)
-COPY --from=builder --chown=nextjs:nodejs /workspace/client/public ./client/public || true
-
 USER nextjs
 EXPOSE 3000
 
