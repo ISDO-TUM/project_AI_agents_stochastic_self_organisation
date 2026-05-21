@@ -318,11 +318,10 @@ def _run_tests(repo_root: str, uv: str) -> tuple[bool, str, str]:
     ):
         return True, "", ""
 
+    pytest_bin = os.path.join(repo_root, "server", ".venv", "bin", "pytest")
     proc = subprocess.run(
         [
-            uv,
-            "run",
-            "pytest",
+            pytest_bin,
             "--tb=short",
             "--cov=.",
             "--cov-report=term-missing:skip-covered",
@@ -403,10 +402,11 @@ def main() -> None:
 
     uv = _find_uv()
 
+    pre_commit_bin = os.path.join(repo_root, "server", ".venv", "bin", "pre-commit")
     try:
         proc = subprocess.run(
-            [uv, "run", "pre-commit", "run", "--hook-stage=pre-commit", *sys.argv[1:]],
-            cwd=os.path.join(repo_root, "server"),
+            [pre_commit_bin, "run", "--hook-stage=pre-commit", *sys.argv[1:]],
+            cwd=repo_root,
             capture_output=True,
             text=True,
         )
