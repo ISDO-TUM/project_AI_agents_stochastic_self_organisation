@@ -1,9 +1,11 @@
 "use client";
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useEffect } from "react";
 import { LIcon } from "@/lib/icons";
 import { BURG, BURG_LT, BURG_GLOW, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
+import { useApiKeys } from "@/lib/api-keys-context";
+import { fetchModels } from "@/lib/api";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 import {
   Select,
@@ -17,6 +19,7 @@ import type { ConsensusMode } from "@/lib/types";
 interface PromptBarProps {
   simMode: boolean;
   onRun: (prompt: string, mode: ConsensusMode) => void;
+  onOpenKeys: () => void;
 }
 
 const MODE_LABELS: Partial<Record<ConsensusMode, string>> = {
@@ -24,14 +27,25 @@ const MODE_LABELS: Partial<Record<ConsensusMode, string>> = {
   voting: "Plurality voting",
 };
 
-export function PromptBar({ simMode, onRun }: PromptBarProps) {
+export function PromptBar({ simMode, onRun, onOpenKeys }: PromptBarProps) {
   const [val, setVal] = useState("");
   const [preview, setPreview] = useState(false);
   const [mode, setMode] = useState<ConsensusMode>("voting");
   const { dark } = useTheme();
   const t = getTheme(dark);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const canRun = !simMode && val.trim().length > 0;
+  const { keys } = useApiKeys();
+  const hasLocalKey = Object.values(keys).some((k) => k.length > 0);
+  const [hasServerModels, setHasServerModels] = useState(false);
+
+  useEffect(() => {
+    fetchModels()
+      .then((m) => setHasServerModels(m.length > 0))
+      .catch(() => setHasServerModels(false));
+  }, [hasLocalKey]);
+
+  const hasAnyKey = hasLocalKey || hasServerModels;
+  const canRun = !simMode && hasAnyKey && val.trim().length > 0;
 
   const handleSubmit = useCallback(() => {
     if (!canRun) return;
@@ -115,27 +129,73 @@ export function PromptBar({ simMode, onRun }: PromptBarProps) {
         </div>
       )}
 
+      {/* Hint for missing API keys */}
+      {!hasAnyKey && (
+        <div
+          style={{
+            fontSize: 11.5,
+            color: BURG,
+            background: dark ? "rgba(139,26,47,0.15)" : "rgba(139,26,47,0.08)",
+            padding: "6px 12px",
+            borderRadius: 8,
+            marginBottom: 2,
+            border: `1px solid ${
+              dark ? "rgba(139,26,47,0.3)" : "rgba(139,26,47,0.15)"
+            }`,
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            fontWeight: 500,
+          }}
+        >
+          <LIcon name="KeyRound" size={12} color="currentColor" />
+          <span>
+            Please configure at least one API key in{" "}
+            <button
+              onClick={onOpenKeys}
+              style={{
+                background: "none",
+                border: "none",
+                color: BURG,
+                textDecoration: "underline",
+                cursor: "pointer",
+                padding: 0,
+                font: "inherit",
+                fontWeight: 600,
+              }}
+            >
+              settings
+            </button>
+            .
+          </span>
+        </div>
+      )}
+
       <div style={pillStyle}>
         <textarea
           ref={textareaRef}
           value={val}
           onChange={(e) => setVal(e.target.value)}
           onKeyDown={handleKeyDown}
-          disabled={simMode}
-          placeholder="Analyze market trends and reach a consensus recommendation…"
+          disabled={simMode || !hasAnyKey}
+          placeholder={
+            hasAnyKey
+              ? "Analyze market trends and reach a consensus recommendation…"
+              : "API key required..."
+          }
           rows={1}
           style={{
             flex: 1,
             background: "transparent",
             border: "none",
             outline: "none",
-            color: simMode ? t.textDim : t.text,
+            color: simMode || !hasAnyKey ? t.textDim : t.text,
             caretColor: t.text,
             colorScheme: dark ? "dark" : "light",
             fontSize: 13.5,
             lineHeight: 1.55,
-            opacity: simMode ? 0.5 : 1,
-            cursor: simMode ? "not-allowed" : "text",
+            opacity: simMode || !hasAnyKey ? 0.5 : 1,
+            cursor: simMode || !hasAnyKey ? "not-allowed" : "text",
             resize: "none",
             width: "100%",
             height: 28,
@@ -254,8 +314,9 @@ export function PromptBar({ simMode, onRun }: PromptBarProps) {
             letterSpacing: 0.3,
           }}
         >
-          This is an AI simulation and may make mistakes. Verify outputs
-          independently.
+          {hasAnyKey
+            ? "This is an AI simulation and may make mistakes. Verify outputs independently."
+            : "Add an API key (Keys button, top bar) to start running simulations."}
         </span>
       </div>
     </div>

@@ -25,6 +25,7 @@ import { ContextMenu, ContextMenuItem } from "@/components/context-menu";
 import { TweaksPanel } from "@/components/tweaks-panel";
 import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
+import { ApiKeysModal } from "@/components/panels/api-keys-modal";
 import { getTheme } from "@/lib/theme";
 
 const defaultTweaks: Tweaks = {
@@ -101,6 +102,7 @@ export function App() {
   } = useUIState();
 
   const [importError, setImportError] = useState<string | null>(null);
+  const [showKeys, setShowKeys] = useState(false);
   const importErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -440,7 +442,13 @@ export function App() {
           onToggleTweaks={onToggleTweaks}
         />
 
-        <PromptBar simMode={simMode} onRun={runSim} />
+        <PromptBar
+          simMode={simMode}
+          onRun={runSim}
+          onOpenKeys={() => setShowKeys(true)}
+        />
+
+        {showKeys && <ApiKeysModal onClose={() => setShowKeys(false)} />}
       </div>
 
       {simMode && (
@@ -462,6 +470,7 @@ export function App() {
           tweaks={tweaks}
           onChange={setTweak}
           onClose={() => setShowTweaks(false)}
+          onOpenKeys={() => setShowKeys(true)}
         />
       )}
 

@@ -2,8 +2,9 @@
 
 from __future__ import annotations
 
-from fastapi import APIRouter, Query
+from fastapi import APIRouter, Depends
 
+from server.llm.credentials import current_credentials, use_credentials
 from server.schemas import Model
 
 router = APIRouter(prefix="/api/models", tags=["Models"])
@@ -205,14 +206,18 @@ SAP_SUPPORTED_MODELS = [
     "",
     summary="List available models",
     description=(
-        "Returns chat models available based on configured environment variables. "
-        "Providers with a base URL override return SAP model IDs; "
-        "providers without one return standard model IDs."
+        "Returns chat models for the providers the caller has supplied a key for "
+        "(via X-LLM-* headers, falling back to env). A provider with a base-URL "
+        "override returns SAP model IDs; otherwise standard model IDs."
     ),
+    dependencies=[Depends(use_credentials)],
 )
-async def list_models(
-    is_sap_supported: bool = Query(default=False),
-) -> list[Model]:
-    if is_sap_supported:
-        return SAP_SUPPORTED_MODELS
-    return MODELS
+async def list_models() -> list[Model]:
+    creds = current_credentials()
+    result: list[Model] = []
+    for provider in ("openai", "anthropic", "groq", "gemini"):
+        if not creds.has_key(provider):
+            continue
+        pool = SAP_SUPPORTED_MODELS if creds.resolve_base_url(provider) else MODELS
+        result.extend(m for m in pool if m.provider == provider)
+    return result

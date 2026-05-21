@@ -8,6 +8,7 @@ import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, status
 
 from server.db import get_db
+from server.llm.credentials import use_credentials
 from server.schemas import SimulationRunRequest, SimulationRunResponse
 from server.simulation import run_topology
 
@@ -25,6 +26,7 @@ DBDep = Annotated[aiosqlite.Connection, Depends(get_db)]
         "with incoming connections receive their neighbours' responses and reply with "
         "an updated view."
     ),
+    dependencies=[Depends(use_credentials)],
 )
 async def run_simulation(body: SimulationRunRequest, db: DBDep) -> SimulationRunResponse:
     async with db.execute("SELECT COUNT(*) as n FROM agents") as cur:

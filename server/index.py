@@ -5,11 +5,12 @@ from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from server.db import close_db, init_db
+from server.llm.credentials import MissingCredentialsError
 from server.routes import (
     agents_router,
     benchmark_router,
@@ -54,6 +55,14 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.exception_handler(MissingCredentialsError)
+async def _missing_credentials_handler(
+    request: Request, exc: MissingCredentialsError
+) -> JSONResponse:
+    return JSONResponse(status_code=400, content={"detail": str(exc)})
+
 
 app.include_router(agents_router)
 app.include_router(knowledge_files_router)

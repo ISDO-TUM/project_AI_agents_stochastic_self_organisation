@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import logging
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from server.llm.anthropic_provider import call_anthropic
+from server.llm.credentials import use_credentials
 from server.llm.groq_provider import call_groq
 from server.llm.openai_provider import call_openai
 from server.schemas import (
@@ -30,6 +31,7 @@ router = APIRouter(prefix="/api/test", tags=["Testing"])
     "/openai",
     response_model=PromptResponse,
     summary="Test OpenAI connectivity",
+    dependencies=[Depends(use_credentials)],
 )
 async def test_openai(body: OpenAIPromptRequest) -> PromptResponse:
     try:
@@ -44,6 +46,7 @@ async def test_openai(body: OpenAIPromptRequest) -> PromptResponse:
     "/anthropic",
     response_model=PromptResponse,
     summary="Test Anthropic connectivity",
+    dependencies=[Depends(use_credentials)],
 )
 async def test_anthropic(body: AnthropicPromptRequest) -> PromptResponse:
     try:
@@ -58,6 +61,7 @@ async def test_anthropic(body: AnthropicPromptRequest) -> PromptResponse:
     "/groq",
     response_model=PromptResponse,
     summary="Test Groq connectivity",
+    dependencies=[Depends(use_credentials)],
 )
 async def test_groq(body: GroqPromptRequest) -> PromptResponse:
     try:

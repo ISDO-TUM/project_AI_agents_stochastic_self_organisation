@@ -16,24 +16,23 @@ The API key is sent as a Bearer token in the ``Authorization`` header,
 consistent with how the proxy authenticates all providers.
 """
 
-import os
 from typing import Any, cast
 
 import httpx
 
 from .base_provider import BaseLLMProvider
-from .config import resolve_api_key
+from .credentials import resolve_api_key, resolve_base_url
 from .normalizer import NormalizedToolCall, extract_gemini_tool_calls
 
 _DEFAULT_MAX_TOKENS = 1024
 
 
 def _get_base_url() -> str:
-    return os.environ.get("GEMINI_BASE_URL", "https://generativelanguage.googleapis.com")
+    return resolve_base_url("gemini") or "https://generativelanguage.googleapis.com"
 
 
 def _get_api_key() -> str:
-    return resolve_api_key("GEMINI_API_KEY")
+    return resolve_api_key("gemini")
 
 
 class GeminiProvider(BaseLLMProvider):
@@ -70,7 +69,7 @@ class GeminiProvider(BaseLLMProvider):
         api_key = _get_api_key()
         url = f"{base_url}/v1beta/models/{model}:generateContent"
         # Proxy expects Bearer token; Google's direct API expects x-goog-api-key.
-        using_proxy = bool(os.environ.get("GEMINI_BASE_URL"))
+        using_proxy = bool(resolve_base_url("gemini"))
         headers = (
             {"Authorization": f"Bearer {api_key}"} if using_proxy else {"x-goog-api-key": api_key}
         )

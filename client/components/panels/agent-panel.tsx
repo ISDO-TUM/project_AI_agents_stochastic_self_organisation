@@ -6,6 +6,7 @@ import { uuid, shortId, PROVIDERS, TOOLS } from "@/lib/utils";
 import { fetchModels, ModelEntry } from "@/lib/api";
 import { BURG, BURG_LT, BURG_DIM, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
+import { useApiKeys } from "@/lib/api-keys-context";
 import { LIcon, TOOL_ICON } from "@/lib/icons";
 import {
   FLabel,
@@ -52,10 +53,11 @@ export function AgentPanel({
   onClose,
 }: AgentPanelProps) {
   const [availableModels, setAvailableModels] = useState<ModelEntry[]>([]);
+  const { keys } = useApiKeys();
 
   useEffect(() => {
     fetchModels().then(setAvailableModels).catch(console.error);
-  }, []);
+  }, [keys]);
 
   const providers = useMemo(() => {
     const map: Record<

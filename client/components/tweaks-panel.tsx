@@ -13,6 +13,7 @@ interface TweaksPanelProps {
   tweaks: Tweaks;
   onChange: (key: keyof Tweaks, value: Tweaks[keyof Tweaks]) => void;
   onClose: () => void;
+  onOpenKeys: () => void;
 }
 
 const ACCENT_SWATCHES = ["#8B1A2F", "#1A3A8B", "#1A7A3A", "#6B1A8B", "#7A5A1A"];
@@ -128,7 +129,12 @@ function Sec({
   );
 }
 
-export function TweaksPanel({ tweaks, onChange, onClose }: TweaksPanelProps) {
+export function TweaksPanel({
+  tweaks,
+  onChange,
+  onClose,
+  onOpenKeys,
+}: TweaksPanelProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
 
@@ -191,6 +197,46 @@ export function TweaksPanel({ tweaks, onChange, onClose }: TweaksPanelProps) {
       <div
         style={{ padding: "4px 18px 18px", maxHeight: 420, overflowY: "auto" }}
       >
+        <Sec title="Providers" t={t}>
+          <button
+            onClick={onOpenKeys}
+            style={{
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              background: t.inputBg,
+              border: `1.5px solid ${t.border}`,
+              borderRadius: 10,
+              padding: "10px 14px",
+              color: t.text,
+              fontSize: 12,
+              fontWeight: 600,
+              cursor: "pointer",
+              transition: "all 0.15s",
+              marginBottom: 8,
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background = BURG;
+              (e.currentTarget as HTMLButtonElement).style.borderColor = BURG;
+              (e.currentTarget as HTMLButtonElement).style.color = "#fff";
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLButtonElement).style.background =
+                t.inputBg;
+              (e.currentTarget as HTMLButtonElement).style.borderColor =
+                t.border;
+              (e.currentTarget as HTMLButtonElement).style.color = t.text;
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <LIcon name="KeyRound" size={14} color="currentColor" />
+              API Keys
+            </div>
+            <LIcon name="ChevronRight" size={14} color="currentColor" />
+          </button>
+        </Sec>
+
         <Sec title="Canvas" t={t}>
           <Slider
             label="Node Size"

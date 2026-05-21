@@ -42,6 +42,14 @@ interface AgentCreatePayload extends AgentPayload {
 
 type AgentUpdate = Partial<AgentPayload>;
 
+// ─── BYOK credential headers ──────────────────────────────────────────────────
+// Set by ApiKeysProvider; merged into every request. Kept in memory only.
+let llmHeaders: Record<string, string> = {};
+
+export function setLlmHeaders(headers: Record<string, string>): void {
+  llmHeaders = headers;
+}
+
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
 function fromWire(a: AgentOut, position = { x: 220, y: 200 }): Agent {
@@ -75,9 +83,11 @@ async function request<T>(
   path: string,
   body?: unknown,
 ): Promise<T> {
+  const headers: Record<string, string> = { ...llmHeaders };
+  if (body) headers["Content-Type"] = "application/json";
   const res = await fetch(path, {
     method,
-    headers: body ? { "Content-Type": "application/json" } : undefined,
+    headers,
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!res.ok) {

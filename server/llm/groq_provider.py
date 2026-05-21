@@ -1,31 +1,23 @@
-import os
 from typing import Any
 
 from groq import AsyncGroq
 
-from .config import resolve_api_key
+from .credentials import resolve_api_key, resolve_base_url
 from .normalizer import NormalizedToolCall
 from .openai_provider import OpenAIProvider
 
-_client: AsyncGroq | None = None
-
 
 def _get_groq_client() -> AsyncGroq:
-    """Return the shared AsyncGroq client, creating it on first call.
+    """Build a per-request AsyncGroq client from the current credentials.
 
-    When ``GROQ_BASE_URL`` is set the client points to that URL instead of
-    Groq's public API — used to route calls through the local proxy.
-    The API key is resolved via ``resolve_api_key`` which accepts either
-    ``GROQ_API_KEY`` or the shared ``LLM_PROXY_API_KEY``.
+    When a base URL is set (header or env) the client points to that URL instead
+    of Groq's public API — used to route calls through the local proxy.
     """
-    global _client
-    if _client is None:
-        kwargs: dict[str, Any] = {"api_key": resolve_api_key("GROQ_API_KEY")}
-        base_url = os.environ.get("GROQ_BASE_URL")
-        if base_url:
-            kwargs["base_url"] = base_url
-        _client = AsyncGroq(**kwargs)
-    return _client
+    kwargs: dict[str, Any] = {"api_key": resolve_api_key("groq")}
+    base_url = resolve_base_url("groq")
+    if base_url:
+        kwargs["base_url"] = base_url
+    return AsyncGroq(**kwargs)
 
 
 class GroqProvider(OpenAIProvider):

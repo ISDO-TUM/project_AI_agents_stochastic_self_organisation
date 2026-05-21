@@ -18,6 +18,7 @@ from server.db import (
     load_agent_file_names,
 )
 from server.llm import call_agent
+from server.llm.credentials import MissingCredentialsError, use_credentials
 from server.schemas import (
     AgentCreate,
     AgentResponse,
@@ -273,6 +274,7 @@ async def delete_agent(agent_id: str, db: DBDep) -> None:
         "provider, model, and tools are loaded from the database and forwarded to "
         "the LLM.  The final text response is returned."
     ),
+    dependencies=[Depends(use_credentials)],
 )
 async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRunResponse:
     async with db.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)) as cur:
@@ -295,6 +297,8 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
             tool_names=tool_names or None,
             tool_context={"db": db, "agent_id": agent_id},
         )
+    except MissingCredentialsError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Agent run failed for agent_id=%s", agent_id)
         raise HTTPException(
