@@ -8,7 +8,6 @@ RUN corepack enable
 # ---- deps: install node_modules ----
 FROM base AS deps
 WORKDIR /workspace
-# Copy monorepo config and client package.json
 COPY package.json pnpm-lock.yaml pnpm-workspace.yaml ./
 COPY client/package.json ./client/package.json
 RUN pnpm install --frozen-lockfile
@@ -19,8 +18,12 @@ WORKDIR /workspace
 COPY --from=deps /workspace/node_modules ./node_modules
 COPY package.json pnpm-workspace.yaml ./
 COPY client/ ./client/
-# Note: Ensure "app" is the actual package name inside client/package.json.
-# If the name is "client", change this to: pnpm --filter client build
+
+# Catch the variable from Railway's build environment
+ARG INTERNAL_API_URL
+# Expose it to the Next.js build process
+ENV INTERNAL_API_URL=$INTERNAL_API_URL
+
 RUN pnpm --filter app build
 
 # ---- runtime: minimal standalone server ----
@@ -31,18 +34,17 @@ ENV NODE_ENV=production \
     HOSTNAME="0.0.0.0" \
     NEXT_TELEMETRY_DISABLED=1
 
-# Non-root user setup
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
-# 1. Copy the entire standalone structure to preserve monorepo paths
+# Copy the standalone structure
 COPY --from=builder --chown=nextjs:nodejs /workspace/client/.next/standalone ./
 
-# 2. Copy static files to the correct subfolder path
+# Copy static files to the correct subfolder
 COPY --from=builder --chown=nextjs:nodejs /workspace/client/.next/static ./client/.next/static
 
-# 3. (Optional but recommended) Copy the public folder if you have one
-# COPY --from=builder --chown=nextjs:nodejs /workspace/client/public ./client/public
+# Copy public folder (if you use one for favicons, images, etc.)
+COPY --from=builder --chown=nextjs:nodejs /workspace/client/public ./client/public || true
 
 USER nextjs
 EXPOSE 3000
@@ -50,5 +52,5 @@ EXPOSE 3000
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s \
     CMD wget -qO- http://localhost:3000 || exit 1
 
-# Run the server from its correct monorepo location
+# Run from the correct monorepo path
 CMD ["node", "client/server.js"]
