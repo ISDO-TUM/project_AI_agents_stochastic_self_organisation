@@ -34,7 +34,6 @@ ENV NODE_ENV=production \
 RUN addgroup --system --gid 1001 nodejs && \
     adduser --system --uid 1001 nextjs
 
-COPY --from=builder /workspace/client/public ./public
 COPY --from=builder --chown=nextjs:nodejs /workspace/client/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /workspace/client/.next/static ./.next/static
 
