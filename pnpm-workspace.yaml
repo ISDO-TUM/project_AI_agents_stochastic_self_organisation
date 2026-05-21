@@ -4,6 +4,9 @@ packages:
 overrides:
   postcss: ^8.5.10
 
-ignoredBuiltDependencies:
-  - sharp
-  - unrs-resolver
+# pnpm 11 build-script approval. Both native packages are denied: their
+# install/build scripts are not run, preserving the prior behavior that
+# `ignoredBuiltDependencies` provided on pnpm 10.
+allowBuilds:
+  sharp: false
+  unrs-resolver: false

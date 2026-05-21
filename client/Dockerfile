@@ -2,6 +2,9 @@
 FROM node:22-alpine AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
+# corepack reads the pnpm version from package.json's "packageManager" field;
+# disable the interactive prompt so it can fetch that version during the build.
+ENV COREPACK_ENABLE_DOWNLOAD_PROMPT=0
 RUN corepack enable
 
 # ---- deps: install node_modules ----

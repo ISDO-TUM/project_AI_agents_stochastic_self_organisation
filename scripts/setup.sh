@@ -12,7 +12,11 @@ if ! command -v uv &> /dev/null; then
 fi
 
 if ! command -v pnpm &> /dev/null; then
-    curl -fsSL https://get.pnpm.io/install.sh | env PNPM_VERSION=9.0.0 sh -
+    # Install the exact pnpm version pinned in package.json's "packageManager"
+    # field (the single source of truth). pnpm then self-manages this version
+    # on every run, keeping local installs in lock-step with CI and Docker.
+    PNPM_VERSION="$(grep -oE 'pnpm@[0-9]+\.[0-9]+\.[0-9]+' package.json | head -1 | cut -d@ -f2)"
+    curl -fsSL https://get.pnpm.io/install.sh | env PNPM_VERSION="$PNPM_VERSION" sh -
     export PATH="$HOME/.local/share/pnpm:$PATH"
     echo ""
     echo "⚠️  pnpm was just installed. Its PATH entry is written to your shell config"

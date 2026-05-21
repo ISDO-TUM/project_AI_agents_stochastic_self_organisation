@@ -1,7 +1,7 @@
 {
   "name": "self-organising-agentic-system",
   "private": true,
-  "packageManager": "pnpm@10.11.1",
+  "packageManager": "pnpm@11.1.3",
   "scripts": {
     "dev": "concurrently -c \"green,blue\" -n \"UI,API\" \"pnpm --filter app run dev\" \"pnpm run dev:api\"",
     "dev:api": "sh -c 'PATH=$HOME/.local/bin:$PATH uv run --project server uvicorn server.index:app --reload --reload-dir server --port 8000'",
