@@ -1,13 +1,10 @@
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
 from ..base import Tool
-
-if TYPE_CHECKING:
-    import aiosqlite
 
 
 class FilesInput(BaseModel):
@@ -41,11 +38,9 @@ class FilesTool(Tool):
         inp = validated_input
         ctx = context or {}
 
-        # Support both pre-loaded files dict (tests) and live DB context (runtime)
-        if "files" in ctx:
-            files: dict[str, str] = ctx["files"]
-        else:
-            files = await self._load_files(ctx)
+        # The caller pre-loads the agent's files into context, both at runtime
+        # and in tests, so the tool never touches the database itself.
+        files: dict[str, str] = ctx.get("files") or {}
 
         if inp.action == "list":
             if not files:
@@ -58,19 +53,3 @@ class FilesTool(Tool):
             return files[file_name]
         available = ", ".join(files) if files else "none"
         return f"File '{file_name}' not found. Available: {available}"
-
-    @staticmethod
-    async def _load_files(ctx: dict[str, Any]) -> dict[str, str]:
-        db: aiosqlite.Connection = ctx["db"]
-        agent_id: str = ctx["agent_id"]
-        async with db.execute(
-            """
-            SELECT kf.name, kf.content
-              FROM knowledge_files kf
-              JOIN agent_files af ON af.file_id = kf.id
-             WHERE af.agent_id = ?
-            """,
-            (agent_id,),
-        ) as cur:
-            rows = await cur.fetchall()
-        return {r["name"]: r["content"] for r in rows}

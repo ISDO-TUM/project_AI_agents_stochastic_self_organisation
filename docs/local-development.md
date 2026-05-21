@@ -25,7 +25,17 @@ This will:
 - Install `pnpm` if missing
 - Install all Python and Node dependencies
 - Wire up the git pre-commit hooks
-- Create an empty `.env` file at the repo root
+- Create a `.env` file at the repo root, pre-seeded with `DATABASE_URL` for the bundled Postgres
+
+### 🐘 Start the database
+
+The backend uses PostgreSQL. Start the bundled instance (it persists to a Docker volume) before the dev server:
+
+```bash
+docker compose up -d postgres
+```
+
+`setup.sh` pre-seeds `.env` with the matching `DATABASE_URL` (`postgresql+asyncpg://app:app@localhost:5432/app`), so no extra config is needed. The tests do **not** need this — they run against an in-memory SQLite database automatically.
 
 ### ▶️ Start the dev server
 
@@ -44,10 +54,11 @@ Both services start concurrently with hot reload:
 
 ### 🔐 Environment variables
 
-`setup.sh` creates an empty `.env` at the repo root. Add your secrets there — it's gitignored:
+`setup.sh` creates a `.env` at the repo root pre-seeded with `DATABASE_URL`. Add your secrets there too — it's gitignored:
 
 ```bash
 # .env
+DATABASE_URL=postgresql+asyncpg://app:app@localhost:5432/app
 OPENAI_API_KEY=sk-...
 ```
 

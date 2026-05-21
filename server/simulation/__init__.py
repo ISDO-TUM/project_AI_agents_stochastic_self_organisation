@@ -41,9 +41,11 @@ from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
-import aiosqlite
+from sqlalchemy import select
+from sqlalchemy.ext.asyncio import AsyncConnection
 
-from server.db import deserialise_agent_row, hint_files_in_prompt, load_agent_file_names
+from server.db import deserialise_agent_row, hint_files_in_prompt, load_files_by_agent
+from server.db.tables import agents as agents_table
 from server.llm import call_agent
 from server.schemas import SimulationStep, ToolCall
 
@@ -62,18 +64,22 @@ def _step(**kwargs: Any) -> SimulationStep:
 
 
 async def _call_agent(
-    agent: dict[str, Any], prompt: str, db: aiosqlite.Connection
+    agent: dict[str, Any], prompt: str, files: dict[str, str]
 ) -> tuple[str, list[ToolCall]]:
-    """Invoke an agent and return (response_text, tools_used)."""
-    file_names = await load_agent_file_names(db, agent["id"])
-    system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, file_names)
+    """Invoke an agent and return (response_text, tools_used).
+
+    ``files`` is the agent's pre-loaded ``{name: content}`` map, supplied to the
+    files tool via context so no database access happens during the concurrent
+    LLM phase.
+    """
+    system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, list(files))
     response, tools_used = await call_agent(
         prompt,
         provider=agent["provider"],
         model=agent["model"],
         system_prompt=system_prompt,
         tool_names=agent["tools"] or None,
-        tool_context={"db": db, "agent_id": agent["id"]},
+        tool_context={"files": files},
     )
     return str(response), tools_used
 
@@ -293,26 +299,33 @@ class SimulationOutcome:
 
 async def run_topology(
     prompt: str,
-    db: aiosqlite.Connection,
+    db: AsyncConnection,
     rounds: int = 3,
     mode: ConsensusMode = "broadcast",
     agent_context: dict[str, str] | None = None,
 ) -> SimulationOutcome:
-    """Run a topology simulation under the chosen consensus mode."""
-    async with db.execute("SELECT * FROM agents") as cur:
-        rows = await cur.fetchall()
-    agents: list[dict[str, Any]] = [deserialise_agent_row(row) for row in rows]
+    """Run a topology simulation under the chosen consensus mode.
+
+    All database reads happen here, up front and sequentially. Each agent's
+    knowledge files are pre-loaded so the concurrent LLM phase never touches the
+    connection (a single async connection cannot serve concurrent queries).
+    """
+    result = await db.execute(select(agents_table))
+    agents: list[dict[str, Any]] = [deserialise_agent_row(row) for row in result.mappings().all()]
 
     if not agents:
         return SimulationOutcome()
 
+    files_by_agent = await load_files_by_agent(db)
     incoming = _build_incoming(agents)
 
     if mode == "weighted":
-        return await _run_weighted_pool(prompt, agents, incoming, db, rounds, agent_context)
+        return await _run_weighted_pool(
+            prompt, agents, incoming, files_by_agent, rounds, agent_context
+        )
     if mode == "voting":
-        return await _run_voting(prompt, agents, incoming, db, rounds, agent_context)
-    return await _run_broadcast(prompt, agents, incoming, db, rounds, agent_context)
+        return await _run_voting(prompt, agents, incoming, files_by_agent, rounds, agent_context)
+    return await _run_broadcast(prompt, agents, incoming, files_by_agent, rounds, agent_context)
 
 
 # ── mode 1: broadcast (no consensus) ──────────────────────────────────────────
@@ -322,7 +335,7 @@ async def _run_broadcast(
     prompt: str,
     agents: list[dict[str, Any]],
     incoming: dict[str, list[str]],
-    db: aiosqlite.Connection,
+    files_by_agent: dict[str, dict[str, str]],
     rounds: int,
     agent_context: dict[str, str] | None,
 ) -> SimulationOutcome:
@@ -338,7 +351,9 @@ async def _run_broadcast(
     async def _broadcast(agent: dict[str, Any]) -> tuple[str, list[SimulationStep]]:
         try:
             response, tools_used = await _call_agent(
-                agent, _with_context(prompt, agent["id"], agent_context), db
+                agent,
+                _with_context(prompt, agent["id"], agent_context),
+                files_by_agent.get(agent["id"], {}),
             )
         except Exception as exc:
             err = f"[error: {exc}]"
@@ -395,7 +410,9 @@ async def _run_broadcast(
             ]
 
             try:
-                response, tools_used = await _call_agent(agent, discussion_prompt, db)
+                response, tools_used = await _call_agent(
+                    agent, discussion_prompt, files_by_agent.get(agent["id"], {})
+                )
             except Exception as exc:
                 err = f"[error: {exc}]"
                 return err, [
@@ -433,7 +450,7 @@ async def _run_weighted_pool(
     prompt: str,
     agents: list[dict[str, Any]],
     incoming: dict[str, list[str]],
-    db: aiosqlite.Connection,
+    files_by_agent: dict[str, dict[str, str]],
     rounds: int,
     agent_context: dict[str, str] | None,
 ) -> SimulationOutcome:
@@ -455,7 +472,9 @@ async def _run_weighted_pool(
     async def _broadcast(agent: dict[str, Any]) -> tuple[str, list[SimulationStep]]:
         try:
             response, tools = await _call_agent(
-                agent, _with_context(prompt, agent["id"], agent_context), db
+                agent,
+                _with_context(prompt, agent["id"], agent_context),
+                files_by_agent.get(agent["id"], {}),
             )
         except Exception as exc:
             err = f"[error: {exc}]"
@@ -521,7 +540,9 @@ async def _run_weighted_pool(
             ]
 
             try:
-                resp, tools = await _call_agent(agent, discussion_prompt, db)
+                resp, tools = await _call_agent(
+                    agent, discussion_prompt, files_by_agent.get(agent["id"], {})
+                )
             except Exception as exc:
                 err = f"[error: {exc}]"
                 return err, [
@@ -627,7 +648,7 @@ async def _run_voting(
     prompt: str,
     agents: list[dict[str, Any]],
     incoming: dict[str, list[str]],
-    db: aiosqlite.Connection,
+    files_by_agent: dict[str, dict[str, str]],
     rounds: int,
     agent_context: dict[str, str] | None,
 ) -> SimulationOutcome:
@@ -645,7 +666,9 @@ async def _run_voting(
     ) -> tuple[str, str | None, str | None, list[SimulationStep]]:
         full_prompt = _with_context(prompt, agent["id"], agent_context) + _VOTE_INSTRUCTION
         try:
-            response, tools = await _call_agent(agent, full_prompt, db)
+            response, tools = await _call_agent(
+                agent, full_prompt, files_by_agent.get(agent["id"], {})
+            )
         except Exception as exc:
             err = f"[error: {exc}]"
             return (
@@ -762,7 +785,9 @@ async def _run_voting(
                 )
 
             try:
-                resp, tools = await _call_agent(agent, full_prompt, db)
+                resp, tools = await _call_agent(
+                    agent, full_prompt, files_by_agent.get(agent["id"], {})
+                )
             except Exception as exc:
                 err = f"[error: {exc}]"
                 return (

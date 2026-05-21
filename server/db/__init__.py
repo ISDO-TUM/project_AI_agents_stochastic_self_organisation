@@ -1,143 +1,124 @@
-"""In-memory SQLite session database.
+"""Async database access via SQLAlchemy Core.
 
-A single :class:`aiosqlite.Connection` is shared across all requests because
-SQLite ``:memory:`` databases are private to the connection that created them.
-The database is initialised once at application startup via :func:`init_db` and
-closed at shutdown via :func:`close_db`.
+The engine is built from ``DATABASE_URL`` at application startup. PostgreSQL is
+used in production (and via docker-compose locally); the test suite points the
+same code at an in-memory SQLite database, so no external service is required to
+run ``pytest``. Connection-string schemes handed out by Railway/Heroku
+(``postgresql://`` / ``postgres://``) are normalised to the asyncpg driver.
 """
 
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import AsyncGenerator
 from typing import Any
 
-import aiosqlite
+from sqlalchemy import RowMapping, event, select
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
+from sqlalchemy.pool import StaticPool
 
-_CREATE_AGENTS_TABLE = """
-CREATE TABLE IF NOT EXISTS agents (
-    id            TEXT PRIMARY KEY,
-    name          TEXT NOT NULL,
-    description   TEXT NOT NULL,
-    system_prompt TEXT NOT NULL,
-    provider      TEXT NOT NULL CHECK(provider IN ('openai', 'anthropic', 'groq', 'gemini')),
-    model         TEXT NOT NULL,
-    tools         TEXT NOT NULL DEFAULT '[]',
-    connections   TEXT NOT NULL DEFAULT '[]'
-);
-"""
+from server.db.tables import agent_files, knowledge_files, metadata
 
-_CREATE_TRIALS_TABLE = """
-CREATE TABLE IF NOT EXISTS trials (
-    id          TEXT PRIMARY KEY,
-    user_prompt TEXT NOT NULL,
-    description TEXT NOT NULL
-);
-"""
+_engine: AsyncEngine | None = None
 
-_CREATE_ROUNDS_TABLE = """
-CREATE TABLE IF NOT EXISTS rounds (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    trial_id TEXT NOT NULL,
 
-    FOREIGN KEY (trial_id) REFERENCES trials(id)
-);
-"""
+def _normalise_url(url: str) -> str:
+    """Force the asyncpg driver for PostgreSQL URLs handed out by hosts."""
+    if url.startswith("postgresql+") or url.startswith("sqlite+"):
+        return url
+    if url.startswith("postgresql://"):
+        return "postgresql+asyncpg://" + url[len("postgresql://") :]
+    if url.startswith("postgres://"):
+        return "postgresql+asyncpg://" + url[len("postgres://") :]
+    return url
 
-_CREATE_CONNECTIONS_TABLE = """
-CREATE TABLE IF NOT EXISTS connections (
-    id            INTEGER PRIMARY KEY,
-    round_id      INTEGER NOT NULL,
-    from_agent_id TEXT NOT NULL,
-    to_agent_id   TEXT NOT NULL,
 
-    FOREIGN KEY (round_id)      REFERENCES rounds(id),
-    FOREIGN KEY (from_agent_id) REFERENCES agents(id),
-    FOREIGN KEY (to_agent_id)   REFERENCES agents(id),
+def _build_engine(url: str) -> AsyncEngine:
+    norm = _normalise_url(url)
+    if norm.startswith("sqlite"):
+        # A single shared connection so an in-memory database survives across
+        # requests within a test (each connection otherwise gets its own DB).
+        engine = create_async_engine(
+            norm,
+            connect_args={"check_same_thread": False},
+            poolclass=StaticPool,
+        )
+    else:
+        engine = create_async_engine(norm, pool_pre_ping=True)
 
-    UNIQUE (round_id, from_agent_id, to_agent_id)
-);
-"""
+    if engine.dialect.name == "sqlite":
+        # SQLite ignores foreign keys unless asked per connection; PostgreSQL
+        # enforces them by default.
+        @event.listens_for(engine.sync_engine, "connect")
+        def _enable_sqlite_fks(dbapi_conn: Any, _record: Any) -> None:
+            cursor = dbapi_conn.cursor()
+            cursor.execute("PRAGMA foreign_keys=ON")
+            cursor.close()
 
-_CREATE_MESSAGES_TABLE = """
-CREATE TABLE IF NOT EXISTS messages (
-    id            INTEGER PRIMARY KEY,
-    connection_id INTEGER NOT NULL,
-    message       TEXT,
-
-    FOREIGN KEY (connection_id) REFERENCES connections(id)
-);
-"""
-
-_CREATE_KNOWLEDGE_FILES_TABLE = """
-CREATE TABLE IF NOT EXISTS knowledge_files (
-    id      TEXT PRIMARY KEY,
-    name    TEXT NOT NULL,
-    content TEXT NOT NULL
-);
-"""
-
-_CREATE_AGENT_FILES_TABLE = """
-CREATE TABLE IF NOT EXISTS agent_files (
-    agent_id TEXT NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-    file_id  TEXT NOT NULL REFERENCES knowledge_files(id) ON DELETE CASCADE,
-    PRIMARY KEY (agent_id, file_id)
-);
-"""
-
-_db: aiosqlite.Connection | None = None
+    return engine
 
 
 async def init_db() -> None:
-    """Open the shared in-memory SQLite database and create all tables.
+    """Build the engine from ``DATABASE_URL`` and create all tables.
 
     Must be called once at application startup before any request is served.
-    Subsequent calls are a no-op if the database is already initialised.
+
+    Raises:
+        RuntimeError: If ``DATABASE_URL`` is not set.
     """
-    global _db
-    _db = await aiosqlite.connect(":memory:")
-    _db.row_factory = aiosqlite.Row
-    await _db.execute("PRAGMA foreign_keys = ON;")
-    await _db.execute(_CREATE_AGENTS_TABLE)
-    await _db.execute(_CREATE_KNOWLEDGE_FILES_TABLE)
-    await _db.execute(_CREATE_AGENT_FILES_TABLE)
-    await _db.execute(_CREATE_TRIALS_TABLE)
-    await _db.execute(_CREATE_ROUNDS_TABLE)
-    await _db.execute(_CREATE_CONNECTIONS_TABLE)
-    await _db.execute(_CREATE_MESSAGES_TABLE)
-    await _db.commit()
+    global _engine
+    url = os.getenv("DATABASE_URL")
+    if not url:
+        raise RuntimeError("DATABASE_URL is not set.")
+    _engine = _build_engine(url)
+    async with _engine.begin() as conn:
+        await conn.run_sync(metadata.create_all)
 
 
 async def close_db() -> None:
-    """Close the shared database connection.
+    """Dispose the engine and its connection pool.
 
-    Safe to call even if the database was never initialised.
+    Safe to call even if the engine was never initialised.
     """
-    global _db
-    if _db is not None:
-        await _db.close()
-        _db = None
+    global _engine
+    if _engine is not None:
+        await _engine.dispose()
+        _engine = None
 
 
-async def get_db() -> AsyncGenerator[aiosqlite.Connection, None]:
-    """Yield the shared database connection for use as a FastAPI dependency.
-
-    Yields:
-        The open :class:`aiosqlite.Connection` instance.
+def get_engine() -> AsyncEngine:
+    """Return the initialised engine.
 
     Raises:
         RuntimeError: If called before :func:`init_db`.
     """
-    if _db is None:
+    if _engine is None:
         raise RuntimeError("Database not initialised. Call init_db() first.")
-    yield _db
+    return _engine
 
 
-def deserialise_agent_row(row: aiosqlite.Row) -> dict[str, Any]:
-    """Convert an agents table row to a plain dict, decoding JSON list columns.
+async def get_db() -> AsyncGenerator[AsyncConnection, None]:
+    """Yield a pooled connection for use as a FastAPI dependency.
+
+    Yields:
+        An open :class:`AsyncConnection`. Writes must be committed explicitly
+        via ``await conn.commit()``.
+
+    Raises:
+        RuntimeError: If called before :func:`init_db`.
+    """
+    if _engine is None:
+        raise RuntimeError("Database not initialised. Call init_db() first.")
+    async with _engine.connect() as conn:
+        yield conn
+
+
+def deserialise_agent_row(row: RowMapping) -> dict[str, Any]:
+    """Convert an agents row to a dict, decoding JSON list columns.
 
     Args:
-        row: A raw :class:`aiosqlite.Row` from the ``agents`` table.
+        row: A mapping row from the ``agents`` table.
 
     Returns:
         A dict with ``tools`` and ``connections`` decoded from their JSON
@@ -149,11 +130,11 @@ def deserialise_agent_row(row: aiosqlite.Row) -> dict[str, Any]:
     return data
 
 
-def deserialise_trial_row(row: aiosqlite.Row) -> dict[str, Any]:
-    """Convert a trials table row to a plain dict.
+def deserialise_knowledge_file_row(row: RowMapping) -> dict[str, Any]:
+    """Convert a knowledge_files row to a plain dict.
 
     Args:
-        row: A raw :class:`aiosqlite.Row` from the ``trials`` table.
+        row: A mapping row from the ``knowledge_files`` table.
 
     Returns:
         A plain dict representation of the row.
@@ -161,67 +142,35 @@ def deserialise_trial_row(row: aiosqlite.Row) -> dict[str, Any]:
     return dict(row)
 
 
-def deserialise_round_row(row: aiosqlite.Row) -> dict[str, Any]:
-    """Convert a rounds table row to a plain dict.
+async def load_agent_files(conn: AsyncConnection, agent_id: str) -> dict[str, str]:
+    """Return ``{file_name: content}`` for every file attached to an agent."""
+    stmt = (
+        select(knowledge_files.c.name, knowledge_files.c.content)
+        .select_from(
+            knowledge_files.join(agent_files, agent_files.c.file_id == knowledge_files.c.id)
+        )
+        .where(agent_files.c.agent_id == agent_id)
+    )
+    result = await conn.execute(stmt)
+    return {row.name: row.content for row in result}
 
-    Args:
-        row: A raw :class:`aiosqlite.Row` from the ``rounds`` table.
 
-    Returns:
-        A plain dict representation of the row.
+async def load_files_by_agent(conn: AsyncConnection) -> dict[str, dict[str, str]]:
+    """Return ``{agent_id: {file_name: content}}`` for all attachments at once.
+
+    Used by the simulation engine to pre-load every agent's files before the
+    concurrent LLM phase, so no database access happens inside ``asyncio.gather``.
     """
-    return dict(row)
-
-
-def deserialise_connection_row(row: aiosqlite.Row) -> dict[str, Any]:
-    """Convert a connections table row to a plain dict.
-
-    Args:
-        row: A raw :class:`aiosqlite.Row` from the ``connections`` table.
-
-    Returns:
-        A plain dict representation of the row.
-    """
-    return dict(row)
-
-
-def deserialise_message_row(row: aiosqlite.Row) -> dict[str, Any]:
-    """Convert a messages table row to a plain dict.
-
-    Args:
-        row: A raw :class:`aiosqlite.Row` from the ``messages`` table.
-
-    Returns:
-        A plain dict representation of the row.
-    """
-    return dict(row)
-
-
-def deserialise_knowledge_file_row(row: aiosqlite.Row) -> dict[str, Any]:
-    """Convert a knowledge_files table row to a plain dict.
-
-    Args:
-        row: A raw :class:`aiosqlite.Row` from the ``knowledge_files`` table.
-
-    Returns:
-        A plain dict representation of the row.
-    """
-    return dict(row)
-
-
-async def load_agent_file_names(db: aiosqlite.Connection, agent_id: str) -> list[str]:
-    """Return the names of all knowledge files attached to an agent."""
-    async with db.execute(
-        """
-        SELECT kf.name
-          FROM knowledge_files kf
-          JOIN agent_files af ON af.file_id = kf.id
-         WHERE af.agent_id = ?
-        """,
-        (agent_id,),
-    ) as cur:
-        rows = await cur.fetchall()
-    return [r["name"] for r in rows]
+    stmt = select(
+        agent_files.c.agent_id,
+        knowledge_files.c.name,
+        knowledge_files.c.content,
+    ).select_from(agent_files.join(knowledge_files, knowledge_files.c.id == agent_files.c.file_id))
+    result = await conn.execute(stmt)
+    out: dict[str, dict[str, str]] = {}
+    for row in result:
+        out.setdefault(row.agent_id, {})[row.name] = row.content
+    return out
 
 
 def hint_files_in_prompt(

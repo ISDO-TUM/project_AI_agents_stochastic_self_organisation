@@ -7,15 +7,25 @@ import logging
 import uuid
 from typing import Annotated
 
-import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import delete, insert, select, update
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.db import (
     deserialise_agent_row,
     deserialise_knowledge_file_row,
     get_db,
     hint_files_in_prompt,
-    load_agent_file_names,
+    load_agent_files,
+)
+from server.db.tables import (
+    agent_files,
+    agents,
+    connections,
+    knowledge_files,
+    messages,
+    rounds,
+    trials,
 )
 from server.llm import call_agent
 from server.llm.credentials import MissingCredentialsError, use_credentials
@@ -32,7 +42,7 @@ logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/agents", tags=["Agents"])
 
-DBDep = Annotated[aiosqlite.Connection, Depends(get_db)]
+DBDep = Annotated[AsyncConnection, Depends(get_db)]
 _PATCHABLE_COLUMNS: frozenset[str] = frozenset(AgentUpdate.model_fields.keys())
 
 
@@ -57,32 +67,27 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
         The newly created agent including its UUID.
     """
     agent_id = body.id or str(uuid.uuid4())
-    async with db.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)) as cur:
-        if await cur.fetchone() is not None:
-            raise HTTPException(
-                status_code=status.HTTP_409_CONFLICT,
-                detail="Agent with this id already exists.",
-            )
+    existing = await db.execute(select(agents.c.id).where(agents.c.id == agent_id))
+    if existing.first() is not None:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="Agent with this id already exists.",
+        )
     await db.execute(
-        """
-        INSERT INTO agents
-            (id, name, description, system_prompt, provider, model, tools, connections)
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-        """,
-        (
-            agent_id,
-            body.name,
-            body.description,
-            body.system_prompt,
-            body.provider,
-            body.model,
-            json.dumps(body.tools),
-            json.dumps(body.connections),
-        ),
+        insert(agents).values(
+            id=agent_id,
+            name=body.name,
+            description=body.description,
+            system_prompt=body.system_prompt,
+            provider=body.provider,
+            model=body.model,
+            tools=json.dumps(body.tools),
+            connections=json.dumps(body.connections),
+        )
     )
     await db.commit()
-    async with db.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)) as cur:
-        row = await cur.fetchone()
+    result = await db.execute(select(agents).where(agents.c.id == agent_id))
+    row = result.mappings().first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     return AgentResponse(**deserialise_agent_row(row))
@@ -102,8 +107,8 @@ async def list_agents(db: DBDep) -> list[AgentResponse]:
     Returns:
         A list of all agents, possibly empty.
     """
-    async with db.execute("SELECT * FROM agents") as cur:
-        rows = await cur.fetchall()
+    result = await db.execute(select(agents))
+    rows = result.mappings().all()
     return [AgentResponse(**deserialise_agent_row(row)) for row in rows]
 
 
@@ -125,8 +130,8 @@ async def get_agent(agent_id: str, db: DBDep) -> AgentResponse:
     Raises:
         HTTPException: 404 if no agent with the given ID exists.
     """
-    async with db.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)) as cur:
-        row = await cur.fetchone()
+    result = await db.execute(select(agents).where(agents.c.id == agent_id))
+    row = result.mappings().first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     return AgentResponse(**deserialise_agent_row(row))
@@ -152,30 +157,25 @@ async def replace_agent(agent_id: str, body: AgentCreate, db: DBDep) -> AgentRes
     Raises:
         HTTPException: 404 if no agent with the given ID exists.
     """
-    async with db.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)) as cur:
-        if await cur.fetchone() is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    existing = await db.execute(select(agents.c.id).where(agents.c.id == agent_id))
+    if existing.first() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     await db.execute(
-        """
-        UPDATE agents
-           SET name = ?, description = ?, system_prompt = ?,
-               provider = ?, model = ?, tools = ?, connections = ?
-         WHERE id = ?
-        """,
-        (
-            body.name,
-            body.description,
-            body.system_prompt,
-            body.provider,
-            body.model,
-            json.dumps(body.tools),
-            json.dumps(body.connections),
-            agent_id,
-        ),
+        update(agents)
+        .where(agents.c.id == agent_id)
+        .values(
+            name=body.name,
+            description=body.description,
+            system_prompt=body.system_prompt,
+            provider=body.provider,
+            model=body.model,
+            tools=json.dumps(body.tools),
+            connections=json.dumps(body.connections),
+        )
     )
     await db.commit()
-    async with db.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)) as cur:
-        row = await cur.fetchone()
+    result = await db.execute(select(agents).where(agents.c.id == agent_id))
+    row = result.mappings().first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     return AgentResponse(**deserialise_agent_row(row))
@@ -201,8 +201,8 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: DBDep) -> AgentResp
     Raises:
         HTTPException: 404 if no agent with the given ID exists.
     """
-    async with db.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)) as cur:
-        row = await cur.fetchone()
+    result = await db.execute(select(agents).where(agents.c.id == agent_id))
+    row = result.mappings().first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
 
@@ -213,15 +213,11 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: DBDep) -> AgentResp
     }
 
     if updates:
-        set_clause = ", ".join(f"{col} = ?" for col in updates)
-        await db.execute(
-            f"UPDATE agents SET {set_clause} WHERE id = ?",  # noqa: S608
-            [*updates.values(), agent_id],
-        )
+        await db.execute(update(agents).where(agents.c.id == agent_id).values(**updates))
         await db.commit()
 
-    async with db.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)) as cur:
-        row = await cur.fetchone()
+    result = await db.execute(select(agents).where(agents.c.id == agent_id))
+    row = result.mappings().first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     return AgentResponse(**deserialise_agent_row(row))
@@ -238,8 +234,8 @@ async def delete_all(db: DBDep) -> None:
     Deletion order respects foreign-key constraints:
     messages → connections → rounds → trials → agents (cascades agent_files) → knowledge_files.
     """
-    for table in ("messages", "connections", "rounds", "trials", "agents", "knowledge_files"):
-        await db.execute(f"DELETE FROM {table}")  # noqa: S608
+    for table in (messages, connections, rounds, trials, agents, knowledge_files):
+        await db.execute(delete(table))
     await db.commit()
 
 
@@ -258,10 +254,10 @@ async def delete_agent(agent_id: str, db: DBDep) -> None:
     Raises:
         HTTPException: 404 if no agent with the given ID exists.
     """
-    async with db.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)) as cur:
-        if await cur.fetchone() is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
-    await db.execute("DELETE FROM agents WHERE id = ?", (agent_id,))
+    existing = await db.execute(select(agents.c.id).where(agents.c.id == agent_id))
+    if existing.first() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    await db.execute(delete(agents).where(agents.c.id == agent_id))
     await db.commit()
 
 
@@ -277,16 +273,16 @@ async def delete_agent(agent_id: str, db: DBDep) -> None:
     dependencies=[Depends(use_credentials)],
 )
 async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRunResponse:
-    async with db.execute("SELECT * FROM agents WHERE id = ?", (agent_id,)) as cur:
-        row = await cur.fetchone()
+    result = await db.execute(select(agents).where(agents.c.id == agent_id))
+    row = result.mappings().first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
 
     agent = deserialise_agent_row(row)
 
     tool_names: list[str] = agent["tools"] or []
-    file_names = await load_agent_file_names(db, agent_id)
-    system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, file_names)
+    files = await load_agent_files(db, agent_id)
+    system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, list(files))
 
     try:
         response, tools_used = await call_agent(
@@ -295,7 +291,7 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
             model=agent["model"],
             system_prompt=system_prompt,
             tool_names=tool_names or None,
-            tool_context={"db": db, "agent_id": agent_id},
+            tool_context={"files": files},
         )
     except MissingCredentialsError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
@@ -315,18 +311,17 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
     summary="List files attached to an agent",
 )
 async def list_agent_files(agent_id: str, db: DBDep) -> list[KnowledgeFileResponse]:
-    async with db.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)) as cur:
-        if await cur.fetchone() is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
-    async with db.execute(
-        """
-        SELECT kf.* FROM knowledge_files kf
-        JOIN agent_files af ON af.file_id = kf.id
-        WHERE af.agent_id = ?
-        """,
-        (agent_id,),
-    ) as cur:
-        rows = await cur.fetchall()
+    existing = await db.execute(select(agents.c.id).where(agents.c.id == agent_id))
+    if existing.first() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    result = await db.execute(
+        select(knowledge_files)
+        .select_from(
+            knowledge_files.join(agent_files, agent_files.c.file_id == knowledge_files.c.id)
+        )
+        .where(agent_files.c.agent_id == agent_id)
+    )
+    rows = result.mappings().all()
     return [KnowledgeFileResponse(**deserialise_knowledge_file_row(row)) for row in rows]
 
 
@@ -336,19 +331,24 @@ async def list_agent_files(agent_id: str, db: DBDep) -> list[KnowledgeFileRespon
     summary="Attach a file to an agent",
 )
 async def attach_file_to_agent(agent_id: str, file_id: str, db: DBDep) -> None:
-    async with db.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)) as cur:
-        if await cur.fetchone() is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
-    async with db.execute("SELECT id FROM knowledge_files WHERE id = ?", (file_id,)) as cur:
-        if await cur.fetchone() is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found."
-            )
-    await db.execute(
-        "INSERT OR IGNORE INTO agent_files (agent_id, file_id) VALUES (?, ?)",
-        (agent_id, file_id),
+    agent_exists = await db.execute(select(agents.c.id).where(agents.c.id == agent_id))
+    if agent_exists.first() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    file_exists = await db.execute(
+        select(knowledge_files.c.id).where(knowledge_files.c.id == file_id)
     )
-    await db.commit()
+    if file_exists.first() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found."
+        )
+    link_exists = await db.execute(
+        select(agent_files.c.agent_id).where(
+            agent_files.c.agent_id == agent_id, agent_files.c.file_id == file_id
+        )
+    )
+    if link_exists.first() is None:
+        await db.execute(insert(agent_files).values(agent_id=agent_id, file_id=file_id))
+        await db.commit()
 
 
 @router.delete(
@@ -357,11 +357,12 @@ async def attach_file_to_agent(agent_id: str, file_id: str, db: DBDep) -> None:
     summary="Detach a file from an agent",
 )
 async def detach_file_from_agent(agent_id: str, file_id: str, db: DBDep) -> None:
-    async with db.execute("SELECT id FROM agents WHERE id = ?", (agent_id,)) as cur:
-        if await cur.fetchone() is None:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    existing = await db.execute(select(agents.c.id).where(agents.c.id == agent_id))
+    if existing.first() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     await db.execute(
-        "DELETE FROM agent_files WHERE agent_id = ? AND file_id = ?",
-        (agent_id, file_id),
+        delete(agent_files).where(
+            agent_files.c.agent_id == agent_id, agent_files.c.file_id == file_id
+        )
     )
     await db.commit()

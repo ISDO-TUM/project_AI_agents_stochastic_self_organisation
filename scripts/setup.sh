@@ -27,7 +27,9 @@ if ! command -v pnpm &> /dev/null; then
 fi
 
 if [ ! -f .env ]; then
-    touch .env
+    # Seed the connection string for the bundled docker-compose Postgres so
+    # `docker compose up -d postgres` + `pnpm dev` works out of the box.
+    echo "DATABASE_URL=postgresql+asyncpg://app:app@localhost:5432/app" > .env
 fi
 
 pnpm install

@@ -5,15 +5,17 @@ from __future__ import annotations
 import uuid
 from typing import Annotated
 
-import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, status
+from sqlalchemy import delete, insert, select, update
+from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.db import deserialise_knowledge_file_row, get_db
+from server.db.tables import knowledge_files
 from server.schemas import KnowledgeFileCreate, KnowledgeFileResponse, KnowledgeFileUpdate
 
 router = APIRouter(prefix="/api/files", tags=["Knowledge Files"])
 
-DBDep = Annotated[aiosqlite.Connection, Depends(get_db)]
+DBDep = Annotated[AsyncConnection, Depends(get_db)]
 _PATCHABLE_COLUMNS: frozenset[str] = frozenset(KnowledgeFileUpdate.model_fields.keys())
 
 
@@ -27,12 +29,11 @@ _PATCHABLE_COLUMNS: frozenset[str] = frozenset(KnowledgeFileUpdate.model_fields.
 async def create_knowledge_file(body: KnowledgeFileCreate, db: DBDep) -> KnowledgeFileResponse:
     file_id = body.id or str(uuid.uuid4())
     await db.execute(
-        "INSERT INTO knowledge_files (id, name, content) VALUES (?, ?, ?)",
-        (file_id, body.name, body.content),
+        insert(knowledge_files).values(id=file_id, name=body.name, content=body.content)
     )
     await db.commit()
-    async with db.execute("SELECT * FROM knowledge_files WHERE id = ?", (file_id,)) as cur:
-        row = await cur.fetchone()
+    result = await db.execute(select(knowledge_files).where(knowledge_files.c.id == file_id))
+    row = result.mappings().first()
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found."
@@ -46,8 +47,8 @@ async def create_knowledge_file(body: KnowledgeFileCreate, db: DBDep) -> Knowled
     summary="List all knowledge files",
 )
 async def list_knowledge_files(db: DBDep) -> list[KnowledgeFileResponse]:
-    async with db.execute("SELECT * FROM knowledge_files") as cur:
-        rows = await cur.fetchall()
+    result = await db.execute(select(knowledge_files))
+    rows = result.mappings().all()
     return [KnowledgeFileResponse(**deserialise_knowledge_file_row(row)) for row in rows]
 
 
@@ -57,8 +58,8 @@ async def list_knowledge_files(db: DBDep) -> list[KnowledgeFileResponse]:
     summary="Get a knowledge file by ID",
 )
 async def get_knowledge_file(file_id: str, db: DBDep) -> KnowledgeFileResponse:
-    async with db.execute("SELECT * FROM knowledge_files WHERE id = ?", (file_id,)) as cur:
-        row = await cur.fetchone()
+    result = await db.execute(select(knowledge_files).where(knowledge_files.c.id == file_id))
+    row = result.mappings().first()
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found."
@@ -75,18 +76,19 @@ async def get_knowledge_file(file_id: str, db: DBDep) -> KnowledgeFileResponse:
 async def replace_knowledge_file(
     file_id: str, body: KnowledgeFileCreate, db: DBDep
 ) -> KnowledgeFileResponse:
-    async with db.execute("SELECT id FROM knowledge_files WHERE id = ?", (file_id,)) as cur:
-        if await cur.fetchone() is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found."
-            )
+    existing = await db.execute(select(knowledge_files.c.id).where(knowledge_files.c.id == file_id))
+    if existing.first() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found."
+        )
     await db.execute(
-        "UPDATE knowledge_files SET name = ?, content = ? WHERE id = ?",
-        (body.name, body.content, file_id),
+        update(knowledge_files)
+        .where(knowledge_files.c.id == file_id)
+        .values(name=body.name, content=body.content)
     )
     await db.commit()
-    async with db.execute("SELECT * FROM knowledge_files WHERE id = ?", (file_id,)) as cur:
-        row = await cur.fetchone()
+    result = await db.execute(select(knowledge_files).where(knowledge_files.c.id == file_id))
+    row = result.mappings().first()
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found."
@@ -103,8 +105,8 @@ async def replace_knowledge_file(
 async def update_knowledge_file(
     file_id: str, body: KnowledgeFileUpdate, db: DBDep
 ) -> KnowledgeFileResponse:
-    async with db.execute("SELECT * FROM knowledge_files WHERE id = ?", (file_id,)) as cur:
-        row = await cur.fetchone()
+    result = await db.execute(select(knowledge_files).where(knowledge_files.c.id == file_id))
+    row = result.mappings().first()
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found."
@@ -117,15 +119,13 @@ async def update_knowledge_file(
     }
 
     if updates:
-        set_clause = ", ".join(f"{col} = ?" for col in updates)
         await db.execute(
-            f"UPDATE knowledge_files SET {set_clause} WHERE id = ?",  # noqa: S608
-            [*updates.values(), file_id],
+            update(knowledge_files).where(knowledge_files.c.id == file_id).values(**updates)
         )
         await db.commit()
 
-    async with db.execute("SELECT * FROM knowledge_files WHERE id = ?", (file_id,)) as cur:
-        row = await cur.fetchone()
+    result = await db.execute(select(knowledge_files).where(knowledge_files.c.id == file_id))
+    row = result.mappings().first()
     if row is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found."
@@ -140,10 +140,10 @@ async def update_knowledge_file(
     description="Delete a knowledge file and all its agent associations.",
 )
 async def delete_knowledge_file(file_id: str, db: DBDep) -> None:
-    async with db.execute("SELECT id FROM knowledge_files WHERE id = ?", (file_id,)) as cur:
-        if await cur.fetchone() is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found."
-            )
-    await db.execute("DELETE FROM knowledge_files WHERE id = ?", (file_id,))
+    existing = await db.execute(select(knowledge_files.c.id).where(knowledge_files.c.id == file_id))
+    if existing.first() is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found."
+        )
+    await db.execute(delete(knowledge_files).where(knowledge_files.c.id == file_id))
     await db.commit()

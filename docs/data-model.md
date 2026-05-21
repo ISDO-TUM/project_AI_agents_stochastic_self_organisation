@@ -56,10 +56,10 @@ Messages are intentionally schema-free (`TEXT`) to stay flexible as the communic
 
 ## Design Decisions
 
-| Decision                                                   | Rationale                                                                                                  |
-| ---------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------- |
-| Connections are per-round, not per-agent                   | Enables topology changes (pruning/rewiring) across rounds while keeping full history                       |
-| `user_prompt` lives on `trial`                             | Trials are initiated by a user prompt; it is a first-class field, not metadata                             |
-| `tools` stored as JSON in `agents`                         | Avoids a tools junction table for what is effectively a configuration list                                 |
-| In-memory SQLite                                           | Sufficient for a research prototype; swap the connection string in `init_db` to use a file-backed database |
-| Auto-increment integer PKs for rounds/connections/messages | Provides implicit chronological ordering at no extra cost                                                  |
+| Decision                                                   | Rationale                                                                                                                                                                            |
+| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Connections are per-round, not per-agent                   | Enables topology changes (pruning/rewiring) across rounds while keeping full history                                                                                                 |
+| `user_prompt` lives on `trial`                             | Trials are initiated by a user prompt; it is a first-class field, not metadata                                                                                                       |
+| `tools` stored as JSON in `agents`                         | Avoids a tools junction table for what is effectively a configuration list                                                                                                           |
+| PostgreSQL via SQLAlchemy Core                             | Persistent storage (Postgres in production/Docker; the test suite points the same code at in-memory SQLite). Schema is defined once in `server/db/tables.py` and created on startup. |
+| Auto-increment integer PKs for rounds/connections/messages | Provides implicit chronological ordering at no extra cost                                                                                                                            |
