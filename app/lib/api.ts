@@ -12,7 +12,6 @@ import type {
   HistoryTrial,
   KnowledgeFile,
   Provider,
-  SimStep,
 } from "./types";
 
 // ─── Wire types ──────────────────────────────────────────────────────────────
@@ -223,46 +222,14 @@ export async function fetchModels(): Promise<ModelEntry[]> {
 
 // ─── Simulation run ───────────────────────────────────────────────────────────
 
-interface WireSimStep {
-  id: string;
-  ts: string;
-  label: string;
-  msg: string;
-  type: SimStep["type"];
-  target?: string | null;
-  node_id?: string | null;
-  from_id?: string | null;
-  to_id?: string | null;
-}
-
-function wireToSimStep(w: WireSimStep): SimStep {
-  return {
-    id: w.id,
-    ts: w.ts,
-    label: w.label,
-    msg: w.msg,
-    type: w.type,
-    ...(w.target != null && { target: w.target }),
-    ...(w.node_id != null && { nodeId: w.node_id }),
-    ...(w.from_id != null && { fromId: w.from_id }),
-    ...(w.to_id != null && { toId: w.to_id }),
-  };
-}
-
 export interface SimulationResult {
-  steps: SimStep[];
-  consensus: string | null;
-  consensusAgentId: string | null;
-  converged: boolean;
-  roundsUsed: number;
+  trialId: string;
+  status: string;
 }
 
 interface WireSimulationResponse {
-  steps: WireSimStep[];
-  consensus: string | null;
-  consensus_agent_id: string | null;
-  converged: boolean;
-  rounds_used: number;
+  trial_id: string;
+  status: string;
 }
 
 interface WireHistoryTrial {
@@ -270,7 +237,9 @@ interface WireHistoryTrial {
   user_prompt: string;
   description: string;
   mode: string | null;
+  status: string;
   created_at: string;
+  completed_at: string | null;
 }
 
 interface WireHistoryMessage {
@@ -296,7 +265,9 @@ function wireToHistoryTrial(w: WireHistoryTrial): HistoryTrial {
     userPrompt: w.user_prompt,
     description: w.description,
     mode: w.mode,
+    status: w.status,
     createdAt: w.created_at,
+    completedAt: w.completed_at,
   };
 }
 
@@ -339,11 +310,8 @@ export async function runSimulation(
     },
   );
   return {
-    steps: data.steps.map(wireToSimStep),
-    consensus: data.consensus,
-    consensusAgentId: data.consensus_agent_id,
-    converged: data.converged,
-    roundsUsed: data.rounds_used,
+    trialId: data.trial_id,
+    status: data.status,
   };
 }
 
@@ -354,17 +322,29 @@ export async function fetchHistoryTrials(): Promise<HistoryTrial[]> {
   return rows.map(wireToHistoryTrial);
 }
 
+export async function fetchHistoryTrial(
+  trialId: string,
+): Promise<HistoryTrial> {
+  const row = await request<WireHistoryTrial>(
+    "GET",
+    `/api/history/trials/${trialId}`,
+  );
+  return wireToHistoryTrial(row);
+}
+
 export async function fetchHistoryMessages(filters: {
   trialId?: string;
   roundId?: number;
   agentId?: string;
   messageType?: string;
+  afterId?: number;
 }): Promise<HistoryMessage[]> {
   const params = new URLSearchParams();
   if (filters.trialId) params.set("trial_id", filters.trialId);
   if (filters.roundId != null) params.set("round_id", String(filters.roundId));
   if (filters.agentId) params.set("agent_id", filters.agentId);
   if (filters.messageType) params.set("message_type", filters.messageType);
+  if (filters.afterId != null) params.set("after_id", String(filters.afterId));
   const suffix = params.toString() ? `?${params.toString()}` : "";
   const rows = await request<WireHistoryMessage[]>(
     "GET",

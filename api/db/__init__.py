@@ -35,7 +35,9 @@ CREATE TABLE IF NOT EXISTS trials (
     user_prompt TEXT NOT NULL,
     description TEXT NOT NULL,
     mode        TEXT,
-    created_at  TEXT NOT NULL
+    status      TEXT NOT NULL DEFAULT 'running',
+    created_at  TEXT NOT NULL,
+    completed_at TEXT
 );
 """
 
@@ -227,13 +229,32 @@ async def create_trial(
     trial_id = str(uuid.uuid4())
     await db.execute(
         """
-        INSERT INTO trials (id, user_prompt, description, mode, created_at)
-        VALUES (?, ?, ?, ?, ?)
+        INSERT INTO trials (id, user_prompt, description, mode, status, created_at)
+        VALUES (?, ?, ?, ?, ?, ?)
         """,
-        (trial_id, user_prompt, description, mode, _now_iso()),
+        (trial_id, user_prompt, description, mode, "running", _now_iso()),
     )
     await db.commit()
     return trial_id
+
+
+async def update_trial_status(
+    db: aiosqlite.Connection,
+    trial_id: str,
+    status: str,
+) -> None:
+    """Update a trial's execution status."""
+    completed_at = _now_iso() if status in {"completed", "failed"} else None
+    await db.execute(
+        """
+        UPDATE trials
+           SET status = ?,
+               completed_at = ?
+         WHERE id = ?
+        """,
+        (status, completed_at, trial_id),
+    )
+    await db.commit()
 
 
 async def create_round(

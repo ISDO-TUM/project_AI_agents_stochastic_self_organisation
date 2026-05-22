@@ -54,6 +54,7 @@ export interface SimStep {
   label: string;
   msg: string;
   type: SimStepType;
+  roundIndex?: number;
   target?: string;
   nodeId?: string;
   fromId?: string;
@@ -90,7 +91,9 @@ export interface HistoryTrial {
   userPrompt: string;
   description: string;
   mode: string | null;
+  status: string;
   createdAt: string;
+  completedAt: string | null;
 }
 
 export interface HistoryMessage {

@@ -36,7 +36,14 @@ function typeColor(
   type: SimStep["type"],
   dark: boolean,
   textDim: string,
+  roundIndex?: number,
 ): string {
+  if (roundIndex != null) {
+    const colors = dark
+      ? ["#C4374F", "#7A7ACC", "#4A9A6A", "#C98A35", "#9B72D9", "#4E9FBF"]
+      : ["#8B1A2F", "#4444AA", "#1A5A3A", "#9A5B05", "#6D3AB5", "#0F6F8E"];
+    return colors[(roundIndex - 1) % colors.length];
+  }
   switch (type) {
     case "system":
       return BURG;
@@ -188,7 +195,7 @@ export function LogWall({
           const isActive = idx === currentStep;
           const isPast = idx < currentStep;
           const isFuture = idx > currentStep;
-          const color = typeColor(step.type, dark, t.textDim);
+          const color = typeColor(step.type, dark, t.textDim, step.roundIndex);
           return (
             <div
               key={step.id}

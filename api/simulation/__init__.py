@@ -388,6 +388,7 @@ async def run_topology(
     rounds: int = 3,
     mode: ConsensusMode = "broadcast_no_consensus",
     agent_context: dict[str, str] | None = None,
+    trial_id: str | None = None,
 ) -> SimulationOutcome:
     """Run a topology simulation under the chosen consensus mode."""
     async with db.execute("SELECT * FROM agents") as cur:
@@ -398,7 +399,8 @@ async def run_topology(
         return SimulationOutcome()
 
     incoming = _build_incoming(agents)
-    trial_id = await create_trial(db, prompt, _trial_description(mode), mode)
+    if trial_id is None:
+        trial_id = await create_trial(db, prompt, _trial_description(mode), mode)
 
     if mode == "weighted_opinion_pooling":
         return await _run_weighted_opinion_pool(

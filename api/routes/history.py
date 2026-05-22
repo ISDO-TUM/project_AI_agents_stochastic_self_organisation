@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 
 import aiosqlite
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException, status
 
 from api.db import (
     deserialise_connection_row,
@@ -36,6 +36,15 @@ async def list_trials(db: DBDep) -> list[TrialResponse]:
     ) as cur:
         rows = await cur.fetchall()
     return [TrialResponse(**deserialise_trial_row(row)) for row in rows]
+
+
+@router.get("/trials/{trial_id}", response_model=TrialResponse)
+async def get_trial(trial_id: str, db: DBDep) -> TrialResponse:
+    async with db.execute("SELECT * FROM trials WHERE id = ?", (trial_id,)) as cur:
+        row = await cur.fetchone()
+    if row is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Trial not found.")
+    return TrialResponse(**deserialise_trial_row(row))
 
 
 @router.get("/trials/{trial_id}/rounds", response_model=list[RoundResponse])
@@ -75,6 +84,7 @@ async def list_messages(
     round_id: int | None = None,
     agent_id: str | None = None,
     message_type: str | None = None,
+    after_id: int | None = None,
 ) -> list[MessageTraceResponse]:
     async with db.execute(
         """
@@ -102,6 +112,7 @@ async def list_messages(
            AND (? IS NULL OR r.id = ?)
            AND (? IS NULL OR m.from_agent_id = ? OR m.to_agent_id = ?)
            AND (? IS NULL OR m.message_type = ?)
+           AND (? IS NULL OR m.id > ?)
          ORDER BY t.created_at DESC, r.round_index ASC, m.id ASC
         """,
         (
@@ -114,6 +125,8 @@ async def list_messages(
             agent_id,
             message_type,
             message_type,
+            after_id,
+            after_id,
         ),
     ) as cur:
         rows = await cur.fetchall()

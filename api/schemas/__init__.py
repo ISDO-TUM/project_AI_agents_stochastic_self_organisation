@@ -125,7 +125,9 @@ class TrialResponse(BaseModel):
     user_prompt: str
     description: str
     mode: str | None = None
+    status: str
     created_at: str
+    completed_at: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -515,3 +517,10 @@ class SimulationRunResponse(BaseModel):
         default=0,
         description="Number of discussion rounds actually executed.",
     )
+
+
+class SimulationStartResponse(BaseModel):
+    """Response returned immediately after a background simulation is scheduled."""
+
+    trial_id: str = Field(description="ID of the trial whose messages can be polled.")
+    status: str = Field(default="started", description="Background simulation status.")
