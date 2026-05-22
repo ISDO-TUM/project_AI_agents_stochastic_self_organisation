@@ -82,6 +82,31 @@ export interface CanvasState {
   edges: Edge[];
 }
 
+export interface HistoryTrial {
+  id: string;
+  userPrompt: string;
+  description: string;
+  mode: string | null;
+  createdAt: string;
+}
+
+export interface HistoryMessage {
+  id: number;
+  trialId: string;
+  trialDescription: string;
+  roundId: number;
+  roundIndex: number;
+  phase: string;
+  connectionId: number;
+  fromAgentId: string | null;
+  fromAgentName: string;
+  toAgentId: string;
+  toAgentName: string;
+  messageType: string;
+  message: string | null;
+  createdAt: string;
+}
+
 export type CanvasAction =
   | { type: "ADD_AGENT"; agent: Agent }
   | { type: "UPDATE_AGENT"; agent: Agent }

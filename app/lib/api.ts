@@ -8,6 +8,8 @@
 import type {
   Agent,
   ConsensusMode,
+  HistoryMessage,
+  HistoryTrial,
   KnowledgeFile,
   Provider,
   SimStep,
@@ -263,6 +265,60 @@ interface WireSimulationResponse {
   rounds_used: number;
 }
 
+interface WireHistoryTrial {
+  id: string;
+  user_prompt: string;
+  description: string;
+  mode: string | null;
+  created_at: string;
+}
+
+interface WireHistoryMessage {
+  id: number;
+  trial_id: string;
+  trial_description: string;
+  round_id: number;
+  round_index: number;
+  phase: string;
+  connection_id: number;
+  from_agent_id: string | null;
+  from_agent_name: string;
+  to_agent_id: string;
+  to_agent_name: string;
+  message_type: string;
+  message: string | null;
+  created_at: string;
+}
+
+function wireToHistoryTrial(w: WireHistoryTrial): HistoryTrial {
+  return {
+    id: w.id,
+    userPrompt: w.user_prompt,
+    description: w.description,
+    mode: w.mode,
+    createdAt: w.created_at,
+  };
+}
+
+function wireToHistoryMessage(w: WireHistoryMessage): HistoryMessage {
+  return {
+    id: w.id,
+    trialId: w.trial_id,
+    trialDescription: w.trial_description,
+    roundId: w.round_id,
+    roundIndex: w.round_index,
+    phase: w.phase,
+    connectionId: w.connection_id,
+    fromAgentId: w.from_agent_id,
+    fromAgentName: w.from_agent_name,
+    toAgentId: w.to_agent_id,
+    toAgentName: w.to_agent_name,
+    messageType: w.message_type,
+    message: w.message,
+    createdAt: w.created_at,
+  };
+}
+
 export async function runSimulation(
   prompt: string,
   options: {
@@ -289,4 +345,30 @@ export async function runSimulation(
     converged: data.converged,
     roundsUsed: data.rounds_used,
   };
+}
+
+// ─── History endpoints ───────────────────────────────────────────────────────
+
+export async function fetchHistoryTrials(): Promise<HistoryTrial[]> {
+  const rows = await request<WireHistoryTrial[]>("GET", "/api/history/trials");
+  return rows.map(wireToHistoryTrial);
+}
+
+export async function fetchHistoryMessages(filters: {
+  trialId?: string;
+  roundId?: number;
+  agentId?: string;
+  messageType?: string;
+}): Promise<HistoryMessage[]> {
+  const params = new URLSearchParams();
+  if (filters.trialId) params.set("trial_id", filters.trialId);
+  if (filters.roundId != null) params.set("round_id", String(filters.roundId));
+  if (filters.agentId) params.set("agent_id", filters.agentId);
+  if (filters.messageType) params.set("message_type", filters.messageType);
+  const suffix = params.toString() ? `?${params.toString()}` : "";
+  const rows = await request<WireHistoryMessage[]>(
+    "GET",
+    `/api/history/messages${suffix}`,
+  );
+  return rows.map(wireToHistoryMessage);
 }

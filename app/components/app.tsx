@@ -20,6 +20,7 @@ import {
 import { Canvas } from "@/components/canvas";
 import { LogWall } from "@/components/log-wall";
 import { Toolbar } from "@/components/toolbar";
+import { HistoryPage } from "@/components/history-page";
 import { PromptBar } from "@/components/prompt-bar";
 import { ContextMenu, ContextMenuItem } from "@/components/context-menu";
 import { TweaksPanel } from "@/components/tweaks-panel";
@@ -78,6 +79,7 @@ export function App() {
   const [logSidebarWidth, setLogSidebarWidth] = useState(290);
   const prevSidebarWidth = useRef(290);
   const [panAdjust, setPanAdjust] = useState({ dx: 0, seq: 0 });
+  const [view, setView] = useState<"canvas" | "history">("canvas");
 
   const handleSidebarWidthChange = useCallback((w: number) => {
     const delta = w - prevSidebarWidth.current;
@@ -358,6 +360,10 @@ export function App() {
   const t = getTheme(dark);
   const hasNodes = agents.length > 0 || sources.length > 0;
 
+  if (view === "history") {
+    return <HistoryPage onBack={() => setView("canvas")} />;
+  }
+
   return (
     <div
       style={{
@@ -436,6 +442,7 @@ export function App() {
           onAutoLayout={onAutoLayout}
           onExport={exportCanvas}
           onImport={importCanvas}
+          onOpenHistory={() => setView("history")}
           showTweaks={showTweaks}
           onToggleTweaks={onToggleTweaks}
         />

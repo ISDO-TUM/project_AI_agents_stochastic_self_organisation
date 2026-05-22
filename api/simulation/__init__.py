@@ -43,7 +43,14 @@ from typing import Any, Literal
 
 import aiosqlite
 
-from api.db import deserialise_agent_row, hint_files_in_prompt, load_agent_file_names
+from api.db import (
+    create_round,
+    create_trial,
+    deserialise_agent_row,
+    hint_files_in_prompt,
+    load_agent_file_names,
+    record_message,
+)
 from api.llm import call_agent
 from api.schemas import SimulationStep, ToolCall
 
@@ -276,6 +283,42 @@ def _build_incoming(agents: list[dict[str, Any]]) -> dict[str, list[str]]:
     return incoming
 
 
+def _trial_description(mode: ConsensusMode) -> str:
+    return f"{mode} run - {datetime.now().isoformat(timespec='seconds')}"
+
+
+async def _persist_system_broadcast(
+    db: aiosqlite.Connection,
+    trial_id: str,
+    agents: list[dict[str, Any]],
+    prompt: str,
+    phase: str,
+) -> int:
+    """Record the initial one-way SYSTEM prompt sent to every agent."""
+    round_id = int(await create_round(db, trial_id, 0, phase))
+    for agent in agents:
+        await record_message(db, round_id, None, str(agent["id"]), "system_broadcast", prompt)
+    return round_id
+
+
+async def _persist_agent_deliveries(
+    db: aiosqlite.Connection,
+    round_id: int,
+    deliveries: list[tuple[str | None, str, str]],
+    message_type: str,
+) -> None:
+    """Record directed agent-to-agent payloads delivered during a round."""
+    for from_agent_id, to_agent_id, message in deliveries:
+        await record_message(
+            db,
+            round_id,
+            from_agent_id,
+            to_agent_id,
+            message_type,
+            message,
+        )
+
+
 # ── outcome ───────────────────────────────────────────────────────────────────
 
 
@@ -307,12 +350,15 @@ async def run_topology(
         return SimulationOutcome()
 
     incoming = _build_incoming(agents)
+    trial_id = await create_trial(db, prompt, _trial_description(mode), mode)
 
     if mode == "weighted":
-        return await _run_weighted_pool(prompt, agents, incoming, db, rounds, agent_context)
+        return await _run_weighted_pool(
+            prompt, agents, incoming, db, rounds, agent_context, trial_id
+        )
     if mode == "voting":
-        return await _run_voting(prompt, agents, incoming, db, rounds, agent_context)
-    return await _run_broadcast(prompt, agents, incoming, db, rounds, agent_context)
+        return await _run_voting(prompt, agents, incoming, db, rounds, agent_context, trial_id)
+    return await _run_broadcast(prompt, agents, incoming, db, rounds, agent_context, trial_id)
 
 
 # ── mode 1: broadcast (no consensus) ──────────────────────────────────────────
@@ -325,6 +371,7 @@ async def _run_broadcast(
     db: aiosqlite.Connection,
     rounds: int,
     agent_context: dict[str, str] | None,
+    trial_id: str,
 ) -> SimulationOutcome:
     agent_by_id = {a["id"]: a for a in agents}
     steps: list[SimulationStep] = [
@@ -334,6 +381,7 @@ async def _run_broadcast(
             type="system",
         )
     ]
+    await _persist_system_broadcast(db, trial_id, agents, prompt, "broadcast")
 
     async def _broadcast(agent: dict[str, Any]) -> tuple[str, list[SimulationStep]]:
         try:
@@ -360,6 +408,7 @@ async def _run_broadcast(
         if not any(incoming.values()):
             break
         rounds_used = round_num
+        round_id = await create_round(db, trial_id, round_num, "discussion")
 
         steps.append(
             _step(
@@ -369,10 +418,12 @@ async def _run_broadcast(
             )
         )
 
-        async def _discuss(agent: dict[str, Any]) -> tuple[str | None, list[SimulationStep]]:
+        async def _discuss(
+            agent: dict[str, Any],
+        ) -> tuple[str | None, list[SimulationStep], list[tuple[str | None, str, str]]]:
             senders = [sid for sid in incoming[agent["id"]] if sid in responses]
             if not senders:
-                return None, []
+                return None, [], []
 
             context_lines = [f"- {agent_by_id[sid]['name']}: {responses[sid]}" for sid in senders]
             discussion_prompt = (
@@ -393,29 +444,40 @@ async def _run_broadcast(
                 )
                 for sid in senders
             ]
+            agent_id = str(agent["id"])
+            deliveries: list[tuple[str | None, str, str]] = [
+                (sid, agent_id, responses[sid]) for sid in senders
+            ]
 
             try:
                 response, tools_used = await _call_agent(agent, discussion_prompt, db)
             except Exception as exc:
                 err = f"[error: {exc}]"
-                return err, [
-                    *edge_steps,
-                    _step(label=agent["name"], msg=err, type="system", node_id=agent["id"]),
-                ]
+                return (
+                    err,
+                    [
+                        *edge_steps,
+                        _step(label=agent["name"], msg=err, type="system", node_id=agent["id"]),
+                    ],
+                    deliveries,
+                )
 
             reply_steps = _tool_steps(tools_used, agent["id"])
             reply_steps.append(
                 _step(label=agent["name"], msg=response, type="system", node_id=agent["id"])
             )
-            return response, [*edge_steps, *reply_steps]
+            return response, [*edge_steps, *reply_steps], deliveries
 
         results = await asyncio.gather(*[_discuss(a) for a in agents])
 
         new_responses: dict[str, str] = {}
-        for agent, (new_resp, new_steps) in zip(agents, results, strict=True):
+        persisted_deliveries: list[tuple[str | None, str, str]] = []
+        for agent, (new_resp, new_steps, deliveries) in zip(agents, results, strict=True):
+            persisted_deliveries.extend(deliveries)
             if new_resp is not None:
                 new_responses[agent["id"]] = new_resp
                 steps.extend(new_steps)
+        await _persist_agent_deliveries(db, round_id, persisted_deliveries, "agent_to_agent")
         responses.update(new_responses)
 
     steps.append(_step(label="SYSTEM", msg="Simulation complete.", type="system"))
@@ -436,6 +498,7 @@ async def _run_weighted_pool(
     db: aiosqlite.Connection,
     rounds: int,
     agent_context: dict[str, str] | None,
+    trial_id: str,
 ) -> SimulationOutcome:
     agent_by_id = {a["id"]: a for a in agents}
     steps: list[SimulationStep] = [
@@ -445,6 +508,7 @@ async def _run_weighted_pool(
             type="system",
         )
     ]
+    await _persist_system_broadcast(db, trial_id, agents, prompt, "weighted-broadcast")
 
     # Each agent's trust over its own neighbours, uniform at start.
     trust: dict[str, dict[str, float]] = {}
@@ -482,6 +546,7 @@ async def _run_weighted_pool(
         if not any(incoming.values()):
             break
         rounds_used = round_num
+        round_id = await create_round(db, trial_id, round_num, "weighted")
 
         steps.append(
             _step(
@@ -491,10 +556,12 @@ async def _run_weighted_pool(
             )
         )
 
-        async def _discuss(agent: dict[str, Any]) -> tuple[str | None, list[SimulationStep]]:
+        async def _discuss(
+            agent: dict[str, Any],
+        ) -> tuple[str | None, list[SimulationStep], list[tuple[str | None, str, str]]]:
             nbrs = [n for n in incoming[agent["id"]] if n in responses]
             if not nbrs:
-                return None, []
+                return None, [], []
 
             weights = trust[agent["id"]]
             context_lines = [
@@ -519,28 +586,41 @@ async def _run_weighted_pool(
                 )
                 for n in nbrs
             ]
+            agent_id = str(agent["id"])
+            deliveries: list[tuple[str | None, str, str]] = [
+                (n, agent_id, responses[n]) for n in nbrs
+            ]
 
             try:
                 resp, tools = await _call_agent(agent, discussion_prompt, db)
             except Exception as exc:
                 err = f"[error: {exc}]"
-                return err, [
-                    *edge_steps,
-                    _step(label=agent["name"], msg=err, type="system", node_id=agent["id"]),
-                ]
+                return (
+                    err,
+                    [
+                        *edge_steps,
+                        _step(label=agent["name"], msg=err, type="system", node_id=agent["id"]),
+                    ],
+                    deliveries,
+                )
 
             tool_s = _tool_steps(tools, agent["id"])
             tool_s.append(_step(label=agent["name"], msg=resp, type="system", node_id=agent["id"]))
-            return resp, [*edge_steps, *tool_s]
+            return resp, [*edge_steps, *tool_s], deliveries
 
         results = await asyncio.gather(*[_discuss(a) for a in agents])
 
         prev_responses = dict(responses)
         new_responses: dict[str, str] = {}
-        for agent, (new_resp, new_steps) in zip(agents, results, strict=True):
+        persisted_deliveries: list[tuple[str | None, str, str]] = []
+        for agent, (new_resp, new_steps, deliveries) in zip(agents, results, strict=True):
+            persisted_deliveries.extend(deliveries)
             if new_resp is not None:
                 new_responses[agent["id"]] = new_resp
                 steps.extend(new_steps)
+        await _persist_agent_deliveries(
+            db, round_id, persisted_deliveries, "weighted_agent_to_agent"
+        )
 
         # Trust update: increase weight on neighbours whose latest reply
         # agrees most (Jaccard) with the agent's own latest reply.
@@ -630,6 +710,7 @@ async def _run_voting(
     db: aiosqlite.Connection,
     rounds: int,
     agent_context: dict[str, str] | None,
+    trial_id: str,
 ) -> SimulationOutcome:
     agent_by_id = {a["id"]: a for a in agents}
     steps: list[SimulationStep] = [
@@ -639,6 +720,7 @@ async def _run_voting(
             type="system",
         )
     ]
+    await _persist_system_broadcast(db, trial_id, agents, prompt, "voting-broadcast")
 
     async def _broadcast(
         agent: dict[str, Any],
@@ -688,6 +770,7 @@ async def _run_voting(
 
     for round_num in range(1, rounds + 1):
         rounds_used = round_num
+        round_id = await create_round(db, trial_id, round_num, "voting")
         steps.append(_step(label="SYSTEM", msg=f"Voting round {round_num}.", type="system"))
         tally_msg = _format_tally(plurality, counts)
         reasons_msg = _format_vote_reasons(agents, votes, reasons)
@@ -696,7 +779,14 @@ async def _run_voting(
             agent: dict[str, Any],
             tally_msg: str = tally_msg,
             reasons_msg: str = reasons_msg,
-        ) -> tuple[str, str | None, str | None, list[SimulationStep]]:
+        ) -> tuple[
+            str,
+            str | None,
+            str | None,
+            list[SimulationStep],
+            list[tuple[str | None, str, str]],
+            str,
+        ]:
             nbrs = [n for n in incoming[agent["id"]] if n in responses]
             own_prev = responses.get(agent["id"], "")
 
@@ -734,6 +824,11 @@ async def _run_voting(
                     )
                     for n in nbrs
                 ]
+                agent_id = str(agent["id"])
+                deliveries: list[tuple[str | None, str, str]] = [
+                    (n, agent_id, responses[n]) for n in nbrs
+                ]
+                delivery_type = "voting_agent_to_agent"
                 full_prompt = (
                     f"Original question: {prompt}\n\n"
                     f"Your previous answer:\n{own_prev}\n\n"
@@ -749,6 +844,9 @@ async def _run_voting(
             else:
                 # Isolated agent: fall back to global tally so it isn't blind.
                 edge_steps = []
+                agent_id = str(agent["id"])
+                deliveries = [(None, agent_id, f"{tally_msg}\n\n{reasons_msg}")]
+                delivery_type = "voting_tally"
                 full_prompt = (
                     f"Original question: {prompt}\n\n"
                     f"Your previous answer:\n{own_prev}\n\n"
@@ -773,20 +871,28 @@ async def _run_voting(
                         *edge_steps,
                         _step(label=agent["name"], msg=err, type="system", node_id=agent["id"]),
                     ],
+                    deliveries,
+                    delivery_type,
                 )
             v = _extract_vote(resp)
             r = _extract_reason(resp)
             tool_s = _tool_steps(tools, agent["id"])
             tool_s.append(_step(label=agent["name"], msg=resp, type="system", node_id=agent["id"]))
-            return resp, v, r, [*edge_steps, *tool_s]
+            return resp, v, r, [*edge_steps, *tool_s], deliveries, delivery_type
 
         results = await asyncio.gather(*[_discuss(a) for a in agents])
 
-        for agent, (resp, vote, reason, agent_steps) in zip(agents, results, strict=True):
+        deliveries_by_type: dict[str, list[tuple[str | None, str, str]]] = {}
+        for agent, (resp, vote, reason, agent_steps, deliveries, delivery_type) in zip(
+            agents, results, strict=True
+        ):
+            deliveries_by_type.setdefault(delivery_type, []).extend(deliveries)
             responses[agent["id"]] = resp
             votes[agent["id"]] = vote
             reasons[agent["id"]] = reason
             steps.extend(agent_steps)
+        for delivery_type, deliveries in deliveries_by_type.items():
+            await _persist_agent_deliveries(db, round_id, deliveries, delivery_type)
 
         plurality, counts = _tally(votes)
         steps.append(_step(label="TALLY", msg=_format_tally(plurality, counts), type="system"))

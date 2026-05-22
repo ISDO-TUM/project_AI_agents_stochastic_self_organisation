@@ -124,6 +124,8 @@ class TrialResponse(BaseModel):
     id: str
     user_prompt: str
     description: str
+    mode: str | None = None
+    created_at: str
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +142,9 @@ class RoundResponse(BaseModel):
 
     id: int
     trial_id: str
+    round_index: int
+    phase: str
+    created_at: str
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +168,7 @@ class ConnectionResponse(BaseModel):
 
     id: int
     round_id: int
-    from_agent_id: str
+    from_agent_id: str | None
     to_agent_id: str
 
 
@@ -189,7 +194,31 @@ class MessageResponse(BaseModel):
 
     id: int
     connection_id: int
+    round_id: int
+    from_agent_id: str | None
+    to_agent_id: str
+    message_type: str
     message: str | None
+    created_at: str
+
+
+class MessageTraceResponse(BaseModel):
+    """Joined message trace row returned by history query endpoints."""
+
+    id: int
+    trial_id: str
+    trial_description: str
+    round_id: int
+    round_index: int
+    phase: str
+    connection_id: int
+    from_agent_id: str | None
+    from_agent_name: str
+    to_agent_id: str
+    to_agent_name: str
+    message_type: str
+    message: str | None
+    created_at: str
 
 
 # ---------------------------------------------------------------------------

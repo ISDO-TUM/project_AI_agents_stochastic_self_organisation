@@ -9,7 +9,9 @@ closed at shutdown via :func:`close_db`.
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import AsyncGenerator
+from datetime import datetime
 from typing import Any
 
 import aiosqlite
@@ -31,16 +33,22 @@ _CREATE_TRIALS_TABLE = """
 CREATE TABLE IF NOT EXISTS trials (
     id          TEXT PRIMARY KEY,
     user_prompt TEXT NOT NULL,
-    description TEXT NOT NULL
+    description TEXT NOT NULL,
+    mode        TEXT,
+    created_at  TEXT NOT NULL
 );
 """
 
 _CREATE_ROUNDS_TABLE = """
 CREATE TABLE IF NOT EXISTS rounds (
-    id       INTEGER PRIMARY KEY AUTOINCREMENT,
-    trial_id TEXT NOT NULL,
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    trial_id    TEXT NOT NULL,
+    round_index INTEGER NOT NULL,
+    phase       TEXT NOT NULL,
+    created_at  TEXT NOT NULL,
 
-    FOREIGN KEY (trial_id) REFERENCES trials(id)
+    FOREIGN KEY (trial_id) REFERENCES trials(id) ON DELETE CASCADE,
+    UNIQUE (trial_id, round_index, phase)
 );
 """
 
@@ -48,12 +56,12 @@ _CREATE_CONNECTIONS_TABLE = """
 CREATE TABLE IF NOT EXISTS connections (
     id            INTEGER PRIMARY KEY,
     round_id      INTEGER NOT NULL,
-    from_agent_id TEXT NOT NULL,
+    from_agent_id TEXT,
     to_agent_id   TEXT NOT NULL,
 
-    FOREIGN KEY (round_id)      REFERENCES rounds(id),
-    FOREIGN KEY (from_agent_id) REFERENCES agents(id),
-    FOREIGN KEY (to_agent_id)   REFERENCES agents(id),
+    FOREIGN KEY (round_id)      REFERENCES rounds(id)  ON DELETE CASCADE,
+    FOREIGN KEY (from_agent_id) REFERENCES agents(id)  ON DELETE CASCADE,
+    FOREIGN KEY (to_agent_id)   REFERENCES agents(id)  ON DELETE CASCADE,
 
     UNIQUE (round_id, from_agent_id, to_agent_id)
 );
@@ -63,9 +71,17 @@ _CREATE_MESSAGES_TABLE = """
 CREATE TABLE IF NOT EXISTS messages (
     id            INTEGER PRIMARY KEY,
     connection_id INTEGER NOT NULL,
+    round_id      INTEGER NOT NULL,
+    from_agent_id TEXT,
+    to_agent_id   TEXT NOT NULL,
+    message_type  TEXT NOT NULL,
     message       TEXT,
+    created_at    TEXT NOT NULL,
 
-    FOREIGN KEY (connection_id) REFERENCES connections(id)
+    FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE,
+    FOREIGN KEY (round_id)      REFERENCES rounds(id)      ON DELETE CASCADE,
+    FOREIGN KEY (from_agent_id) REFERENCES agents(id)      ON DELETE CASCADE,
+    FOREIGN KEY (to_agent_id)   REFERENCES agents(id)      ON DELETE CASCADE
 );
 """
 
@@ -86,6 +102,10 @@ CREATE TABLE IF NOT EXISTS agent_files (
 """
 
 _db: aiosqlite.Connection | None = None
+
+
+def _now_iso() -> str:
+    return datetime.now().isoformat(timespec="seconds")
 
 
 async def init_db() -> None:
@@ -195,6 +215,143 @@ def deserialise_message_row(row: aiosqlite.Row) -> dict[str, Any]:
         A plain dict representation of the row.
     """
     return dict(row)
+
+
+async def create_trial(
+    db: aiosqlite.Connection,
+    user_prompt: str,
+    description: str,
+    mode: str,
+) -> str:
+    """Create a trial row for one simulation run and return its id."""
+    trial_id = str(uuid.uuid4())
+    await db.execute(
+        """
+        INSERT INTO trials (id, user_prompt, description, mode, created_at)
+        VALUES (?, ?, ?, ?, ?)
+        """,
+        (trial_id, user_prompt, description, mode, _now_iso()),
+    )
+    await db.commit()
+    return trial_id
+
+
+async def create_round(
+    db: aiosqlite.Connection,
+    trial_id: str,
+    round_index: int,
+    phase: str,
+) -> int:
+    """Create a round row scoped to a trial and return its id."""
+    cur = await db.execute(
+        """
+        INSERT INTO rounds (trial_id, round_index, phase, created_at)
+        VALUES (?, ?, ?, ?)
+        """,
+        (trial_id, round_index, phase, _now_iso()),
+    )
+    await db.commit()
+    if cur.lastrowid is None:
+        raise RuntimeError("Failed to create simulation round.")
+    return int(cur.lastrowid)
+
+
+async def create_connection(
+    db: aiosqlite.Connection,
+    round_id: int,
+    from_agent_id: str | None,
+    to_agent_id: str,
+) -> int:
+    """Create a directed connection row and return its id.
+
+    ``from_agent_id`` is nullable so broadcast prompts can be represented as a
+    synthetic SYSTEM sender without requiring a real agent row.
+    """
+    cur = await db.execute(
+        """
+        INSERT OR IGNORE INTO connections (round_id, from_agent_id, to_agent_id)
+        VALUES (?, ?, ?)
+        """,
+        (round_id, from_agent_id, to_agent_id),
+    )
+    if cur.rowcount and cur.lastrowid:
+        await db.commit()
+        return int(cur.lastrowid)
+
+    async with db.execute(
+        """
+        SELECT id
+          FROM connections
+         WHERE round_id = ?
+           AND from_agent_id IS ?
+           AND to_agent_id = ?
+        """,
+        (round_id, from_agent_id, to_agent_id),
+    ) as select_cur:
+        row = await select_cur.fetchone()
+    if row is None:
+        raise RuntimeError("Failed to create or load simulation connection.")
+    return int(row["id"])
+
+
+async def create_message(
+    db: aiosqlite.Connection,
+    connection_id: int,
+    round_id: int,
+    from_agent_id: str | None,
+    to_agent_id: str,
+    message_type: str,
+    message: str | None,
+) -> int:
+    """Create a message row with duplicated routing metadata for easy queries."""
+    cur = await db.execute(
+        """
+        INSERT INTO messages (
+            connection_id,
+            round_id,
+            from_agent_id,
+            to_agent_id,
+            message_type,
+            message,
+            created_at
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        (
+            connection_id,
+            round_id,
+            from_agent_id,
+            to_agent_id,
+            message_type,
+            message,
+            _now_iso(),
+        ),
+    )
+    await db.commit()
+    if cur.lastrowid is None:
+        raise RuntimeError("Failed to create simulation message.")
+    return int(cur.lastrowid)
+
+
+async def record_message(
+    db: aiosqlite.Connection,
+    round_id: int,
+    from_agent_id: str | None,
+    to_agent_id: str,
+    message_type: str,
+    message: str | None,
+) -> int:
+    """Create the directed connection if needed, then store a message on it."""
+    connection_id = await create_connection(db, round_id, from_agent_id, to_agent_id)
+    return await create_message(
+        db,
+        connection_id,
+        round_id,
+        from_agent_id,
+        to_agent_id,
+        message_type,
+        message,
+    )
 
 
 def deserialise_knowledge_file_row(row: aiosqlite.Row) -> dict[str, Any]:

@@ -15,6 +15,7 @@ interface ToolbarProps {
   onAutoLayout: () => void;
   onExport: () => void;
   onImport: (raw: string) => void;
+  onOpenHistory: () => void;
   showTweaks: boolean;
   onToggleTweaks: () => void;
 }
@@ -182,6 +183,7 @@ export function Toolbar({
   onAutoLayout,
   onExport,
   onImport,
+  onOpenHistory,
   showTweaks,
   onToggleTweaks,
 }: ToolbarProps) {
@@ -297,6 +299,14 @@ export function Toolbar({
                 e.target.value = "";
               }}
             />
+            <TBtn
+              onClick={onOpenHistory}
+              icon="Database"
+              title="Simulation history"
+              t={t}
+            >
+              History
+            </TBtn>
             <Sep t={t} />
             <TBtn
               onClick={onToggleTweaks}
