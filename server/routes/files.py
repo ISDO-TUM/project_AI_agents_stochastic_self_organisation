@@ -20,7 +20,7 @@ _PATCHABLE_COLUMNS: frozenset[str] = frozenset(KnowledgeFileUpdate.model_fields.
 
 
 @router.post(
-    "/",
+    "",
     response_model=KnowledgeFileResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new knowledge file",
@@ -42,7 +42,7 @@ async def create_knowledge_file(body: KnowledgeFileCreate, db: DBDep) -> Knowled
 
 
 @router.get(
-    "/",
+    "",
     response_model=list[KnowledgeFileResponse],
     summary="List all knowledge files",
 )

@@ -9,7 +9,7 @@ _FILE_PAYLOAD = {
 
 
 async def test_create_knowledge_file(client: AsyncClient) -> None:
-    response = await client.post("/api/files/", json=_FILE_PAYLOAD)
+    response = await client.post("/api/files", json=_FILE_PAYLOAD)
     assert response.status_code == 201
     data = response.json()
     assert data["name"] == _FILE_PAYLOAD["name"]
@@ -18,16 +18,16 @@ async def test_create_knowledge_file(client: AsyncClient) -> None:
 
 
 async def test_list_knowledge_files(client: AsyncClient) -> None:
-    await client.post("/api/files/", json=_FILE_PAYLOAD)
-    await client.post("/api/files/", json={**_FILE_PAYLOAD, "name": "faq.txt"})
+    await client.post("/api/files", json=_FILE_PAYLOAD)
+    await client.post("/api/files", json={**_FILE_PAYLOAD, "name": "faq.txt"})
 
-    response = await client.get("/api/files/")
+    response = await client.get("/api/files")
     assert response.status_code == 200
     assert len(response.json()) == 2
 
 
 async def test_get_knowledge_file(client: AsyncClient) -> None:
-    created = (await client.post("/api/files/", json=_FILE_PAYLOAD)).json()
+    created = (await client.post("/api/files", json=_FILE_PAYLOAD)).json()
     response = await client.get(f"/api/files/{created['id']}")
     assert response.status_code == 200
     assert response.json()["id"] == created["id"]
@@ -39,7 +39,7 @@ async def test_get_knowledge_file_not_found(client: AsyncClient) -> None:
 
 
 async def test_replace_knowledge_file(client: AsyncClient) -> None:
-    created = (await client.post("/api/files/", json=_FILE_PAYLOAD)).json()
+    created = (await client.post("/api/files", json=_FILE_PAYLOAD)).json()
     updated_payload = {"name": "updated.txt", "content": "Updated content."}
 
     response = await client.put(f"/api/files/{created['id']}", json=updated_payload)
@@ -56,7 +56,7 @@ async def test_replace_knowledge_file_not_found(client: AsyncClient) -> None:
 
 
 async def test_patch_knowledge_file_name(client: AsyncClient) -> None:
-    created = (await client.post("/api/files/", json=_FILE_PAYLOAD)).json()
+    created = (await client.post("/api/files", json=_FILE_PAYLOAD)).json()
     response = await client.patch(
         f"/api/files/{created['id']}",
         json={"name": "patched_name.txt"},
@@ -68,7 +68,7 @@ async def test_patch_knowledge_file_name(client: AsyncClient) -> None:
 
 
 async def test_patch_knowledge_file_content(client: AsyncClient) -> None:
-    created = (await client.post("/api/files/", json=_FILE_PAYLOAD)).json()
+    created = (await client.post("/api/files", json=_FILE_PAYLOAD)).json()
     response = await client.patch(
         f"/api/files/{created['id']}",
         json={"content": "Patched content."},
@@ -85,7 +85,7 @@ async def test_patch_knowledge_file_not_found(client: AsyncClient) -> None:
 
 
 async def test_delete_knowledge_file(client: AsyncClient) -> None:
-    created = (await client.post("/api/files/", json=_FILE_PAYLOAD)).json()
+    created = (await client.post("/api/files", json=_FILE_PAYLOAD)).json()
     response = await client.delete(f"/api/files/{created['id']}")
     assert response.status_code == 204
 
@@ -99,5 +99,5 @@ async def test_delete_knowledge_file_not_found(client: AsyncClient) -> None:
 
 
 async def test_create_knowledge_file_missing_fields(client: AsyncClient) -> None:
-    response = await client.post("/api/files/", json={"name": "incomplete.txt"})
+    response = await client.post("/api/files", json={"name": "incomplete.txt"})
     assert response.status_code == 422

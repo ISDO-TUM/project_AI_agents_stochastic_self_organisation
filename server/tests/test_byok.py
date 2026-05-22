@@ -56,7 +56,7 @@ def _capturing_openai_ctor(
 
 
 async def _create_openai_agent(client: AsyncClient) -> str:
-    resp = await client.post("/api/agents/", json=_OPENAI_AGENT)
+    resp = await client.post("/api/agents", json=_OPENAI_AGENT)
     assert resp.status_code == 201, resp.text
     return str(resp.json()["id"])
 

@@ -103,7 +103,7 @@ async function request<T>(
 export async function fetchAgents(
   positionMap?: Record<string, { x: number; y: number }>,
 ): Promise<Agent[]> {
-  const list = await request<AgentOut[]>("GET", "/api/agents/");
+  const list = await request<AgentOut[]>("GET", "/api/agents");
   return list.map((a, i) =>
     fromWire(
       a,
@@ -121,7 +121,7 @@ export async function createAgent(
 ): Promise<Agent> {
   const payload: AgentCreatePayload = toWire(agent);
   if (options.preserveId) payload.id = agent.id;
-  const out = await request<AgentOut>("POST", "/api/agents/", payload);
+  const out = await request<AgentOut>("POST", "/api/agents", payload);
   return fromWire(out, agent.position);
 }
 
@@ -139,7 +139,7 @@ export async function deleteAgentApi(id: string): Promise<void> {
 }
 
 export async function clearAll(): Promise<void> {
-  await request<void>("DELETE", "/api/agents/");
+  await request<void>("DELETE", "/api/agents");
 }
 
 export async function patchAgentTools(
@@ -152,7 +152,7 @@ export async function patchAgentTools(
 // ─── Knowledge File endpoints ─────────────────────────────────────────────────
 
 export async function fetchFiles(): Promise<KnowledgeFile[]> {
-  return request<KnowledgeFile[]>("GET", "/api/files/");
+  return request<KnowledgeFile[]>("GET", "/api/files");
 }
 
 export async function createFile(
@@ -160,7 +160,7 @@ export async function createFile(
   content: string,
   id?: string,
 ): Promise<KnowledgeFile> {
-  return request<KnowledgeFile>("POST", "/api/files/", { name, content, id });
+  return request<KnowledgeFile>("POST", "/api/files", { name, content, id });
 }
 
 export async function updateFileContent(

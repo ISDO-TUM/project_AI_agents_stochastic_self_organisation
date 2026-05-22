@@ -14,7 +14,7 @@ _AGENT_PAYLOAD = {
 
 
 async def test_create_agent(client: AsyncClient) -> None:
-    response = await client.post("/api/agents/", json=_AGENT_PAYLOAD)
+    response = await client.post("/api/agents", json=_AGENT_PAYLOAD)
     assert response.status_code == 201
     data = response.json()
     assert data["name"] == "SalesBot"
@@ -23,16 +23,16 @@ async def test_create_agent(client: AsyncClient) -> None:
 
 
 async def test_list_agents(client: AsyncClient) -> None:
-    await client.post("/api/agents/", json=_AGENT_PAYLOAD)
-    await client.post("/api/agents/", json={**_AGENT_PAYLOAD, "name": "SupportBot"})
+    await client.post("/api/agents", json=_AGENT_PAYLOAD)
+    await client.post("/api/agents", json={**_AGENT_PAYLOAD, "name": "SupportBot"})
 
-    response = await client.get("/api/agents/")
+    response = await client.get("/api/agents")
     assert response.status_code == 200
     assert len(response.json()) == 2
 
 
 async def test_get_agent(client: AsyncClient) -> None:
-    created = (await client.post("/api/agents/", json=_AGENT_PAYLOAD)).json()
+    created = (await client.post("/api/agents", json=_AGENT_PAYLOAD)).json()
     response = await client.get(f"/api/agents/{created['id']}")
     assert response.status_code == 200
     assert response.json()["id"] == created["id"]
@@ -44,7 +44,7 @@ async def test_get_agent_not_found(client: AsyncClient) -> None:
 
 
 async def test_replace_agent(client: AsyncClient) -> None:
-    created = (await client.post("/api/agents/", json=_AGENT_PAYLOAD)).json()
+    created = (await client.post("/api/agents", json=_AGENT_PAYLOAD)).json()
     updated_payload = {**_AGENT_PAYLOAD, "name": "UpdatedBot", "model": "gpt-4o-mini"}
 
     response = await client.put(f"/api/agents/{created['id']}", json=updated_payload)
@@ -60,7 +60,7 @@ async def test_replace_agent_not_found(client: AsyncClient) -> None:
 
 
 async def test_patch_agent(client: AsyncClient) -> None:
-    created = (await client.post("/api/agents/", json=_AGENT_PAYLOAD)).json()
+    created = (await client.post("/api/agents", json=_AGENT_PAYLOAD)).json()
     response = await client.patch(
         f"/api/agents/{created['id']}",
         json={"name": "PatchedBot", "tools": ["new-tool"]},
@@ -78,7 +78,7 @@ async def test_patch_agent_not_found(client: AsyncClient) -> None:
 
 
 async def test_delete_agent(client: AsyncClient) -> None:
-    created = (await client.post("/api/agents/", json=_AGENT_PAYLOAD)).json()
+    created = (await client.post("/api/agents", json=_AGENT_PAYLOAD)).json()
     response = await client.delete(f"/api/agents/{created['id']}")
     assert response.status_code == 204
 
@@ -93,5 +93,5 @@ async def test_delete_agent_not_found(client: AsyncClient) -> None:
 
 async def test_create_agent_invalid_provider(client: AsyncClient) -> None:
     payload = {**_AGENT_PAYLOAD, "provider": "google"}
-    response = await client.post("/api/agents/", json=payload)
+    response = await client.post("/api/agents", json=payload)
     assert response.status_code == 422

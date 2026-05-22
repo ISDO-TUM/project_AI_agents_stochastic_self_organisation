@@ -47,7 +47,7 @@ _PATCHABLE_COLUMNS: frozenset[str] = frozenset(AgentUpdate.model_fields.keys())
 
 
 @router.post(
-    "/",
+    "",
     response_model=AgentResponse,
     status_code=status.HTTP_201_CREATED,
     summary="Create a new agent",
@@ -94,7 +94,7 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
 
 
 @router.get(
-    "/",
+    "",
     response_model=list[AgentResponse],
     summary="List all agents",
 )
@@ -224,7 +224,7 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: DBDep) -> AgentResp
 
 
 @router.delete(
-    "/",
+    "",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete all agents, knowledge files, and simulation history",
 )
