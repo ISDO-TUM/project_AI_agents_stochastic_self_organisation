@@ -1,0 +1,32 @@
+name: _Quality — Server
+
+on:
+  workflow_call:
+
+jobs:
+  quality:
+    name: Lint & Test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+          cache-dependency-glob: "server/requirements-dev.txt"
+
+      - name: Install Python dependencies
+        run: cd server && uv venv && uv pip install -r requirements-dev.txt
+
+      - name: Cache pre-commit environments
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pre-commit
+          key: pre-commit-${{ runner.os }}-${{ hashFiles('.pre-commit-config.yaml') }}
+          restore-keys: pre-commit-${{ runner.os }}-
+
+      - name: Lint (pre-commit)
+        run: cd server && uv run pre-commit run --all-files
+
+      - name: Test (pytest)
+        run: cd server && uv run pytest --cov=server --cov-report=term-missing

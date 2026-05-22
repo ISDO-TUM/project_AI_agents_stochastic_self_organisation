@@ -1,9 +1,12 @@
-name: Deploy to Railway
+name: _Deploy — Railway
 
 on:
-  push:
-    branches: [main, feat/59-deployment]
-  workflow_dispatch:
+  workflow_call:
+    secrets:
+      RAILWAY_TOKEN:
+        required: true
+      RAILWAY_PROJECT_ID:
+        required: true
 
 jobs:
   deploy-server:
