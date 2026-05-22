@@ -1,4 +1,4 @@
-name: _Quality — Server
+name: Quality Checks - Server
 
 on:
   workflow_call:

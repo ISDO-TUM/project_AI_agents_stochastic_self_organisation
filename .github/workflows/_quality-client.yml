@@ -1,4 +1,4 @@
-name: _Quality — Client
+name: Quality Checks - Client
 
 on:
   workflow_call:

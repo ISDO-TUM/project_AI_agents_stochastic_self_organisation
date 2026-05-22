@@ -76,18 +76,6 @@ export function AgentPanel({
     return map;
   }, [availableModels]);
 
-  useEffect(() => {
-    if (!availableModels.length) return;
-    setForm((f) => {
-      const providerModels = providers[f.provider]?.models ?? [];
-      const isValid = providerModels.some((m) => m.value === f.model);
-      if (!isValid && providerModels.length > 0) {
-        return { ...f, model: providerModels[0].value };
-      }
-      return f;
-    });
-  }, [availableModels, providers]);
-
   const [form, setForm] = useState<AgentForm>(
     agent
       ? {
@@ -102,6 +90,19 @@ export function AgentPanel({
       : defaultForm(),
   );
   const [connIn, setConnIn] = useState("");
+
+  useEffect(() => {
+    if (!availableModels.length) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setForm((f) => {
+      const providerModels = providers[f.provider]?.models ?? [];
+      const isValid = providerModels.some((m) => m.value === f.model);
+      if (!isValid && providerModels.length > 0) {
+        return { ...f, model: providerModels[0].value };
+      }
+      return f;
+    });
+  }, [availableModels, providers]);
 
   const set = <K extends keyof AgentForm>(k: K, v: AgentForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));

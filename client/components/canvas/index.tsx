@@ -79,6 +79,7 @@ export function Canvas({
   // so listing it as the dependency is both correct and exhaustive.
   useEffect(() => {
     if (!panAdjust || panAdjust.dx === 0) return;
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setPan((p) => ({ ...p, x: p.x + panAdjust.dx }));
   }, [panAdjust]);
   const handleWheel = useCallback((e: WheelEvent) => {

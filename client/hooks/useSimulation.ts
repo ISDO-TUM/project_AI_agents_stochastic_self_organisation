@@ -36,6 +36,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     const s = steps[cur];
     if (!s) return;
     if (s.nodeId) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setActNode(s.nodeId);
       setActEdge(null);
     } else if (s.fromId && s.toId) {
