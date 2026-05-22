@@ -31,8 +31,6 @@ _PROVIDER_ENV: dict[str, tuple[str, str]] = {
     "gemini": ("GEMINI_API_KEY", "GEMINI_BASE_URL"),
 }
 
-PROVIDERS: tuple[str, ...] = tuple(_PROVIDER_ENV)
-
 
 class MissingCredentialsError(Exception):
     """Raised when no API key is available for a provider (header or env)."""
