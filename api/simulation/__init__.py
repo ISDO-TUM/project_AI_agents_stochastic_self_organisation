@@ -319,9 +319,10 @@ async def _persist_system_broadcast(
     agents: list[dict[str, Any]],
     prompt: str,
     phase: str,
+    round_index: int = 1,
 ) -> int:
     """Record the initial one-way SYSTEM prompt sent to every agent."""
-    round_id = int(await create_round(db, trial_id, 1, phase))
+    round_id = int(await create_round(db, trial_id, round_index, phase))
     for agent in agents:
         await record_message(db, round_id, None, str(agent["id"]), "system_broadcast", prompt)
     return round_id
@@ -354,6 +355,16 @@ async def _persist_self_messages(
     """Record actions and outputs as messages sent from an agent to itself."""
     for message_type, message in messages:
         await record_message(db, round_id, agent_id, agent_id, message_type, message)
+
+
+async def _create_self_message_round(
+    db: aiosqlite.Connection,
+    trial_id: str,
+    round_index: int,
+    phase: str,
+) -> int:
+    """Create a persisted round for agent self-addressed action/output messages."""
+    return int(await create_round(db, trial_id, round_index, phase))
 
 
 # ── outcome ───────────────────────────────────────────────────────────────────
@@ -420,8 +431,9 @@ async def _run_broadcast_no_consensus(
             type="system",
         )
     ]
-    broadcast_round_id = await _persist_system_broadcast(
-        db, trial_id, agents, prompt, "broadcast_no_consensus"
+    await _persist_system_broadcast(db, trial_id, agents, prompt, "broadcast_no_consensus")
+    broadcast_output_round_id = await _create_self_message_round(
+        db, trial_id, 2, "broadcast_no_consensus_outputs"
     )
 
     async def _broadcast(
@@ -451,14 +463,14 @@ async def _run_broadcast_no_consensus(
         agent_id = str(agent["id"])
         responses[agent_id] = response
         steps.extend(agent_steps)
-        await _persist_self_messages(db, broadcast_round_id, agent_id, self_messages)
+        await _persist_self_messages(db, broadcast_output_round_id, agent_id, self_messages)
 
     rounds_used = 0
     for round_num in range(1, rounds + 1):
         if not any(incoming.values()):
             break
         rounds_used = round_num
-        round_id = await create_round(db, trial_id, round_num + 1, "discussion")
+        round_id = await create_round(db, trial_id, round_num + 2, "discussion")
 
         steps.append(
             _step(
@@ -564,12 +576,15 @@ async def _run_weighted_opinion_pool(
             type="system",
         )
     ]
-    broadcast_round_id = await _persist_system_broadcast(
+    await _persist_system_broadcast(
         db,
         trial_id,
         agents,
         prompt,
         "weighted_opinion_pooling_broadcast",
+    )
+    broadcast_output_round_id = await _create_self_message_round(
+        db, trial_id, 2, "weighted_opinion_pooling_broadcast_outputs"
     )
 
     # Each agent's trust over its own neighbours, uniform at start.
@@ -605,7 +620,7 @@ async def _run_weighted_opinion_pool(
         agent_id = str(agent["id"])
         responses[agent_id] = resp
         steps.extend(agent_steps)
-        await _persist_self_messages(db, broadcast_round_id, agent_id, self_messages)
+        await _persist_self_messages(db, broadcast_output_round_id, agent_id, self_messages)
 
     # Snapshot broadcast replies for provenance-based routing attribution.
     broadcast_responses: dict[str, str] = dict(responses)
@@ -617,7 +632,7 @@ async def _run_weighted_opinion_pool(
         if not any(incoming.values()):
             break
         rounds_used = round_num
-        round_id = await create_round(db, trial_id, round_num + 1, "weighted_opinion_pooling")
+        round_id = await create_round(db, trial_id, round_num + 2, "weighted_opinion_pooling")
 
         steps.append(
             _step(
@@ -790,13 +805,20 @@ async def _run_voting(
             type="system",
         )
     ]
-    broadcast_round_id = await _persist_system_broadcast(
+    next_round_index = 1
+    await _persist_system_broadcast(
         db,
         trial_id,
         agents,
         prompt,
         "plurality_voting_broadcast",
+        next_round_index,
     )
+    next_round_index += 1
+    broadcast_output_round_id = await _create_self_message_round(
+        db, trial_id, next_round_index, "plurality_voting_broadcast_outputs"
+    )
+    next_round_index += 1
 
     async def _broadcast(
         agent: dict[str, Any],
@@ -832,7 +854,7 @@ async def _run_voting(
         votes[agent_id] = vote
         reasons[agent_id] = reason
         steps.extend(agent_steps)
-        await _persist_self_messages(db, broadcast_round_id, agent_id, self_messages)
+        await _persist_self_messages(db, broadcast_output_round_id, agent_id, self_messages)
 
     # Snapshot the initial broadcast votes for provenance-based routing attribution.
     broadcast_votes: dict[str, str | None] = dict(votes)
@@ -850,7 +872,8 @@ async def _run_voting(
 
     for round_num in range(1, rounds + 1):
         rounds_used = round_num
-        round_id = await create_round(db, trial_id, round_num + 1, "plurality_voting")
+        round_id = await create_round(db, trial_id, next_round_index, "plurality_voting")
+        next_round_index += 1
         steps.append(_step(label="SYSTEM", msg=f"Voting round {round_num}.", type="system"))
         tally_msg = _format_tally(plurality, counts)
         reasons_msg = _format_vote_reasons(agents, votes, reasons)
