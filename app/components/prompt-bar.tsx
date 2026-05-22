@@ -20,14 +20,15 @@ interface PromptBarProps {
 }
 
 const MODE_LABELS: Partial<Record<ConsensusMode, string>> = {
-  weighted: "Weighted pooling",
-  voting: "Plurality voting",
+  broadcast_no_consensus: "Broadcast",
+  weighted_opinion_pooling: "Weighted pooling",
+  plurality_voting: "Plurality voting",
 };
 
 export function PromptBar({ simMode, onRun }: PromptBarProps) {
   const [val, setVal] = useState("");
   const [preview, setPreview] = useState(false);
-  const [mode, setMode] = useState<ConsensusMode>("voting");
+  const [mode, setMode] = useState<ConsensusMode>("plurality_voting");
   const { dark } = useTheme();
   const t = getTheme(dark);
   const textareaRef = useRef<HTMLTextAreaElement>(null);

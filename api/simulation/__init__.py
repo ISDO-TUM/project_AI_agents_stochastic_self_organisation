@@ -14,13 +14,13 @@ Discussion phase (repeated `rounds` times)
 
 Three consensus modes are supported via `mode`:
 
-- ``broadcast``: discussion-only, no consensus operator. Returns no
+- ``broadcast_no_consensus``: discussion-only, no consensus operator. Returns no
   final answer; useful for free-form exploration.
-- ``weighted``: each agent maintains a trust weight vector over its
+- ``weighted_opinion_pooling``: each agent maintains a trust weight vector over its
   neighbours. Replies are presented to the agent labelled with weights;
   weights are updated each round based on textual agreement (Jaccard).
   Converges when weights stop changing across a round.
-- ``voting``: every agent emits structured ``REASON: ...`` and ``VOTE: ...``
+- ``plurality_voting``: every agent emits structured ``REASON: ...`` and ``VOTE: ...``
   lines. A pure tally function (no separate agent) counts the votes and
   broadcasts the plurality plus submitted reasons back to every agent.
   Converges when the plurality is stable across two consecutive vote rounds —
@@ -54,7 +54,11 @@ from api.db import (
 from api.llm import call_agent
 from api.schemas import SimulationStep, ToolCall
 
-ConsensusMode = Literal["broadcast", "weighted", "voting"]
+ConsensusMode = Literal[
+    "broadcast_no_consensus",
+    "weighted_opinion_pooling",
+    "plurality_voting",
+]
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -284,6 +288,7 @@ def _build_incoming(agents: list[dict[str, Any]]) -> dict[str, list[str]]:
 
 
 def _trial_description(mode: ConsensusMode) -> str:
+    """Generate a description for an individual trial."""
     return f"{mode} run - {datetime.now().isoformat(timespec='seconds')}"
 
 
@@ -338,7 +343,7 @@ async def run_topology(
     prompt: str,
     db: aiosqlite.Connection,
     rounds: int = 3,
-    mode: ConsensusMode = "broadcast",
+    mode: ConsensusMode = "broadcast_no_consensus",
     agent_context: dict[str, str] | None = None,
 ) -> SimulationOutcome:
     """Run a topology simulation under the chosen consensus mode."""
@@ -352,19 +357,21 @@ async def run_topology(
     incoming = _build_incoming(agents)
     trial_id = await create_trial(db, prompt, _trial_description(mode), mode)
 
-    if mode == "weighted":
-        return await _run_weighted_pool(
+    if mode == "weighted_opinion_pooling":
+        return await _run_weighted_opinion_pool(
             prompt, agents, incoming, db, rounds, agent_context, trial_id
         )
-    if mode == "voting":
+    if mode == "plurality_voting":
         return await _run_voting(prompt, agents, incoming, db, rounds, agent_context, trial_id)
-    return await _run_broadcast(prompt, agents, incoming, db, rounds, agent_context, trial_id)
+    return await _run_broadcast_no_consensus(
+        prompt, agents, incoming, db, rounds, agent_context, trial_id
+    )
 
 
 # ── mode 1: broadcast (no consensus) ──────────────────────────────────────────
 
 
-async def _run_broadcast(
+async def _run_broadcast_no_consensus(
     prompt: str,
     agents: list[dict[str, Any]],
     incoming: dict[str, list[str]],
@@ -381,7 +388,7 @@ async def _run_broadcast(
             type="system",
         )
     ]
-    await _persist_system_broadcast(db, trial_id, agents, prompt, "broadcast")
+    await _persist_system_broadcast(db, trial_id, agents, prompt, "broadcast_no_consensus")
 
     async def _broadcast(agent: dict[str, Any]) -> tuple[str, list[SimulationStep]]:
         try:
@@ -491,7 +498,7 @@ _WEIGHT_BLEND = 0.5  # how much old trust to retain each round (EMA factor)
 _WEIGHT_EPSILON = 0.05  # max trust change to declare convergence
 
 
-async def _run_weighted_pool(
+async def _run_weighted_opinion_pool(
     prompt: str,
     agents: list[dict[str, Any]],
     incoming: dict[str, list[str]],
@@ -508,7 +515,13 @@ async def _run_weighted_pool(
             type="system",
         )
     ]
-    await _persist_system_broadcast(db, trial_id, agents, prompt, "weighted-broadcast")
+    await _persist_system_broadcast(
+        db,
+        trial_id,
+        agents,
+        prompt,
+        "weighted_opinion_pooling_broadcast",
+    )
 
     # Each agent's trust over its own neighbours, uniform at start.
     trust: dict[str, dict[str, float]] = {}
@@ -546,7 +559,7 @@ async def _run_weighted_pool(
         if not any(incoming.values()):
             break
         rounds_used = round_num
-        round_id = await create_round(db, trial_id, round_num, "weighted")
+        round_id = await create_round(db, trial_id, round_num, "weighted_opinion_pooling")
 
         steps.append(
             _step(
@@ -720,7 +733,13 @@ async def _run_voting(
             type="system",
         )
     ]
-    await _persist_system_broadcast(db, trial_id, agents, prompt, "voting-broadcast")
+    await _persist_system_broadcast(
+        db,
+        trial_id,
+        agents,
+        prompt,
+        "plurality_voting_broadcast",
+    )
 
     async def _broadcast(
         agent: dict[str, Any],
@@ -770,7 +789,7 @@ async def _run_voting(
 
     for round_num in range(1, rounds + 1):
         rounds_used = round_num
-        round_id = await create_round(db, trial_id, round_num, "voting")
+        round_id = await create_round(db, trial_id, round_num, "plurality_voting")
         steps.append(_step(label="SYSTEM", msg=f"Voting round {round_num}.", type="system"))
         tally_msg = _format_tally(plurality, counts)
         reasons_msg = _format_vote_reasons(agents, votes, reasons)

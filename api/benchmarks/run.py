@@ -42,7 +42,7 @@ from typing import Any, TextIO, cast
 import httpx
 
 DEFAULT_BASE_URL = "http://localhost:8000"
-MODE = "voting"
+MODE = "plurality_voting"
 
 # Sentinel used when --log is given without a value: auto-generate a path.
 _LOG_AUTO = "<auto>"

@@ -456,7 +456,11 @@ class SimulationStep(BaseModel):
     to_id: str | None = None
 
 
-_ConsensusMode = Literal["broadcast", "weighted", "voting"]
+_ConsensusMode = Literal[
+    "broadcast_no_consensus",
+    "weighted_opinion_pooling",
+    "plurality_voting",
+]
 
 
 class SimulationRunRequest(BaseModel):
@@ -470,11 +474,12 @@ class SimulationRunRequest(BaseModel):
         description="Discussion rounds after the initial broadcast.",
     )
     mode: _ConsensusMode = Field(
-        default="broadcast",
+        default="broadcast_no_consensus",
         description=(
-            "Consensus algorithm. 'broadcast' = current behaviour (no consensus). "
-            "'weighted' = per-agent trust vector over neighbours, weighted opinion pooling. "
-            "'voting' = global plurality voting via a coordinator function."
+            "Consensus algorithm. 'broadcast_no_consensus' = discussion without "
+            "a final consensus operator. 'weighted_opinion_pooling' = per-agent "
+            "trust vector over neighbours. 'plurality_voting' = global plurality "
+            "voting via a coordinator function."
         ),
     )
     agent_context: dict[str, str] | None = Field(

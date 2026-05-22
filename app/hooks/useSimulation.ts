@@ -53,7 +53,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
   }, [cur, simMode, steps, edges]);
 
   const runSim = useCallback(
-    async (prompt: string, mode: ConsensusMode = "broadcast") => {
+    async (prompt: string, mode: ConsensusMode = "broadcast_no_consensus") => {
       if (agents.length === 0) return;
 
       setSim(true);

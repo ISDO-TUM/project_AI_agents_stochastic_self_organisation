@@ -50,6 +50,14 @@ export const PROVIDERS: Record<
       { label: "GPT OSS 120B", value: "openai/gpt-oss-120b" },
     ],
   },
+  gemini: {
+    label: "Gemini",
+    models: [
+      { label: "Gemini 2.5 Pro", value: "gemini-2.5-pro" },
+      { label: "Gemini 2.5 Flash", value: "gemini-2.5-flash" },
+      { label: "Gemini 2.5 Flash Lite", value: "gemini-2.5-flash-lite" },
+    ],
+  },
 };
 
 // Must match tool names registered in api/tools/registry.py

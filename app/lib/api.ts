@@ -327,7 +327,7 @@ export async function runSimulation(
     agentContext?: Record<string, string>;
   } = {},
 ): Promise<SimulationResult> {
-  const { rounds = 3, mode = "broadcast", agentContext } = options;
+  const { rounds = 3, mode = "broadcast_no_consensus", agentContext } = options;
   const data = await request<WireSimulationResponse>(
     "POST",
     "/api/simulation/run",
