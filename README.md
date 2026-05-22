@@ -33,10 +33,10 @@ _[One-line project description to be added]_
 
 ## 🛠️ Tech stack
 
-| Layer       | Stack                                  | Location |
-| ----------- | -------------------------------------- | -------- |
-| 🖥️ Frontend | Next.js 16 · React 19 · Tailwind CSS 4 | `app/`   |
-| ⚙️ Backend  | FastAPI · Python 3.12 · AgentOps       | `api/`   |
+| Layer       | Stack                                  | Location  |
+| ----------- | -------------------------------------- | --------- |
+| 🖥️ Frontend | Next.js 16 · React 19 · Tailwind CSS 4 | `client/` |
+| ⚙️ Backend  | FastAPI · Python 3.12 · SQLAlchemy     | `server/` |
 
 ---
 
@@ -89,8 +89,8 @@ The app normalises Railway's `postgresql://` URL to the asyncpg driver and creat
 
 ```
 .
-├── api/                    # FastAPI backend (Python 3.12 + AgentOps)
-├── app/                    # Next.js frontend (React 19 + Tailwind CSS 4)
+├── server/                 # FastAPI backend (Python 3.12 + SQLAlchemy + asyncpg)
+├── client/                 # Next.js frontend (React 19 + Tailwind CSS 4)
 ├── docs/                   # Project documentation
 ├── scripts/setup.sh        # One-time setup — run this first
 ├── docker-compose.yaml     # Full-stack Docker configuration

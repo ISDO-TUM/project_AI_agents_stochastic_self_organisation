@@ -16,7 +16,56 @@ Agents are a separate, reusable concept that are referenced by connections but e
 
 ## Entity Relationship Diagram
 
-![Mermaid Diagram](https://mermaid.ink/svg/pako:eNqVU11PwjAU_SvLfR6EfTHZq6IxRGOUB2OWkGa9QBPaLm1nROC_240xx5gJ7q3nnJ1ze7a7g0xShARQ3TGyUoSnwrEPWaEw2tkdT-Uzn77PHUadl1kHE4RjB6KoM8Vyw6ToMHqrDfJFriTPTYez4CejqDowtwNuOpiRcqOP2CGtM4xiZHPdyIVG1T_DxeSNvZKFoGf2j8_z6cP0tTehGmZhmftZxyeTQmBWBlxjdoKr9LZfk7S011hUn6uXNvKSbGbhqLVl_zPI7_i9cbVj_6fZ7wcDuTs1mTgprIlO4azfWtNuqSNsU7W6uUcpzYhSDBt5_Sf_4XvW3nWvtBpNAVzgqDhh1O5Q1aIVrNFuBJRaiktSbExpfLBSUhj5thUZJEYV6IK982oNydKWY09FTonBeg0bNCfiQ0p-emWlyqiaUyjsvtza5gwk3mTkAlJmpHo67nS12pUDJDv4gsQP_WF8E_njYDT2Ij8IQxe2kETRMAx8Lw7HN_7Yi73JwYXvKtMbepPIQqM48CejIIgPP_C7QnU)
+```mermaid
+erDiagram
+    agents {
+        text id PK
+        text name
+        text description
+        text system_prompt
+        text provider
+        text model
+        text tools
+        text connections
+    }
+    knowledge_files {
+        text id PK
+        text name
+        text content
+    }
+    agent_files {
+        text agent_id PK,FK
+        text file_id PK,FK
+    }
+    trials {
+        text id PK
+        text user_prompt
+        text description
+    }
+    rounds {
+        integer id PK
+        text trial_id FK
+    }
+    connections {
+        integer id PK
+        integer round_id FK
+        text from_agent_id FK
+        text to_agent_id FK
+    }
+    messages {
+        integer id PK
+        integer connection_id FK
+        text message
+    }
+
+    agents ||--o{ agent_files : "has"
+    knowledge_files ||--o{ agent_files : "attached via"
+    trials ||--o{ rounds : "contains"
+    rounds ||--o{ connections : "has"
+    agents ||--o{ connections : "from"
+    agents ||--o{ connections : "to"
+    connections ||--o{ messages : "carries"
+```
 
 ## Table Descriptions
 
@@ -24,7 +73,15 @@ Agents are a separate, reusable concept that are referenced by connections but e
 
 Defines the reusable participants of the MAS. An agent has a fixed identity (system prompt, LLM provider/model, available tools) that does not change between trials. Agents are referenced by connections but are not tied to any specific trial or round.
 
-The `tools` column is stored as a JSON array of tool-name strings. This keeps the schema simple while remaining flexible as the tool set grows.
+The `tools` column is a JSON array of tool-name strings. The `connections` column is a JSON array of agent IDs representing the default outgoing edges for this agent in the communication graph. Both are stored as `TEXT` so the application owns (de)serialisation.
+
+### `knowledge_files`
+
+Stores text documents that can be attached to agents as reference material. Each file has a `name` (used as a human-readable label and as the key when injecting files into a system prompt) and a `content` field holding the raw text.
+
+### `agent_files`
+
+Junction table linking agents to knowledge files. A file can be attached to multiple agents, and an agent can have multiple files. Rows are deleted automatically when either the parent agent or file is deleted (`ON DELETE CASCADE`).
 
 ### `trials`
 
@@ -56,10 +113,10 @@ Messages are intentionally schema-free (`TEXT`) to stay flexible as the communic
 
 ## Design Decisions
 
-| Decision                                                   | Rationale                                                                                                                                                                            |
-| ---------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Connections are per-round, not per-agent                   | Enables topology changes (pruning/rewiring) across rounds while keeping full history                                                                                                 |
-| `user_prompt` lives on `trial`                             | Trials are initiated by a user prompt; it is a first-class field, not metadata                                                                                                       |
-| `tools` stored as JSON in `agents`                         | Avoids a tools junction table for what is effectively a configuration list                                                                                                           |
-| PostgreSQL via SQLAlchemy Core                             | Persistent storage (Postgres in production/Docker; the test suite points the same code at in-memory SQLite). Schema is defined once in `server/db/tables.py` and created on startup. |
-| Auto-increment integer PKs for rounds/connections/messages | Provides implicit chronological ordering at no extra cost                                                                                                                            |
+| Decision                                                   | Rationale                                                                                                                                                                                                                         |
+| ---------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Connections are per-round, not per-agent                   | Enables topology changes (pruning/rewiring) across rounds while keeping full history                                                                                                                                              |
+| `user_prompt` lives on `trial`                             | Trials are initiated by a user prompt; it is a first-class field, not metadata                                                                                                                                                    |
+| `tools` stored as JSON in `agents`                         | Avoids a tools junction table for what is effectively a configuration list                                                                                                                                                        |
+| PostgreSQL via SQLAlchemy Core                             | Persistent storage (Postgres in production/Docker; the test suite points the same code at in-memory SQLite via `conftest.py`). Schema is defined once in `server/db/tables.py` and created on startup — no migration tool needed. |
+| Auto-increment integer PKs for rounds/connections/messages | Provides implicit chronological ordering at no extra cost                                                                                                                                                                         |

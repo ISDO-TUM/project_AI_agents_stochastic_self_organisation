@@ -68,10 +68,10 @@ Installs the full toolchain and runs `pre-commit run --all-files`.
 | `check-merge-conflict`                 | All files                   |
 | `check-added-large-files` (max 500 KB) | All files                   |
 | `no-commit-to-branch`                  | Blocks commits to `main`    |
-| `ruff` + `ruff-format`                 | Python (`api/`)             |
-| `mypy`                                 | Python (`api/`)             |
+| `ruff` + `ruff-format`                 | Python (`server/`)          |
+| `mypy`                                 | Python (`server/`)          |
 | `prettier`                             | JS, TS, CSS, JSON, Markdown |
-| `tsc --noEmit`                         | TypeScript (`app/`)         |
+| `tsc --noEmit`                         | TypeScript (`client/`)      |
 
 ---
 
@@ -80,16 +80,16 @@ Installs the full toolchain and runs `pre-commit run --all-files`.
 Run exactly what CI runs before pushing to avoid a round-trip:
 
 ```bash
-cd api && uv run pre-commit run --all-files
+cd server && uv run pre-commit run --all-files
 ```
 
 To run a single hook:
 
 ```bash
-cd api && uv run pre-commit run ruff --all-files
-cd api && uv run pre-commit run mypy --all-files
-cd api && uv run pre-commit run tsc --all-files
-cd api && uv run pre-commit run prettier --all-files
+cd server && uv run pre-commit run ruff --all-files
+cd server && uv run pre-commit run mypy --all-files
+cd server && uv run pre-commit run tsc --all-files
+cd server && uv run pre-commit run prettier --all-files
 ```
 
 ---
@@ -120,7 +120,7 @@ See [CONTRIBUTING.md](../CONTRIBUTING.md#branch-naming) for valid types and form
 A formatter (`ruff-format`, `prettier`) found code that isn't formatted to spec. Run the hooks locally to auto-fix:
 
 ```bash
-cd api && uv run pre-commit run --all-files
+cd server && uv run pre-commit run --all-files
 git add -A
 git commit -m "style: apply formatter fixes"
 git push
@@ -149,14 +149,14 @@ Fix the type error, commit, and push. The error output is usually clear about wh
 The most common cause is stale dependencies. Make sure your local environment is up to date:
 
 ```bash
-uv pip install -r api/requirements-dev.txt
+uv pip install -r server/requirements-dev.txt
 pnpm install
 ```
 
 Then run the full suite again:
 
 ```bash
-cd api && uv run pre-commit run --all-files
+cd server && uv run pre-commit run --all-files
 ```
 
 </details>
