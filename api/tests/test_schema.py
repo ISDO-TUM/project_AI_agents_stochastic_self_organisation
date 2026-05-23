@@ -26,3 +26,38 @@ async def test_v0_tables_exist() -> None:
     assert "knowledge_files" in tables
     assert "agent_files" in tables
     await close_db()
+
+
+_ECSAS_TABLES = {
+    "swarm_runs",
+    "contracts",
+    "threads",
+    "bids",
+    "draft_entries",
+    "citations",
+    "votes",
+    "confirmed_entries",
+    "reputation",
+    "agent_trust",
+    "amendments",
+}
+
+
+async def test_ecsas_tables_exist() -> None:
+    await init_db()
+    from api.db import _db
+    tables = await _get_tables(_db)
+    missing = _ECSAS_TABLES - tables
+    assert not missing, f"Missing tables: {missing}"
+    await close_db()
+
+
+async def test_agents_table_has_new_columns() -> None:
+    await init_db()
+    from api.db import _db
+    async with _db.execute("PRAGMA table_info(agents)") as cur:
+        rows = await cur.fetchall()
+    cols = {row["name"] for row in rows}
+    assert "capability_embedding" in cols
+    assert "created_at" in cols
+    await close_db()
