@@ -2,8 +2,8 @@
 
 import { useState } from "react";
 import {
-  Network,
-  Layers,
+  Waypoints,
+  AppWindow,
   ArrowRight,
   Cpu,
   GitBranch,
@@ -32,9 +32,9 @@ function ModeCard({ mode, selected, onHover, onClick, dark }: ModeCardProps) {
   const isTopology = mode === "topology";
 
   const icon = isTopology ? (
-    <Network size={40} strokeWidth={1.4} color={selected ? BURG_LT : t.textSub} />
+    <Waypoints size={40} strokeWidth={1.4} color={selected ? BURG_LT : t.textSub} />
   ) : (
-    <Layers size={40} strokeWidth={1.4} color={selected ? BURG_LT : t.textSub} />
+    <AppWindow size={40} strokeWidth={1.4} color={selected ? BURG_LT : t.textSub} />
   );
 
   const badge = isTopology ? (
@@ -81,12 +81,12 @@ function ModeCard({ mode, selected, onHover, onClick, dark }: ModeCardProps) {
 
   const bullets = isTopology
     ? [
-        { icon: <Network size={12} strokeWidth={1.7} />, text: "Graph-topology routing" },
+        { icon: <Waypoints size={12} strokeWidth={1.7} />, text: "Graph-topology routing" },
         { icon: <Cpu size={12} strokeWidth={1.7} />, text: "Deterministic multi-round consensus" },
         { icon: <GitBranch size={12} strokeWidth={1.7} />, text: "Weighted pooling & plurality voting" },
       ]
     : [
-        { icon: <Layers size={12} strokeWidth={1.7} />, text: "Free-market agent self-selection" },
+        { icon: <AppWindow size={12} strokeWidth={1.7} />, text: "Free-market agent self-selection" },
         { icon: <Sparkles size={12} strokeWidth={1.7} />, text: "Shared append-only blackboard" },
         { icon: <Cpu size={12} strokeWidth={1.7} />, text: "Citation-based stigmergic consensus" },
       ];

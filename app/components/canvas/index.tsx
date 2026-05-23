@@ -88,10 +88,12 @@ export function Canvas({
 
   // ── Swarm widget positions (viewport-relative px) ──
   const MM_SIZE = 88;
-  const BB_DEFAULT_W = 420;
+  const BB_DEFAULT_W = 315;
   const [bbPos, setBbPos] = useState<{ x: number; y: number } | null>(null);
   const [mmPos, setMmPos] = useState<{ x: number; y: number } | null>(null);
   const [bbWidth, setBbWidth] = useState(BB_DEFAULT_W);
+  const BB_DEFAULT_H = 300;
+  const [bbHeight, setBbHeight] = useState(BB_DEFAULT_H);
 
   // Initialise positions from canvas dimensions once mounted
   useEffect(() => {
@@ -436,12 +438,14 @@ export function Canvas({
             onPosChange={setBbPos}
             width={bbWidth}
             onWidthChange={setBbWidth}
+            height={bbHeight}
+            onHeightChange={setBbHeight}
           />
         </>
       )}
 
-      {/* Empty state */}
-      {!hasNodes && (
+      {/* Empty state — topology only */}
+      {!hasNodes && appMode !== "swarm" && (
         <div
           style={{
             position: "absolute",

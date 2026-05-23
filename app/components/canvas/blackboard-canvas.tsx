@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useCallback } from "react";
+import { useState, useRef, useCallback } from "react";
 import { BlackboardState, ConfirmedEntry, DraftEntry } from "@/lib/types";
 import { useTheme } from "@/lib/theme-context";
 import { getTheme, BURG, BURG_LT, BURG_DIM } from "@/lib/theme";
@@ -18,6 +18,8 @@ interface BlackboardCanvasProps {
   onPosChange: (pos: { x: number; y: number }) => void;
   width: number;
   onWidthChange: (w: number) => void;
+  height: number;
+  onHeightChange: (h: number) => void;
 }
 
 function entryTypeStyle(type: ConfirmedEntry["entry_type"], dark: boolean) {
@@ -69,16 +71,19 @@ function DraftCard({ entry, depth = 0 }: { entry: DraftEntry; depth?: number }) 
   );
 }
 
-export function BlackboardCanvas({ state, runId, onSeed, seeding, pos, onPosChange, width, onWidthChange }: BlackboardCanvasProps) {
+export function BlackboardCanvas({ state, runId, onSeed, seeding, pos, onPosChange, width, onWidthChange, height, onHeightChange }: BlackboardCanvasProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
 
+  // Tab: "confirmed" | "draft"
+  const [tab, setTab] = useState<"confirmed" | "draft">("confirmed");
+
   const dragStart = useRef<{ mx: number; my: number; ox: number; oy: number } | null>(null);
-  const resizeStart = useRef<{ mx: number; startW: number } | null>(null);
+  const resizeStart = useRef<{ mx: number; my: number; startW: number; startH: number } | null>(null);
   const containerRef = useRef<HTMLDivElement>(null);
 
   const onHeaderMouseDown = useCallback((e: React.MouseEvent) => {
-    if ((e.target as HTMLElement).closest("button")) return;
+    if ((e.target as HTMLElement).closest("button,input,select")) return;
     e.preventDefault();
     const rect = containerRef.current!.getBoundingClientRect();
     dragStart.current = { mx: e.clientX, my: e.clientY, ox: rect.left, oy: rect.top };
@@ -98,13 +103,15 @@ export function BlackboardCanvas({ state, runId, onSeed, seeding, pos, onPosChan
     window.addEventListener("mouseup", onUp);
   }, [onPosChange]);
 
+  // Resize: drag the bottom-right corner to resize both width and height
   const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
     e.preventDefault();
     e.stopPropagation();
-    resizeStart.current = { mx: e.clientX, startW: width };
+    resizeStart.current = { mx: e.clientX, my: e.clientY, startW: width, startH: height };
     const onMove = (me: MouseEvent) => {
       if (!resizeStart.current) return;
-      onWidthChange(Math.max(280, Math.min(720, resizeStart.current.startW + (me.clientX - resizeStart.current.mx))));
+      onWidthChange(Math.max(240, Math.min(900, resizeStart.current.startW + (me.clientX - resizeStart.current.mx))));
+      onHeightChange(Math.max(180, Math.min(800, resizeStart.current.startH + (me.clientY - resizeStart.current.my))));
     };
     const onUp = () => {
       resizeStart.current = null;
@@ -113,14 +120,30 @@ export function BlackboardCanvas({ state, runId, onSeed, seeding, pos, onPosChan
     };
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
-  }, [width, onWidthChange]);
+  }, [width, height, onWidthChange, onHeightChange]);
 
   const hasContent = state.confirmed.length > 0 || state.draft.length > 0;
   const activeThread = state.threads[0] ?? null;
+  const visibleDraft = state.draft.filter((e) => e.is_visible);
 
   const posStyle: React.CSSProperties = pos
     ? { left: pos.x, top: pos.y }
     : { left: "50%", top: "50%", transform: "translate(-50%, -50%)" };
+
+  const tabStyle = (active: boolean): React.CSSProperties => ({
+    padding: "4px 12px",
+    fontSize: 10.5,
+    fontWeight: 700,
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+    letterSpacing: "0.06em",
+    textTransform: "uppercase",
+    border: "none",
+    borderRadius: 6,
+    cursor: "pointer",
+    background: active ? BURG : "transparent",
+    color: active ? "#fff" : t.textDim,
+    transition: "all 0.15s",
+  });
 
   return (
     <div
@@ -132,9 +155,11 @@ export function BlackboardCanvas({ state, runId, onSeed, seeding, pos, onPosChan
         pointerEvents: "all",
         userSelect: "none",
         zIndex: 20,
+        // shadow so it floats visually
+        filter: "drop-shadow(0 8px 32px rgba(0,0,0,0.35))",
       }}
     >
-      {/* Header bar — drag handle */}
+      {/* ── Header / drag handle ── */}
       <div
         onMouseDown={onHeaderMouseDown}
         style={{
@@ -158,13 +183,12 @@ export function BlackboardCanvas({ state, runId, onSeed, seeding, pos, onPosChan
         {activeThread && (
           <>
             <span style={{ fontSize: 10, color: "rgba(139,26,47,0.5)" }}>·</span>
-            <span style={{ fontSize: 10.5, color: BURG, fontFamily: "'Space Grotesk', system-ui, sans-serif", fontWeight: 600 }}>
+            <span style={{ fontSize: 10.5, color: BURG, fontFamily: "'Space Grotesk', system-ui, sans-serif", fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap", maxWidth: 120 }}>
               {activeThread.title}
             </span>
           </>
         )}
         <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
-          {/* Seed button — only when no run yet */}
           {!runId && onSeed && (
             <button
               onClick={onSeed}
@@ -172,14 +196,9 @@ export function BlackboardCanvas({ state, runId, onSeed, seeding, pos, onPosChan
               style={{
                 display: "flex", alignItems: "center", gap: 5,
                 padding: "4px 10px",
-                background: BURG,
-                color: "#fff",
-                border: "none",
-                borderRadius: 6,
+                background: BURG, color: "#fff", border: "none", borderRadius: 6,
                 cursor: seeding ? "not-allowed" : "pointer",
-                fontSize: 10.5,
-                fontWeight: 700,
-                opacity: seeding ? 0.6 : 1,
+                fontSize: 10.5, fontWeight: 700, opacity: seeding ? 0.6 : 1,
                 fontFamily: "'Space Grotesk', system-ui, sans-serif",
                 boxShadow: `0 2px 8px rgba(139,26,47,0.35)`,
               }}
@@ -191,26 +210,48 @@ export function BlackboardCanvas({ state, runId, onSeed, seeding, pos, onPosChan
           {runId && (
             <>
               <div style={{ width: 6, height: 6, borderRadius: "50%", background: state.loading ? "#b5860d" : hasContent ? "#3dba8c" : t.textDim, boxShadow: hasContent && !state.loading ? "0 0 5px #3dba8c88" : "none" }} />
-              <span style={{ fontSize: 9.5, color: t.textDim, fontFamily: "'JetBrains Mono', monospace" }}>
-                {state.loading ? "syncing…" : `${state.confirmed.length} confirmed · ${state.draft.length} draft`}
+              <span style={{ fontSize: 9.5, color: t.textDim, fontFamily: "'JetBrains Mono', monospace", whiteSpace: "nowrap" }}>
+                {state.loading ? "syncing…" : `${state.confirmed.length}C · ${visibleDraft.length}D`}
               </span>
             </>
           )}
         </div>
       </div>
 
-      {/* Body */}
+      {/* ── Tab bar (only when there's a run) ── */}
+      {runId && (
+        <div
+          style={{
+            display: "flex",
+            gap: 4,
+            padding: "6px 14px",
+            background: dark ? "rgba(10,8,20,0.9)" : "rgba(240,238,252,0.95)",
+            border: `1px solid rgba(139,26,47,0.22)`,
+            borderTop: "none",
+            borderBottom: "none",
+            backdropFilter: "blur(12px)",
+          }}
+          onMouseDown={(e) => e.stopPropagation()} // don't trigger header drag
+        >
+          <button style={tabStyle(tab === "confirmed")} onClick={() => setTab("confirmed")}>
+            Confirmed {state.confirmed.length > 0 && `(${state.confirmed.length})`}
+          </button>
+          <button style={tabStyle(tab === "draft")} onClick={() => setTab("draft")}>
+            Draft {visibleDraft.length > 0 && `(${visibleDraft.length})`}
+          </button>
+        </div>
+      )}
+
+      {/* ── Body ── */}
       <div
         style={{
           background: dark ? "rgba(6,5,12,0.88)" : "rgba(248,246,255,0.94)",
           border: `1px solid rgba(139,26,47,0.22)`,
-          borderRadius: "0 0 12px 12px",
+          borderTop: runId ? "none" : undefined,
+          borderRadius: runId ? "0 0 12px 12px" : "0 0 12px 12px",
           backdropFilter: "blur(16px)",
-          boxShadow: dark
-            ? "0 16px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(139,26,47,0.12)"
-            : "0 16px 48px rgba(0,0,0,0.12), 0 0 0 1px rgba(139,26,47,0.08)",
           padding: "12px 14px",
-          maxHeight: 460,
+          height: height,
           overflowY: "auto",
           overflowX: "hidden",
           userSelect: "text",
@@ -219,14 +260,14 @@ export function BlackboardCanvas({ state, runId, onSeed, seeding, pos, onPosChan
       >
         {/* No run yet */}
         {!runId && (
-          <div style={{ textAlign: "center", padding: "28px 0", color: t.textDim, fontSize: 12, fontFamily: "'Space Grotesk', system-ui" }}>
+          <div style={{ textAlign: "center", padding: "36px 0", color: t.textDim, fontSize: 12, fontFamily: "'Space Grotesk', system-ui" }}>
             Seed a run to populate the blackboard.
           </div>
         )}
 
         {/* Loading */}
         {runId && state.loading && (
-          <div style={{ textAlign: "center", padding: "24px 0", color: t.textDim, fontSize: 12, fontFamily: "'Space Grotesk', system-ui" }}>
+          <div style={{ textAlign: "center", padding: "36px 0", color: t.textDim, fontSize: 12, fontFamily: "'Space Grotesk', system-ui" }}>
             Loading blackboard…
           </div>
         )}
@@ -238,89 +279,83 @@ export function BlackboardCanvas({ state, runId, onSeed, seeding, pos, onPosChan
           </div>
         )}
 
-        {/* No content yet */}
-        {runId && !state.loading && !state.error && !hasContent && (
-          <div style={{ textAlign: "center", padding: "24px 0", color: t.textDim, fontSize: 12, fontFamily: "'Space Grotesk', system-ui" }}>
-            Awaiting first entry…
-          </div>
+        {/* ── CONFIRMED TAB ── */}
+        {runId && !state.loading && tab === "confirmed" && (
+          <>
+            {state.confirmed.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "36px 0", color: t.textDim, fontSize: 12, fontFamily: "'Space Grotesk', system-ui" }}>
+                No confirmed entries yet.
+              </div>
+            ) : (
+              state.confirmed.map((entry) => {
+                const es = entryTypeStyle(entry.entry_type, dark);
+                return (
+                  <div
+                    key={entry.id}
+                    style={{ background: es.bg, border: `1px solid ${es.border}`, borderRadius: 8, padding: "8px 11px", marginBottom: 6 }}
+                  >
+                    <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 5 }}>
+                      {es.icon}
+                      <span style={{ fontSize: 9.5, fontWeight: 800, color: es.color, letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'Space Grotesk', system-ui" }}>
+                        {es.label}
+                      </span>
+                      {entry.entry_type !== "anchor" && (
+                        <span style={{ fontSize: 9.5, color: t.textDim }}>Round {entry.round_confirmed}</span>
+                      )}
+                      {entry.citation_count > 0 && (
+                        <span style={{ marginLeft: "auto", fontSize: 9.5, color: t.textDim }}>♡ {entry.citation_count}</span>
+                      )}
+                    </div>
+                    <div style={{ fontSize: 12, color: t.text, lineHeight: 1.55 }}>
+                      <MarkdownRenderer content={entry.content} />
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </>
         )}
 
-        {/* ── CONFIRMED SECTION ── */}
-        {runId && !state.loading && state.confirmed.length > 0 && (
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-              <div style={{ flex: 1, height: 1, background: `linear-gradient(to right, rgba(139,26,47,0.4), transparent)` }} />
-              <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase", color: BURG, fontFamily: "'Space Grotesk', system-ui" }}>
-                Confirmed
-              </span>
-              <div style={{ flex: 1, height: 1, background: `linear-gradient(to left, rgba(139,26,47,0.4), transparent)` }} />
-            </div>
-            {state.confirmed.map((entry) => {
-              const style = entryTypeStyle(entry.entry_type, dark);
-              return (
-                <div
-                  key={entry.id}
-                  style={{
-                    background: style.bg,
-                    border: `1px solid ${style.border}`,
-                    borderRadius: 8,
-                    padding: "8px 11px",
-                    marginBottom: 6,
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 5 }}>
-                    {style.icon}
-                    <span style={{ fontSize: 9.5, fontWeight: 800, color: style.color, letterSpacing: "0.08em", textTransform: "uppercase", fontFamily: "'Space Grotesk', system-ui" }}>
-                      {style.label}
-                    </span>
-                    {entry.entry_type !== "anchor" && (
-                      <span style={{ fontSize: 9.5, color: t.textDim }}>Round {entry.round_confirmed}</span>
-                    )}
-                    {entry.citation_count > 0 && (
-                      <span style={{ marginLeft: "auto", fontSize: 9.5, color: t.textDim }}>♡ {entry.citation_count}</span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: 12, color: t.text, lineHeight: 1.55 }}>
-                    <MarkdownRenderer content={entry.content} />
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        )}
-
-        {/* ── DRAFT SECTION ── */}
-        {runId && !state.loading && state.draft.filter((e) => e.is_visible).length > 0 && (
-          <div>
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-              <div style={{ flex: 1, height: 1, background: `linear-gradient(to right, ${t.border}, transparent)` }} />
-              <span style={{ fontSize: 9, fontWeight: 800, letterSpacing: "0.12em", textTransform: "uppercase", color: t.textDim, fontFamily: "'Space Grotesk', system-ui" }}>
-                Draft
-              </span>
-              <div style={{ flex: 1, height: 1, background: `linear-gradient(to left, ${t.border}, transparent)` }} />
-            </div>
-            {state.draft.filter((e) => e.is_visible).map((entry) => (
-              <DraftCard key={entry.id} entry={entry} depth={0} />
-            ))}
-          </div>
+        {/* ── DRAFT TAB ── */}
+        {runId && !state.loading && tab === "draft" && (
+          <>
+            {visibleDraft.length === 0 ? (
+              <div style={{ textAlign: "center", padding: "36px 0", color: t.textDim, fontSize: 12, fontFamily: "'Space Grotesk', system-ui" }}>
+                No draft entries yet.
+              </div>
+            ) : (
+              visibleDraft.map((entry) => (
+                <DraftCard key={entry.id} entry={entry} depth={0} />
+              ))
+            )}
+          </>
         )}
       </div>
 
-      {/* Right-edge resize handle */}
+      {/* ── Bottom-right corner resize handle ── */}
       <div
         onMouseDown={onResizeMouseDown}
         style={{
           position: "absolute",
-          top: 0,
-          right: -4,
-          width: 8,
           bottom: 0,
-          cursor: "ew-resize",
+          right: 0,
+          width: 16,
+          height: 16,
+          cursor: "nwse-resize",
           zIndex: 30,
-          borderRadius: 4,
+          borderRadius: "0 0 12px 0",
+          background: "transparent",
+          display: "flex",
+          alignItems: "flex-end",
+          justifyContent: "flex-end",
+          padding: 3,
         }}
         title="Drag to resize"
-      />
+      >
+        <svg width="8" height="8" viewBox="0 0 8 8" fill="none">
+          <path d="M1 7L7 1M4 7L7 4M7 7L7 7" stroke="rgba(139,26,47,0.45)" strokeWidth="1.5" strokeLinecap="round"/>
+        </svg>
+      </div>
     </div>
   );
 }
