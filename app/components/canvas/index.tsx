@@ -232,7 +232,7 @@ export function Canvas({
   const offY = pan.y % gridSize;
 
   const canvasBg = dark
-    ? `radial-gradient(ellipse 80% 60% at 50% 0%, rgba(139,26,47,0.07) 0%, transparent 70%), #060608`
+    ? `radial-gradient(ellipse 80% 60% at 50% 0%, rgba(139,26,47,0.07) 0%, transparent 70%), #111018`
     : `radial-gradient(ellipse 80% 60% at 50% 0%, rgba(139,26,47,0.04) 0%, transparent 70%), #f0eef8`;
 
   return (

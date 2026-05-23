@@ -21,10 +21,10 @@ interface ThemeTokens {
 export function getTheme(dark: boolean): ThemeTokens {
   if (dark) {
     return {
-      bg: "#0c0b14",
-      pill: "rgba(14,12,24,0.88)",
+      bg: "#111018",
+      pill: "rgba(20,18,30,0.90)",
       pillBorder: "rgba(139,26,47,0.28)",
-      surface: "rgba(18,16,30,0.97)",
+      surface: "rgba(22,20,34,0.97)",
       border: "rgba(255,255,255,0.13)",
       borderHi: "rgba(255,255,255,0.24)",
       text: "#eceaf5",

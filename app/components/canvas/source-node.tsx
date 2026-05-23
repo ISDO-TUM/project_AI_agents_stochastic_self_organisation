@@ -83,7 +83,7 @@ export function SourceNode({
           width: 128,
           height: 76,
           borderRadius: 12,
-          background: dark ? "rgba(14,12,22,0.9)" : "rgba(255,255,255,0.92)",
+          background: dark ? "rgba(22,18,38,0.92)" : "rgba(255,255,255,0.92)",
           border: `1px solid ${selected || active ? accent : t.borderHi}`,
           display: "flex",
           flexDirection: "column",
