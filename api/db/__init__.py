@@ -7,6 +7,7 @@ SQLite ``:memory:`` databases are private to the connection that created them.
 from __future__ import annotations
 
 import json
+import os
 from collections.abc import AsyncGenerator
 from typing import Any
 
@@ -43,11 +44,20 @@ CREATE TABLE IF NOT EXISTS agent_files (
 
 _db: aiosqlite.Connection | None = None
 
+_DB_PATH_DEFAULT = "./data/swarm.db"
+
 
 async def init_db() -> None:
-    """Open the shared in-memory database and create all tables."""
+    """Open the database and create all tables.
+
+    Uses DB_PATH env var; defaults to ./data/swarm.db.
+    Pass DB_PATH=:memory: in tests for isolation.
+    """
     global _db
-    _db = await aiosqlite.connect(":memory:")
+    db_path = os.getenv("DB_PATH", _DB_PATH_DEFAULT)
+    if db_path != ":memory:":
+        os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
+    _db = await aiosqlite.connect(db_path)
     _db.row_factory = aiosqlite.Row
     await _db.execute("PRAGMA foreign_keys = ON;")
     await _db.execute(_CREATE_AGENTS_TABLE)

@@ -1,5 +1,9 @@
 """Shared pytest fixtures for the API test suite."""
 
+import os
+
+os.environ.setdefault("DB_PATH", ":memory:")  # Must be before app import
+
 from collections.abc import AsyncGenerator
 
 import pytest
