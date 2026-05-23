@@ -15,6 +15,7 @@ import { ContextMenu, ContextMenuItem } from "@/components/context-menu";
 import { TweaksPanel } from "@/components/tweaks-panel";
 import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
+import { BlackboardPanel } from "@/components/blackboard-panel";
 import { getTheme } from "@/lib/theme";
 
 const defaultTweaks: Tweaks = {
@@ -91,6 +92,7 @@ export function App() {
   } = useUIState();
 
   const [importError, setImportError] = useState<string | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
   const importErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -336,10 +338,15 @@ export function App() {
 
       <div
         style={{
-          width: simMode ? `calc(100vw - ${logSidebarWidth}px)` : "100%",
+          width: runId
+            ? "30%"
+            : simMode
+            ? `calc(100vw - ${logSidebarWidth}px)`
+            : "100%",
           height: "100%",
           display: "flex",
           position: "relative",
+          flexShrink: 0,
         }}
         onClick={(e) => {
           const el = (e.target as HTMLElement).closest(
@@ -396,6 +403,36 @@ export function App() {
           sidebarWidth={logSidebarWidth}
           onSidebarWidthChange={handleSidebarWidthChange}
         />
+      )}
+
+      {runId && (
+        <div style={{ flex: 1, height: "100%", overflow: "hidden" }}>
+          <BlackboardPanel runId={runId} onRunIdChange={setRunId} />
+        </div>
+      )}
+
+      {!runId && !simMode && (
+        <button
+          onClick={() => setRunId("__open__")}
+          style={{
+            position: "fixed",
+            bottom: 24,
+            right: 24,
+            padding: "8px 16px",
+            background: "#8B1A2F",
+            color: "#fff",
+            border: "none",
+            borderRadius: 6,
+            cursor: "pointer",
+            fontSize: 12,
+            fontWeight: 700,
+            zIndex: 1000,
+            opacity: 0.85,
+          }}
+          title="Open Blackboard panel (dev)"
+        >
+          Blackboard
+        </button>
       )}
 
       {showTweaks && (
