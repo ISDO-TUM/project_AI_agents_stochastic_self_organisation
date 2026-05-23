@@ -1,7 +1,8 @@
-"""In-memory SQLite session database.
+"""Configurable SQLite session database.
 
-A single :class:`aiosqlite.Connection` is shared across all requests because
-SQLite ``:memory:`` databases are private to the connection that created them.
+Supports both file-backed and in-memory databases via the DB_PATH environment
+variable. A single :class:`aiosqlite.Connection` is shared across all requests
+because SQLite ``:memory:`` databases are private to the connection that created them.
 """
 
 from __future__ import annotations
