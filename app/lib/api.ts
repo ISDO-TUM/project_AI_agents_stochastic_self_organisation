@@ -252,7 +252,7 @@ interface WireHistoryMessage {
   connection_id: number;
   from_agent_id: string | null;
   from_agent_name: string;
-  to_agent_id: string;
+  to_agent_id: string | null;
   to_agent_name: string;
   message_type: string;
   message: string | null;

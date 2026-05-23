@@ -59,7 +59,7 @@ CREATE TABLE IF NOT EXISTS connections (
     id            INTEGER PRIMARY KEY,
     round_id      INTEGER NOT NULL,
     from_agent_id TEXT,
-    to_agent_id   TEXT NOT NULL,
+    to_agent_id   TEXT,
 
     FOREIGN KEY (round_id)      REFERENCES rounds(id)  ON DELETE CASCADE,
     FOREIGN KEY (from_agent_id) REFERENCES agents(id)  ON DELETE CASCADE,
@@ -75,7 +75,7 @@ CREATE TABLE IF NOT EXISTS messages (
     connection_id INTEGER NOT NULL,
     round_id      INTEGER NOT NULL,
     from_agent_id TEXT,
-    to_agent_id   TEXT NOT NULL,
+    to_agent_id   TEXT,
     message_type  TEXT NOT NULL,
     message       TEXT,
     created_at    TEXT NOT NULL,
@@ -281,12 +281,12 @@ async def create_connection(
     db: aiosqlite.Connection,
     round_id: int,
     from_agent_id: str | None,
-    to_agent_id: str,
+    to_agent_id: str | None,
 ) -> int:
     """Create a directed connection row and return its id.
 
-    ``from_agent_id`` is nullable so broadcast prompts can be represented as a
-    synthetic SYSTEM sender without requiring a real agent row.
+    Agent ids are nullable so synthetic SYSTEM messages can be represented
+    without requiring a real agent row.
     """
     cur = await db.execute(
         """
@@ -305,7 +305,7 @@ async def create_connection(
           FROM connections
          WHERE round_id = ?
            AND from_agent_id IS ?
-           AND to_agent_id = ?
+           AND to_agent_id IS ?
         """,
         (round_id, from_agent_id, to_agent_id),
     ) as select_cur:
@@ -320,7 +320,7 @@ async def create_message(
     connection_id: int,
     round_id: int,
     from_agent_id: str | None,
-    to_agent_id: str,
+    to_agent_id: str | None,
     message_type: str,
     message: str | None,
 ) -> int:
@@ -358,7 +358,7 @@ async def record_message(
     db: aiosqlite.Connection,
     round_id: int,
     from_agent_id: str | None,
-    to_agent_id: str,
+    to_agent_id: str | None,
     message_type: str,
     message: str | None,
 ) -> int:

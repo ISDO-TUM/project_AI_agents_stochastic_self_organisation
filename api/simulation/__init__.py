@@ -357,6 +357,16 @@ async def _persist_self_messages(
         await record_message(db, round_id, agent_id, agent_id, message_type, message)
 
 
+async def _persist_system_self_message(
+    db: aiosqlite.Connection,
+    round_id: int,
+    message_type: str,
+    message: str,
+) -> None:
+    """Record synthetic SYSTEM notes as messages sent from SYSTEM to itself."""
+    await record_message(db, round_id, None, None, message_type, message)
+
+
 async def _create_self_message_round(
     db: aiosqlite.Connection,
     trial_id: str,
@@ -871,7 +881,9 @@ async def _run_voting(
     broadcast_votes: dict[str, str | None] = dict(votes)
 
     plurality, counts = _tally(votes)
-    steps.append(_step(label="TALLY", msg=_format_tally(plurality, counts), type="system"))
+    tally_message = _format_tally(plurality, counts)
+    await _persist_system_self_message(db, broadcast_output_round_id, "vote_tally", tally_message)
+    steps.append(_step(label="TALLY", msg=tally_message, type="system"))
 
     rounds_used = 0
     converged = False
@@ -1014,7 +1026,9 @@ async def _run_voting(
             steps.extend(agent_steps)
 
         plurality, counts = _tally(votes)
-        steps.append(_step(label="TALLY", msg=_format_tally(plurality, counts), type="system"))
+        tally_message = _format_tally(plurality, counts)
+        await _persist_system_self_message(db, round_id, "vote_tally", tally_message)
+        steps.append(_step(label="TALLY", msg=tally_message, type="system"))
 
         if plurality is not None and plurality == last_plurality:
             stable_streak += 1

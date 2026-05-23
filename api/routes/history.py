@@ -99,7 +99,7 @@ async def list_messages(
             m.from_agent_id,
             COALESCE(from_agent.name, 'SYSTEM') AS from_agent_name,
             m.to_agent_id,
-            to_agent.name AS to_agent_name,
+            COALESCE(to_agent.name, 'SYSTEM') AS to_agent_name,
             m.message_type,
             m.message,
             m.created_at
@@ -107,7 +107,7 @@ async def list_messages(
           JOIN rounds r ON r.id = m.round_id
           JOIN trials t ON t.id = r.trial_id
           LEFT JOIN agents from_agent ON from_agent.id = m.from_agent_id
-          JOIN agents to_agent ON to_agent.id = m.to_agent_id
+          LEFT JOIN agents to_agent ON to_agent.id = m.to_agent_id
          WHERE (? IS NULL OR t.id = ?)
            AND (? IS NULL OR r.id = ?)
            AND (? IS NULL OR m.from_agent_id = ? OR m.to_agent_id = ?)

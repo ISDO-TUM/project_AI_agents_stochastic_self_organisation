@@ -106,7 +106,7 @@ export interface HistoryMessage {
   connectionId: number;
   fromAgentId: string | null;
   fromAgentName: string;
-  toAgentId: string;
+  toAgentId: string | null;
   toAgentName: string;
   messageType: string;
   message: string | null;

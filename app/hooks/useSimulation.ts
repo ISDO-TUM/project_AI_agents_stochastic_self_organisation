@@ -40,7 +40,7 @@ function historyMessageToStep(message: HistoryMessage): SimStep {
     ...(isAgentToAgent && { target: message.toAgentName }),
     ...(message.fromAgentId && { fromId: message.fromAgentId }),
     ...(message.toAgentId && { toId: message.toAgentId }),
-    ...(isSelf && { nodeId: message.toAgentId }),
+    ...(isSelf && message.toAgentId && { nodeId: message.toAgentId }),
   };
 }
 
