@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import os
 import uuid
 
@@ -333,7 +332,7 @@ async def test_soft_delete_stale_entries(db) -> None:
 
     bb = Blackboard(db)
     # Post in round 2 (not round 1, so not exempt from deletion)
-    entry_id = await bb.post(
+    await bb.post(
         run_id=run_id, thread_id=thread_id, author_id=agent_a,
         content="Stale entry", entry_type="reply", round=2,
     )

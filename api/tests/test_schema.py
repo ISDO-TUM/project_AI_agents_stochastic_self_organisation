@@ -3,7 +3,6 @@
 import os
 
 import aiosqlite
-import pytest
 
 os.environ.setdefault("DB_PATH", ":memory:")
 

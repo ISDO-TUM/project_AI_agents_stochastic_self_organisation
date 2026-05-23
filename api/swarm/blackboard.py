@@ -161,7 +161,8 @@ class Blackboard:
                 )
                 cited += 1
             except Exception:
-                pass
+                # UNIQUE constraint violation: agent already cited this entry this round
+                continue
         await self._db.commit()
         return {"cited": cited, "skipped_self": skipped_self}
 

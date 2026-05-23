@@ -1,9 +1,9 @@
 "use client";
 
-import { useCallback, useState } from "react";
+import { useState } from "react";
 import { useTheme } from "@/lib/theme-context";
 import { getTheme, BURG, BURG_LT, BURG_GLOW } from "@/lib/theme";
-import { BlackboardState, ConfirmedEntry, DraftEntry } from "@/lib/types";
+import { BlackboardState, DraftEntry } from "@/lib/types";
 import {
   Activity,
   Pin,
