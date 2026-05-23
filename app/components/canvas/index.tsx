@@ -86,6 +86,27 @@ export function Canvas({
   const [connectLine, setConnectLine] = useState<ConnectLine | null>(null);
   const spaceDown = useRef(false);
 
+  // ── Swarm widget positions (viewport-relative px) ──
+  const MM_SIZE = 88;
+  const BB_DEFAULT_W = 420;
+  const [bbPos, setBbPos] = useState<{ x: number; y: number } | null>(null);
+  const [mmPos, setMmPos] = useState<{ x: number; y: number } | null>(null);
+  const [bbWidth, setBbWidth] = useState(BB_DEFAULT_W);
+
+  // Initialise positions from canvas dimensions once mounted
+  useEffect(() => {
+    if (appMode !== "swarm") return;
+    const el = canvasRef.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    const cx = width / 2;
+    const cy = height / 2;
+    const gap = 32;
+    setBbPos({ x: cx - BB_DEFAULT_W / 2, y: cy - 120 });
+    setMmPos({ x: cx - BB_DEFAULT_W / 2 - MM_SIZE - gap, y: cy - MM_SIZE / 2 });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [appMode]);
+
   // Apply external pan delta (e.g. from sidebar resize) to keep nodes stable.
   // panAdjust is a new object reference on every resize tick (seq increments),
   // so listing it as the dependency is both correct and exhaustive.
@@ -377,16 +398,46 @@ export function Canvas({
       </div>
 
       {/* ── Swarm-mode viewport overlays (not in world transform) ── */}
-      {appMode === "swarm" && swarmRunId && (
-        <SwarmNodes />
-      )}
-      {appMode === "swarm" && blackboardState && (
-        <BlackboardCanvas
-          state={blackboardState}
-          runId={swarmRunId ?? null}
-          onSeed={onSeed}
-          seeding={seeding}
-        />
+      {appMode === "swarm" && (
+        <>
+          {/* Dashed connector between MM and Blackboard */}
+          {bbPos && mmPos && (
+            <svg
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                pointerEvents: "none",
+                zIndex: 18,
+                overflow: "visible",
+              }}
+            >
+              <line
+                x1={mmPos.x + 88}
+                y1={mmPos.y + 44}
+                x2={bbPos.x}
+                y2={bbPos.y + 19}
+                stroke="rgba(139,26,47,0.4)"
+                strokeWidth="1.5"
+                strokeDasharray="6,4"
+              />
+              <circle cx={mmPos.x + 88} cy={mmPos.y + 44} r="3" fill="rgba(139,26,47,0.5)" />
+              <circle cx={bbPos.x} cy={bbPos.y + 19} r="3" fill="rgba(139,26,47,0.5)" />
+            </svg>
+          )}
+          <SwarmNodes pos={mmPos} onPosChange={setMmPos} />
+          <BlackboardCanvas
+            state={blackboardState ?? { confirmed: [], draft: [], threads: [], loading: false, error: null }}
+            runId={swarmRunId ?? null}
+            onSeed={onSeed}
+            seeding={seeding}
+            pos={bbPos}
+            onPosChange={setBbPos}
+            width={bbWidth}
+            onWidthChange={setBbWidth}
+          />
+        </>
       )}
 
       {/* Empty state */}

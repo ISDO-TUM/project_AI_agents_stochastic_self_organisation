@@ -1,9 +1,10 @@
 "use client";
 
+import { useRef, useCallback } from "react";
 import { BlackboardState, ConfirmedEntry, DraftEntry } from "@/lib/types";
 import { useTheme } from "@/lib/theme-context";
 import { getTheme, BURG, BURG_LT, BURG_DIM } from "@/lib/theme";
-import { Pin, FileText, MessageSquare, CheckCircle2, Layers, FlaskConical } from "lucide-react";
+import { Pin, FileText, MessageSquare, CheckCircle2, Layers, FlaskConical, GripHorizontal } from "lucide-react";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 
 interface BlackboardCanvasProps {
@@ -12,6 +13,11 @@ interface BlackboardCanvasProps {
   runId: string | null;
   onSeed?: () => void;
   seeding?: boolean;
+  /** Controlled position from parent (viewport px) */
+  pos: { x: number; y: number } | null;
+  onPosChange: (pos: { x: number; y: number }) => void;
+  width: number;
+  onWidthChange: (w: number) => void;
 }
 
 function entryTypeStyle(type: ConfirmedEntry["entry_type"], dark: boolean) {
@@ -63,31 +69,74 @@ function DraftCard({ entry, depth = 0 }: { entry: DraftEntry; depth?: number }) 
   );
 }
 
-export function BlackboardCanvas({ state, runId, onSeed, seeding }: BlackboardCanvasProps) {
+export function BlackboardCanvas({ state, runId, onSeed, seeding, pos, onPosChange, width, onWidthChange }: BlackboardCanvasProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
+
+  const dragStart = useRef<{ mx: number; my: number; ox: number; oy: number } | null>(null);
+  const resizeStart = useRef<{ mx: number; startW: number } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  const onHeaderMouseDown = useCallback((e: React.MouseEvent) => {
+    if ((e.target as HTMLElement).closest("button")) return;
+    e.preventDefault();
+    const rect = containerRef.current!.getBoundingClientRect();
+    dragStart.current = { mx: e.clientX, my: e.clientY, ox: rect.left, oy: rect.top };
+    const onMove = (me: MouseEvent) => {
+      if (!dragStart.current) return;
+      onPosChange({
+        x: dragStart.current.ox + (me.clientX - dragStart.current.mx),
+        y: dragStart.current.oy + (me.clientY - dragStart.current.my),
+      });
+    };
+    const onUp = () => {
+      dragStart.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [onPosChange]);
+
+  const onResizeMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    resizeStart.current = { mx: e.clientX, startW: width };
+    const onMove = (me: MouseEvent) => {
+      if (!resizeStart.current) return;
+      onWidthChange(Math.max(280, Math.min(720, resizeStart.current.startW + (me.clientX - resizeStart.current.mx))));
+    };
+    const onUp = () => {
+      resizeStart.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [width, onWidthChange]);
 
   const hasContent = state.confirmed.length > 0 || state.draft.length > 0;
   const activeThread = state.threads[0] ?? null;
 
+  const posStyle: React.CSSProperties = pos
+    ? { left: pos.x, top: pos.y }
+    : { left: "50%", top: "50%", transform: "translate(-50%, -50%)" };
+
   return (
     <div
+      ref={containerRef}
       style={{
         position: "absolute",
-        top: 16,
-        left: 16,
-        width: 420,
-        minWidth: 280,
-        maxWidth: 680,
-        resize: "horizontal",
-        overflow: "hidden",
+        ...posStyle,
+        width,
         pointerEvents: "all",
-        userSelect: "text",
+        userSelect: "none",
         zIndex: 20,
       }}
     >
-      {/* Header bar */}
+      {/* Header bar — drag handle */}
       <div
+        onMouseDown={onHeaderMouseDown}
         style={{
           display: "flex",
           alignItems: "center",
@@ -98,8 +147,10 @@ export function BlackboardCanvas({ state, runId, onSeed, seeding }: BlackboardCa
           borderBottom: "none",
           borderRadius: "12px 12px 0 0",
           backdropFilter: "blur(12px)",
+          cursor: "grab",
         }}
       >
+        <GripHorizontal size={11} strokeWidth={2} color={BURG_LT} style={{ opacity: 0.5, flexShrink: 0 }} />
         <Layers size={13} strokeWidth={1.8} color={BURG_LT} />
         <span style={{ fontSize: 11, fontWeight: 800, color: BURG_LT, letterSpacing: "0.1em", textTransform: "uppercase", fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
           Blackboard
@@ -162,6 +213,7 @@ export function BlackboardCanvas({ state, runId, onSeed, seeding }: BlackboardCa
           maxHeight: 460,
           overflowY: "auto",
           overflowX: "hidden",
+          userSelect: "text",
         }}
         className="pscroll"
       >
@@ -253,6 +305,22 @@ export function BlackboardCanvas({ state, runId, onSeed, seeding }: BlackboardCa
           </div>
         )}
       </div>
+
+      {/* Right-edge resize handle */}
+      <div
+        onMouseDown={onResizeMouseDown}
+        style={{
+          position: "absolute",
+          top: 0,
+          right: -4,
+          width: 8,
+          bottom: 0,
+          cursor: "ew-resize",
+          zIndex: 30,
+          borderRadius: 4,
+        }}
+        title="Drag to resize"
+      />
     </div>
   );
 }

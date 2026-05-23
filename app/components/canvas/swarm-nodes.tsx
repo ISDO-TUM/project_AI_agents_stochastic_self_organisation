@@ -1,46 +1,64 @@
 "use client";
 
-import { Bot } from "lucide-react";
+import { useRef, useCallback } from "react";
+import { ReceiptText } from "lucide-react";
 import { useTheme } from "@/lib/theme-context";
 import { BURG_LT, BURG_GLOW } from "@/lib/theme";
 
-/** Viewport-anchored Market Maker badge — bottom-left of canvas */
-export function SwarmNodes() {
+interface SwarmNodesProps {
+  pos: { x: number; y: number } | null;
+  onPosChange: (pos: { x: number; y: number }) => void;
+}
+
+/** Draggable Market Maker badge */
+export function SwarmNodes({ pos, onPosChange }: SwarmNodesProps) {
   const { dark } = useTheme();
+  const dragStart = useRef<{ mx: number; my: number; ox: number; oy: number } | null>(null);
+  const nodeRef = useRef<HTMLDivElement>(null);
+
+  const onMouseDown = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const rect = nodeRef.current!.getBoundingClientRect();
+    dragStart.current = { mx: e.clientX, my: e.clientY, ox: rect.left, oy: rect.top };
+    const onMove = (me: MouseEvent) => {
+      if (!dragStart.current) return;
+      onPosChange({
+        x: dragStart.current.ox + (me.clientX - dragStart.current.mx),
+        y: dragStart.current.oy + (me.clientY - dragStart.current.my),
+      });
+    };
+    const onUp = () => {
+      dragStart.current = null;
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", onUp);
+  }, [onPosChange]);
+
+  const posStyle: React.CSSProperties = pos
+    ? { left: pos.x, top: pos.y }
+    : { bottom: 72, left: 24 };
 
   return (
     <>
-      {/* ── Market Maker node — bottom-left corner ── */}
       <div
+        ref={nodeRef}
+        onMouseDown={onMouseDown}
         style={{
           position: "absolute",
-          bottom: 56,
-          left: 24,
+          ...posStyle,
           width: 88,
           height: 88,
-          pointerEvents: "none",
+          pointerEvents: "all",
+          cursor: "grab",
           zIndex: 20,
         }}
       >
         {/* Pulse rings */}
-        <div
-          style={{
-            position: "absolute",
-            inset: -10,
-            borderRadius: "50%",
-            border: `1.5px solid rgba(139,26,47,0.22)`,
-            animation: "mmPulse 3s ease-in-out infinite",
-          }}
-        />
-        <div
-          style={{
-            position: "absolute",
-            inset: -22,
-            borderRadius: "50%",
-            border: `1px solid rgba(139,26,47,0.10)`,
-            animation: "mmPulse 3s ease-in-out infinite 0.8s",
-          }}
-        />
+        <div style={{ position: "absolute", inset: -10, borderRadius: "50%", border: `1.5px solid rgba(139,26,47,0.22)`, animation: "mmPulse 3s ease-in-out infinite", pointerEvents: "none" }} />
+        <div style={{ position: "absolute", inset: -22, borderRadius: "50%", border: `1px solid rgba(139,26,47,0.10)`, animation: "mmPulse 3s ease-in-out infinite 0.8s", pointerEvents: "none" }} />
 
         {/* Core sphere */}
         <div
@@ -60,17 +78,8 @@ export function SwarmNodes() {
             gap: 4,
           }}
         >
-          <Bot size={22} strokeWidth={1.4} color={BURG_LT} />
-          <span
-            style={{
-              fontSize: 7.5,
-              fontWeight: 800,
-              letterSpacing: "0.1em",
-              textTransform: "uppercase",
-              color: BURG_LT,
-              fontFamily: "'Space Grotesk', system-ui, sans-serif",
-            }}
-          >
+          <ReceiptText size={22} strokeWidth={1.4} color={BURG_LT} />
+          <span style={{ fontSize: 7.5, fontWeight: 800, letterSpacing: "0.1em", textTransform: "uppercase", color: BURG_LT, fontFamily: "'Space Grotesk', system-ui, sans-serif" }}>
             Market Maker
           </span>
         </div>
