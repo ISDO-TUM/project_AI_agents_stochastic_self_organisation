@@ -13,6 +13,7 @@ interface AgentNodeProps {
   selected: boolean;
   active: boolean;
   simMode: boolean;
+  zoom: number;
   onSelect: (id: string, e: React.MouseEvent) => void;
   onDragEnd: (id: string, position: { x: number; y: number }) => void;
   onConnectStart: (id: string, e: React.MouseEvent) => void;
@@ -24,6 +25,7 @@ export function AgentNode({
   selected,
   active,
   simMode,
+  zoom,
   onSelect,
   onDragEnd,
   onConnectStart,
@@ -35,6 +37,7 @@ export function AgentNode({
     onSelect,
     onDragEnd,
     simMode,
+    zoom,
   );
 
   const handleConnectMouseDown = useCallback(

@@ -352,6 +352,7 @@ export function Canvas({
             selected={selectedNode === agent.id}
             active={activeNodeId === agent.id}
             simMode={simMode}
+            zoom={zoom}
             onSelect={onSelectNode}
             onDragEnd={onMoveNode}
             onConnectStart={handleConnectStart}
@@ -365,6 +366,7 @@ export function Canvas({
             selected={selectedNode === source.id}
             active={activeNodeId === source.id}
             simMode={simMode}
+            zoom={zoom}
             onSelect={onSelectNode}
             onDragEnd={onMoveNode}
             onConnectStart={handleConnectStart}
