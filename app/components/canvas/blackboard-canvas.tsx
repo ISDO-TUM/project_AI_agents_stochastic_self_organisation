@@ -3,14 +3,15 @@
 import { BlackboardState, ConfirmedEntry, DraftEntry } from "@/lib/types";
 import { useTheme } from "@/lib/theme-context";
 import { getTheme, BURG, BURG_LT, BURG_DIM } from "@/lib/theme";
-import { Pin, FileText, MessageSquare, CheckCircle2, Layers } from "lucide-react";
+import { Pin, FileText, MessageSquare, CheckCircle2, Layers, FlaskConical } from "lucide-react";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 
 interface BlackboardCanvasProps {
   state: BlackboardState;
-  /** World-space center position */
-  x?: number;
-  y?: number;
+  /** null = no run yet, show seed button */
+  runId: string | null;
+  onSeed?: () => void;
+  seeding?: boolean;
 }
 
 function entryTypeStyle(type: ConfirmedEntry["entry_type"], dark: boolean) {
@@ -62,7 +63,7 @@ function DraftCard({ entry, depth = 0 }: { entry: DraftEntry; depth?: number }) 
   );
 }
 
-export function BlackboardCanvas({ state, x = 0, y = 0 }: BlackboardCanvasProps) {
+export function BlackboardCanvas({ state, runId, onSeed, seeding }: BlackboardCanvasProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
 
@@ -73,12 +74,16 @@ export function BlackboardCanvas({ state, x = 0, y = 0 }: BlackboardCanvasProps)
     <div
       style={{
         position: "absolute",
-        left: x - 260,
-        top: y - 180,
-        width: 520,
+        top: 16,
+        left: 16,
+        width: 420,
+        minWidth: 280,
+        maxWidth: 680,
+        resize: "horizontal",
+        overflow: "hidden",
         pointerEvents: "all",
         userSelect: "text",
-        zIndex: 5,
+        zIndex: 20,
       }}
     >
       {/* Header bar */}
@@ -107,11 +112,39 @@ export function BlackboardCanvas({ state, x = 0, y = 0 }: BlackboardCanvasProps)
             </span>
           </>
         )}
-        <div style={{ marginLeft: "auto", display: "flex", gap: 6, alignItems: "center" }}>
-          <div style={{ width: 6, height: 6, borderRadius: "50%", background: state.loading ? "#b5860d" : hasContent ? "#3dba8c" : t.textDim, boxShadow: hasContent && !state.loading ? "0 0 5px #3dba8c88" : "none" }} />
-          <span style={{ fontSize: 9.5, color: t.textDim, fontFamily: "'JetBrains Mono', monospace" }}>
-            {state.loading ? "syncing…" : `${state.confirmed.length} confirmed · ${state.draft.length} draft`}
-          </span>
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
+          {/* Seed button — only when no run yet */}
+          {!runId && onSeed && (
+            <button
+              onClick={onSeed}
+              disabled={seeding}
+              style={{
+                display: "flex", alignItems: "center", gap: 5,
+                padding: "4px 10px",
+                background: BURG,
+                color: "#fff",
+                border: "none",
+                borderRadius: 6,
+                cursor: seeding ? "not-allowed" : "pointer",
+                fontSize: 10.5,
+                fontWeight: 700,
+                opacity: seeding ? 0.6 : 1,
+                fontFamily: "'Space Grotesk', system-ui, sans-serif",
+                boxShadow: `0 2px 8px rgba(139,26,47,0.35)`,
+              }}
+            >
+              <FlaskConical size={10} strokeWidth={2} />
+              {seeding ? "Seeding…" : "Seed test data"}
+            </button>
+          )}
+          {runId && (
+            <>
+              <div style={{ width: 6, height: 6, borderRadius: "50%", background: state.loading ? "#b5860d" : hasContent ? "#3dba8c" : t.textDim, boxShadow: hasContent && !state.loading ? "0 0 5px #3dba8c88" : "none" }} />
+              <span style={{ fontSize: 9.5, color: t.textDim, fontFamily: "'JetBrains Mono', monospace" }}>
+                {state.loading ? "syncing…" : `${state.confirmed.length} confirmed · ${state.draft.length} draft`}
+              </span>
+            </>
+          )}
         </div>
       </div>
 
@@ -126,34 +159,42 @@ export function BlackboardCanvas({ state, x = 0, y = 0 }: BlackboardCanvasProps)
             ? "0 16px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(139,26,47,0.12)"
             : "0 16px 48px rgba(0,0,0,0.12), 0 0 0 1px rgba(139,26,47,0.08)",
           padding: "12px 14px",
-          maxHeight: 480,
+          maxHeight: 460,
           overflowY: "auto",
+          overflowX: "hidden",
         }}
         className="pscroll"
       >
+        {/* No run yet */}
+        {!runId && (
+          <div style={{ textAlign: "center", padding: "28px 0", color: t.textDim, fontSize: 12, fontFamily: "'Space Grotesk', system-ui" }}>
+            Seed a run to populate the blackboard.
+          </div>
+        )}
+
         {/* Loading */}
-        {state.loading && (
+        {runId && state.loading && (
           <div style={{ textAlign: "center", padding: "24px 0", color: t.textDim, fontSize: 12, fontFamily: "'Space Grotesk', system-ui" }}>
             Loading blackboard…
           </div>
         )}
 
         {/* Error */}
-        {!state.loading && state.error && (
+        {runId && !state.loading && state.error && (
           <div style={{ textAlign: "center", padding: "16px 0", color: "#c0392b", fontSize: 12 }}>
             {state.error}
           </div>
         )}
 
         {/* No content yet */}
-        {!state.loading && !state.error && !hasContent && (
+        {runId && !state.loading && !state.error && !hasContent && (
           <div style={{ textAlign: "center", padding: "24px 0", color: t.textDim, fontSize: 12, fontFamily: "'Space Grotesk', system-ui" }}>
             Awaiting first entry…
           </div>
         )}
 
         {/* ── CONFIRMED SECTION ── */}
-        {!state.loading && state.confirmed.length > 0 && (
+        {runId && !state.loading && state.confirmed.length > 0 && (
           <div style={{ marginBottom: 14 }}>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
               <div style={{ flex: 1, height: 1, background: `linear-gradient(to right, rgba(139,26,47,0.4), transparent)` }} />
@@ -197,7 +238,7 @@ export function BlackboardCanvas({ state, x = 0, y = 0 }: BlackboardCanvasProps)
         )}
 
         {/* ── DRAFT SECTION ── */}
-        {!state.loading && state.draft.filter((e) => e.is_visible).length > 0 && (
+        {runId && !state.loading && state.draft.filter((e) => e.is_visible).length > 0 && (
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
               <div style={{ flex: 1, height: 1, background: `linear-gradient(to right, ${t.border}, transparent)` }} />

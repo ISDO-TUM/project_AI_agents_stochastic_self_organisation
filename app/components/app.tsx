@@ -461,7 +461,7 @@ export function App() {
         style={{
           width: runId && appMode !== "swarm"
             ? "30%"
-            : simMode || appMode === "swarm"
+            : simMode
             ? `calc(100vw - ${logSidebarWidth}px)`
             : "100%",
           height: "100%",
@@ -496,6 +496,9 @@ export function App() {
           panAdjust={panAdjust}
           blackboardState={blackboardState}
           appMode={appMode}
+          swarmRunId={appMode === "swarm" ? runId : null}
+          onSeed={handleSeed}
+          seeding={seeding}
         />
 
         <Toolbar
@@ -515,8 +518,8 @@ export function App() {
         <PromptBar simMode={simMode} onRun={handleRun} />
       </div>
 
-      {/* Log wall — topology sim steps OR swarm activity (same component) */}
-      {(simMode || appMode === "swarm") && (
+      {/* Log wall — only shows during active simulation (topology or swarm) */}
+      {simMode && (
         <LogWall
           steps={steps}
           currentStep={cur}
@@ -534,34 +537,6 @@ export function App() {
         <div style={{ flex: 1, height: "100%", overflow: "hidden" }}>
           <BlackboardPanel runId={runId} onRunIdChange={setRunId} />
         </div>
-      )}
-
-      {/* Swarm: seed button on canvas when no run is active yet */}
-      {appMode === "swarm" && !runId && (
-        <button
-          onClick={handleSeed}
-          disabled={seeding}
-          style={{
-            position: "fixed",
-            bottom: 28,
-            left: "50%",
-            transform: "translateX(-50%)",
-            padding: "10px 24px",
-            background: "#8B1A2F",
-            color: "#fff",
-            border: "none",
-            borderRadius: 8,
-            cursor: seeding ? "not-allowed" : "pointer",
-            fontSize: 13,
-            fontWeight: 700,
-            zIndex: 200,
-            opacity: seeding ? 0.6 : 0.9,
-            fontFamily: "'Space Grotesk', system-ui, sans-serif",
-            boxShadow: "0 4px 16px rgba(139,26,47,0.35)",
-          }}
-        >
-          {seeding ? "Seeding…" : "Seed test blackboard"}
-        </button>
       )}
 
       {showTweaks && (

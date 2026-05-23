@@ -33,6 +33,10 @@ interface CanvasProps {
   /** Swarm mode: blackboard state to render in-world */
   blackboardState?: BlackboardState;
   appMode?: "topology" | "swarm" | null;
+  /** Swarm: current run id — controls whether world nodes are visible */
+  swarmRunId?: string | null;
+  onSeed?: () => void;
+  seeding?: boolean;
 }
 
 interface ConnectingState {
@@ -68,6 +72,9 @@ export function Canvas({
   panAdjust,
   blackboardState,
   appMode,
+  swarmRunId,
+  onSeed,
+  seeding,
 }: CanvasProps) {
   const { dark } = useTheme();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -364,14 +371,21 @@ export function Canvas({
             tweaks={tweaks}
           />
         ))}
-        {/* ── Swarm-mode world-space elements ── */}
-        {appMode === "swarm" && (
-          <SwarmNodes boardX={0} boardY={0} />
-        )}
-        {appMode === "swarm" && blackboardState && (
-          <BlackboardCanvas state={blackboardState} x={0} y={0} />
-        )}
+        {/* ── topology-mode edges/agents only, no swarm overlays here ── */}
       </div>
+
+      {/* ── Swarm-mode viewport overlays (not in world transform) ── */}
+      {appMode === "swarm" && swarmRunId && (
+        <SwarmNodes />
+      )}
+      {appMode === "swarm" && blackboardState && (
+        <BlackboardCanvas
+          state={blackboardState}
+          runId={swarmRunId ?? null}
+          onSeed={onSeed}
+          seeding={seeding}
+        />
+      )}
 
       {/* Empty state */}
       {!hasNodes && (
