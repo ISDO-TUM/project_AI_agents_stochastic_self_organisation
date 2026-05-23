@@ -27,6 +27,7 @@ import { TweaksPanel } from "@/components/tweaks-panel";
 import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
 import { BlackboardPanel } from "@/components/blackboard-panel";
+import { ModeGate, AppMode } from "@/components/mode-gate";
 import { getTheme } from "@/lib/theme";
 
 const defaultTweaks: Tweaks = {
@@ -101,6 +102,7 @@ export function App() {
   const [selectedRules, setSelectedRules] = useState<Set<string>>(new Set());
   const [importError, setImportError] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
+  const [appMode, setAppMode] = useState<AppMode | null>(null);
 
   useEffect(() => {
     fetchRules()
@@ -395,6 +397,10 @@ export function App() {
       : null;
   const t = getTheme(dark);
   const hasNodes = agents.length > 0 || sources.length > 0;
+
+  if (!appMode) {
+    return <ModeGate onSelect={setAppMode} />;
+  }
 
   return (
     <div

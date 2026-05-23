@@ -3,7 +3,7 @@
   "private": true,
   "scripts": {
     "dev": "concurrently -c \"green,blue\" -n \"UI,API\" \"pnpm --filter app run dev\" \"pnpm run dev:api\"",
-    "dev:api": "sh -c 'PATH=$HOME/.local/bin:$PATH uv run --project api uvicorn api.index:app --reload --reload-dir api --port 8000'",
+    "dev:api": "sh -c 'PATH=$HOME/.local/bin:$PATH DEBUG=true uv run --project api uvicorn api.index:app --reload --reload-dir api --port 8000'",
     "clean": "rm -rf node_modules app/node_modules api/.venv api/__pycache__"
   },
   "devDependencies": {
