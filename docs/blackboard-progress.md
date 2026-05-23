@@ -30,17 +30,17 @@ cd api && uv run pytest tests/ -v   # should be 38 tests, all green
 | 1 | MIG-01 — File-backed SQLite | ✅ Done | `38ee252`, `0874c58` |
 | 2 | MIG-02 + MIG-03 — ECSAS DB tables | ✅ Done | `8d7cc04`, `8890c20` |
 | 3 | Pydantic Schemas | ✅ Done | `3a77e91`, `9467b85` |
-| 4 | Blackboard.post + Blackboard.read | ⬜ Pending | — |
-| 5 | Blackboard.cite + vote + get_confirmed | ⬜ Pending | — |
-| 6 | Blackboard.check_promotions + soft_delete_stale | ⬜ Pending | — |
-| 7 | Blackboard Tools + Stub Auction Tools | ⬜ Pending | — |
-| 8 | Simulation REST Endpoints | ⬜ Pending | — |
-| 9 | Frontend Types | ⬜ Pending | — |
-| 10 | useBlackboard Hook | ⬜ Pending | — |
-| 11 | DraftEntry Component | ⬜ Pending | — |
-| 12 | DraftSection + ConfirmedSection | ⬜ Pending | — |
-| 13 | BlackboardPanel | ⬜ Pending | — |
-| 14 | Wire BlackboardPanel into App | ⬜ Pending | — |
+| 4 | Blackboard.post + Blackboard.read | ✅ Done | `1afd8a7` |
+| 5 | Blackboard.cite + vote + get_confirmed | ✅ Done | `1afd8a7` |
+| 6 | Blackboard.check_promotions + soft_delete_stale | ✅ Done | `1afd8a7` |
+| 7 | Blackboard Tools + Stub Auction Tools | ✅ Done | `12cae25` |
+| 8 | Simulation REST Endpoints | ✅ Done | `1f0d03a` |
+| 9 | Frontend Types | ✅ Done | `cfb074f` |
+| 10 | useBlackboard Hook | ✅ Done | `cfb074f` |
+| 11 | DraftEntry Component | ✅ Done | `cfb074f` |
+| 12 | DraftSection + ConfirmedSection | ✅ Done | `cfb074f` |
+| 13 | BlackboardPanel | ✅ Done | `cfb074f` |
+| 14 | Wire BlackboardPanel into App | ✅ Done | `cfb074f` |
 
 ---
 
@@ -128,6 +128,78 @@ Commit: `feat(blackboard): implement Blackboard.post and Blackboard.read`
 
 ---
 
+## What Was Built (Tasks 4–14)
+
+### Task 4–6 — Blackboard class (`1afd8a7`)
+
+**`api/swarm/blackboard.py`** — full `Blackboard` class with all five read/write methods:
+- `post()` — INSERT into `draft_entries`, zero-vector embedding stub, returns `entry_id`
+- `read()` — LEFT JOIN with `agents` (author_name) + `citations` (citation_count), mention-pinning, `is_visible` filter, ranked `citation_count DESC, created_at ASC`
+- `cite()` — self-citation guard, UNIQUE constraint handling, updates `last_cited_round`
+- `vote()` — UNIQUE per agent-entry; returns `{"ok": bool}`
+- `get_confirmed()` — SELECT from `confirmed_entries`, optional thread filter
+- `check_promotions()` — dynamic threshold M = max(1, n//3+1), double-promotion guard, inserts to `confirmed_entries`
+- `soft_delete_stale()` — round-1 exemption, `changes()` for count, portable (no RETURNING)
+
+**`api/tests/test_blackboard.py`** — 12 tests covering all methods (TDD).
+
+### Task 7 — Blackboard Tools (`12cae25`)
+
+**`api/tools/builtin/blackboard_tools.py`** — 7 tool classes:
+- `ReadBlackboardTool`, `PostToBlackboardTool`, `CiteTool`, `VoteTool`, `GetConfirmedTool` — fully implemented, delegate to `Blackboard` class
+- `SubmitBidTool`, `AbstainTool` — Phase 2 stubs (return static JSON)
+
+**`api/tools/registry.py`** — all 7 tools registered alongside `FilesTool`.
+
+### Task 8 — Simulation REST Endpoints (`1f0d03a`)
+
+**`api/routes/simulation.py`** — two endpoints:
+- `GET /api/simulation/{run_id}/blackboard` — returns `BlackboardResponse` with `threads`, `confirmed`, `draft` (tree-nested via `_build_draft_tree`). Query params: `thread_id`, `layer` (draft/confirmed/both), `include_deleted`. 404 for unknown run.
+- `POST /api/simulation/seed` — creates run+contract+thread+anchor, seeds draft proposals from given `agent_ids`. Gated on `DEBUG=true` (returns 403 in production).
+
+**`api/routes/__init__.py`** + **`api/index.py`** — router exported and mounted.
+
+**`api/tests/test_simulation.py`** — 5 tests (404, seed, blackboard retrieval, thread filter, DEBUG gate).
+
+### Tasks 9–14 — Frontend (`cfb074f`)
+
+**`app/lib/types.ts`** — added `SwarmSimStepType` (union of all ECSAS event types), `ThreadInfo`, `ConfirmedEntry`, `DraftEntry` (recursive), `BlackboardState`.
+
+**`app/hooks/useBlackboard.ts`** — `useBlackboard(runId)` hook:
+- REST-fetches on `runId` change, populates `BlackboardState`
+- `dispatch(event)` applies optimistic updates for `bb-post`, `bb-promote`, `bb-delete`, `bb-cite`, `bb-vote`
+
+**`app/components/draft-entry.tsx`** — `DraftEntryComponent` — recursive, depth-indented, shows badge (P/R/V/⚙), author, round, citation count, children.
+
+**`app/components/confirmed-section.tsx`** — `ConfirmedSection` — gold-bordered anchors (📌) and findings (✅).
+
+**`app/components/draft-section.tsx`** — `DraftSection` — wraps `DraftEntryComponent` list with section header.
+
+**`app/components/blackboard-panel.tsx`** — `BlackboardPanel` — full panel with:
+- Thread tabs (§1, §2, …)
+- Loading / error / empty states
+- "Seed test data" button (calls `POST /api/simulation/seed`)
+- Close (×) button
+
+**`app/components/app.tsx`** — wired:
+- `runId` state added
+- Canvas container shrinks to 30% width when `runId` is set
+- `BlackboardPanel` renders in remaining 70%
+- Floating "Blackboard" dev button (bottom-right, hidden in simMode)
+
+---
+
+## What's Next — Phase 2 (Out of Scope for this branch)
+
+- **Market Maker** (`api/swarm/market_maker.py`) — LLM-powered contract decomposition
+- **Auction Engine** (`api/swarm/auction.py`) — bid evaluation, taker selection
+- **Orchestrator** (`api/swarm/orchestrator.py`) — round loop, SSE streaming
+- **Real embeddings** — replace `_ZERO_EMBEDDING` with `text-embedding-3-small` calls
+- **Canvas swarm nodes** — Market Maker node, Blackboard node, swarm animations
+- **SSE wiring** — connect `useBlackboard.dispatch` to the `GET /api/simulation/swarm` SSE stream
+
+---
+
 ## Key Decisions (for context)
 
 - **Option B scope**: Phase 1 (DB + schema) + Phase 3 (Blackboard + frontend). Market Maker, Auction Engine, Orchestrator are **out of scope** (Phase 2).
@@ -148,29 +220,29 @@ api/
 ├── schemas/__init__.py         ← Modified: extended _SimStepType
 ├── swarm/
 │   ├── __init__.py             ← Created (empty)
-│   └── schemas.py              ← Created: 9 Pydantic schemas
-│   # blackboard.py             ← TODO Task 4
+│   ├── schemas.py              ← Created: 9 Pydantic schemas
+│   └── blackboard.py           ← Created: Blackboard class (Tasks 4-6)
 ├── tools/
-│   # builtin/blackboard_tools.py  ← TODO Task 7
-│   # registry.py               ← TODO Task 7 (modify)
+│   ├── builtin/blackboard_tools.py  ← Created: 7 tool classes (Task 7)
+│   └── registry.py             ← Modified: 7 new tools registered (Task 7)
 ├── routes/
-│   # simulation.py             ← TODO Task 8
-│   # __init__.py               ← TODO Task 8 (modify)
-├── index.py                    ← TODO Task 8 (modify: mount router)
+│   ├── simulation.py           ← Created: GET /blackboard + POST /seed (Task 8)
+│   └── __init__.py             ← Modified: exports simulation_router (Task 8)
+├── index.py                    ← Modified: mounts simulation_router (Task 8)
 └── tests/
     ├── conftest.py             ← Modified: DB_PATH=:memory:
     ├── test_schema.py          ← Created: 4 DB migration tests
-    # test_blackboard.py        ← TODO Task 4
-    # test_simulation.py        ← TODO Task 8
+    ├── test_blackboard.py      ← Created: 12 Blackboard tests (Tasks 4-6)
+    └── test_simulation.py      ← Created: 5 endpoint tests (Task 8)
 
 app/
-├── lib/types.ts                ← TODO Task 9
+├── lib/types.ts                ← Modified: ECSAS swarm types (Task 9)
 ├── hooks/
-│   # useBlackboard.ts          ← TODO Task 10
+│   └── useBlackboard.ts        ← Created: REST-init + SSE-ready dispatch (Task 10)
 └── components/
-    # draft-entry.tsx            ← TODO Task 11
-    # draft-section.tsx          ← TODO Task 12
-    # confirmed-section.tsx      ← TODO Task 12
-    # blackboard-panel.tsx       ← TODO Task 13
-    app.tsx                     ← TODO Task 14 (modify: add runId state + panel)
+    ├── draft-entry.tsx         ← Created: recursive DraftEntry component (Task 11)
+    ├── draft-section.tsx       ← Created: DraftSection wrapper (Task 12)
+    ├── confirmed-section.tsx   ← Created: ConfirmedSection (Task 12)
+    ├── blackboard-panel.tsx    ← Created: BlackboardPanel with thread tabs (Task 13)
+    └── app.tsx                 ← Modified: runId state + 30/70 layout split (Task 14)
 ```
