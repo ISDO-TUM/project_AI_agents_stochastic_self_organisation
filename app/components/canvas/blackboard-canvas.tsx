@@ -20,6 +20,7 @@ interface BlackboardCanvasProps {
   onWidthChange: (w: number) => void;
   height: number;
   onHeightChange: (h: number) => void;
+  zoom?: number;
 }
 
 function entryTypeStyle(type: ConfirmedEntry["entry_type"], dark: boolean) {
@@ -71,7 +72,7 @@ function DraftCard({ entry, depth = 0 }: { entry: DraftEntry; depth?: number }) 
   );
 }
 
-export function BlackboardCanvas({ state, runId, onSeed, seeding, pos, onPosChange, width, onWidthChange, height, onHeightChange }: BlackboardCanvasProps) {
+export function BlackboardCanvas({ state, runId, onSeed, seeding, pos, onPosChange, width, onWidthChange, height, onHeightChange, zoom = 1 }: BlackboardCanvasProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
 
@@ -155,6 +156,8 @@ export function BlackboardCanvas({ state, runId, onSeed, seeding, pos, onPosChan
         pointerEvents: "all",
         userSelect: "none",
         zIndex: 20,
+        transform: `scale(${zoom})`,
+        transformOrigin: "top left",
         // shadow so it floats visually
         filter: "drop-shadow(0 8px 32px rgba(0,0,0,0.35))",
       }}

@@ -416,19 +416,19 @@ export function Canvas({
               }}
             >
               <line
-                x1={mmPos.x + 88}
-                y1={mmPos.y + 44}
+                x1={mmPos.x + MM_SIZE * zoom}
+                y1={mmPos.y + (MM_SIZE / 2) * zoom}
                 x2={bbPos.x}
-                y2={bbPos.y + 19}
+                y2={bbPos.y + 19 * zoom}
                 stroke="rgba(139,26,47,0.4)"
                 strokeWidth="1.5"
                 strokeDasharray="6,4"
               />
-              <circle cx={mmPos.x + 88} cy={mmPos.y + 44} r="3" fill="rgba(139,26,47,0.5)" />
-              <circle cx={bbPos.x} cy={bbPos.y + 19} r="3" fill="rgba(139,26,47,0.5)" />
+              <circle cx={mmPos.x + MM_SIZE * zoom} cy={mmPos.y + (MM_SIZE / 2) * zoom} r="3" fill="rgba(139,26,47,0.5)" />
+              <circle cx={bbPos.x} cy={bbPos.y + 19 * zoom} r="3" fill="rgba(139,26,47,0.5)" />
             </svg>
           )}
-          <SwarmNodes pos={mmPos} onPosChange={setMmPos} />
+          <SwarmNodes pos={mmPos} onPosChange={setMmPos} zoom={zoom} />
           <BlackboardCanvas
             state={blackboardState ?? { confirmed: [], draft: [], threads: [], loading: false, error: null }}
             runId={swarmRunId ?? null}
@@ -440,6 +440,7 @@ export function Canvas({
             onWidthChange={setBbWidth}
             height={bbHeight}
             onHeightChange={setBbHeight}
+            zoom={zoom}
           />
         </>
       )}

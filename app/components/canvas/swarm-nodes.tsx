@@ -8,10 +8,11 @@ import { BURG_LT, BURG_GLOW } from "@/lib/theme";
 interface SwarmNodesProps {
   pos: { x: number; y: number } | null;
   onPosChange: (pos: { x: number; y: number }) => void;
+  zoom?: number;
 }
 
 /** Draggable Market Maker badge */
-export function SwarmNodes({ pos, onPosChange }: SwarmNodesProps) {
+export function SwarmNodes({ pos, onPosChange, zoom = 1 }: SwarmNodesProps) {
   const { dark } = useTheme();
   const dragStart = useRef<{ mx: number; my: number; ox: number; oy: number } | null>(null);
   const nodeRef = useRef<HTMLDivElement>(null);
@@ -54,6 +55,8 @@ export function SwarmNodes({ pos, onPosChange }: SwarmNodesProps) {
           pointerEvents: "all",
           cursor: "grab",
           zIndex: 20,
+          transform: `scale(${zoom})`,
+          transformOrigin: "top left",
         }}
       >
         {/* Pulse rings */}
