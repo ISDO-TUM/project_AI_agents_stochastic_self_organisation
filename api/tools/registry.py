@@ -8,6 +8,15 @@ from typing import Any
 from api.schemas import ToolCall
 from api.tools.base import Tool
 from api.tools.builtin.files import FilesTool
+from api.tools.builtin.blackboard_tools import (
+    AbstainTool,
+    CiteTool,
+    GetConfirmedTool,
+    PostToBlackboardTool,
+    ReadBlackboardTool,
+    SubmitBidTool,
+    VoteTool,
+)
 
 # ── registry ───────────────────────────────────────────────────────
 
@@ -23,6 +32,13 @@ def get_tool(name: str) -> Tool | None:
 
 
 register(FilesTool())
+register(ReadBlackboardTool())
+register(PostToBlackboardTool())
+register(CiteTool())
+register(VoteTool())
+register(GetConfirmedTool())
+register(SubmitBidTool())
+register(AbstainTool())
 
 # ── provider format builders ───────────────────────────────────────
 
