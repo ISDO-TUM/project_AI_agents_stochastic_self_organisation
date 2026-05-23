@@ -14,8 +14,8 @@ Discussion phase (repeated `rounds` times)
 
 Three consensus modes are supported via `mode`:
 
-- ``broadcast_no_consensus``: discussion-only, no consensus operator. Returns no
-  final answer; useful for free-form exploration.
+- ``broadcast_no_consensus``: discussion-only, no consensus operator; useful for
+  free-form exploration.
 - ``weighted_opinion_pooling``: each agent maintains a trust weight vector over its
   neighbours. Replies are presented to the agent labelled with weights;
   weights are updated each round based on textual agreement (Jaccard).
@@ -36,8 +36,6 @@ from __future__ import annotations
 
 import asyncio
 import re
-import uuid
-from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Literal
 
@@ -52,7 +50,7 @@ from api.db import (
     record_message,
 )
 from api.llm import call_agent
-from api.schemas import SimulationStep, ToolCall
+from api.schemas import ToolCall
 
 ConsensusMode = Literal[
     "broadcast_no_consensus",
@@ -63,15 +61,6 @@ MessageDelivery = tuple[str | None, str, str]
 SelfMessage = tuple[str, str]
 
 # ── helpers ───────────────────────────────────────────────────────────────────
-
-
-def _ts() -> str:
-    d = datetime.now()
-    return f"{d.hour:02d}:{d.minute:02d}:{d.second:02d}"
-
-
-def _step(**kwargs: Any) -> SimulationStep:
-    return SimulationStep(id=str(uuid.uuid4()), ts=_ts(), **kwargs)
 
 
 async def _call_agent(
@@ -89,21 +78,6 @@ async def _call_agent(
         tool_context={"db": db, "agent_id": agent["id"]},
     )
     return str(response), tools_used
-
-
-def _tool_steps(tools_used: list[ToolCall], node_id: str) -> list[SimulationStep]:
-    """Convert tool calls into SimulationStep log entries, one entry per tool name."""
-    out = []
-    for tool in _last_tool_calls(tools_used):
-        out.append(
-            _step(
-                label=tool.name,
-                msg=_format_tool_message(tool),
-                type="tool",
-                node_id=node_id,
-            )
-        )
-    return out
 
 
 def _last_tool_calls(tools_used: list[ToolCall]) -> list[ToolCall]:
@@ -146,25 +120,6 @@ def _jaccard(a: str, b: str) -> float:
     if not sa or not sb:
         return 0.0
     return len(sa & sb) / len(sa | sb)
-
-
-def _centroid_response(responses: dict[str, str]) -> tuple[str | None, str | None]:
-    """The reply most similar to all others (highest summed Jaccard).
-
-    Returns (centroid_text, centroid_agent_id) — both None if no replies.
-    """
-    if not responses:
-        return None, None
-    items = list(responses.items())
-    if len(items) == 1:
-        aid, r = items[0]
-        return r, aid
-    best_id, best_text, best_score = None, None, -1.0
-    for aid, r in items:
-        score = sum(_jaccard(r, other) for oaid, other in items if oaid != aid)
-        if score > best_score:
-            best_score, best_id, best_text = score, aid, r
-    return best_text, best_id
 
 
 _REASON_RE = re.compile(r"^\s*REASON:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
@@ -377,18 +332,6 @@ async def _create_self_message_round(
     return int(await create_round(db, trial_id, round_index, phase))
 
 
-# ── outcome ───────────────────────────────────────────────────────────────────
-
-
-@dataclass
-class SimulationOutcome:
-    steps: list[SimulationStep] = field(default_factory=list)
-    consensus: str | None = None
-    consensus_agent_id: str | None = None
-    converged: bool = False
-    rounds_used: int = 0
-
-
 # ── public interface ──────────────────────────────────────────────────────────
 
 
@@ -399,28 +342,28 @@ async def run_topology(
     mode: ConsensusMode = "broadcast_no_consensus",
     agent_context: dict[str, str] | None = None,
     trial_id: str | None = None,
-) -> SimulationOutcome:
+) -> None:
     """Run a topology simulation under the chosen consensus mode."""
     async with db.execute("SELECT * FROM agents") as cur:
         rows = await cur.fetchall()
     agents: list[dict[str, Any]] = [deserialise_agent_row(row) for row in rows]
 
     if not agents:
-        return SimulationOutcome()
+        return
 
     incoming = _build_incoming(agents)
     if trial_id is None:
         trial_id = await create_trial(db, prompt, _trial_description(mode), mode)
 
     if mode == "weighted_opinion_pooling":
-        return await _run_weighted_opinion_pool(
+        await _run_weighted_opinion_pool(
             prompt, agents, incoming, db, rounds, agent_context, trial_id
         )
+        return
     if mode == "plurality_voting":
-        return await _run_voting(prompt, agents, incoming, db, rounds, agent_context, trial_id)
-    return await _run_broadcast_no_consensus(
-        prompt, agents, incoming, db, rounds, agent_context, trial_id
-    )
+        await _run_voting(prompt, agents, incoming, db, rounds, agent_context, trial_id)
+        return
+    await _run_broadcast_no_consensus(prompt, agents, incoming, db, rounds, agent_context, trial_id)
 
 
 # ── mode 1: broadcast (no consensus) ──────────────────────────────────────────
@@ -434,15 +377,8 @@ async def _run_broadcast_no_consensus(
     rounds: int,
     agent_context: dict[str, str] | None,
     trial_id: str,
-) -> SimulationOutcome:
+) -> None:
     agent_by_id = {a["id"]: a for a in agents}
-    steps: list[SimulationStep] = [
-        _step(
-            label="SYSTEM",
-            msg=f"Broadcasting to {len(agents)} agent{'s' if len(agents) != 1 else ''}…",
-            type="system",
-        )
-    ]
     await _persist_system_broadcast(db, trial_id, agents, prompt, "broadcast_no_consensus")
     broadcast_output_round_id = await _create_self_message_round(
         db, trial_id, 2, "broadcast_no_consensus_outputs"
@@ -450,7 +386,7 @@ async def _run_broadcast_no_consensus(
 
     async def _broadcast(
         agent: dict[str, Any],
-    ) -> tuple[str, list[SimulationStep]]:
+    ) -> str:
         agent_id = str(agent["id"])
         try:
             response, tools_used = await _call_agent(
@@ -461,48 +397,30 @@ async def _run_broadcast_no_consensus(
             await _persist_self_messages(
                 db, broadcast_output_round_id, agent_id, [("agent_error", err)]
             )
-            return (
-                err,
-                [_step(label=agent["name"], msg=err, type="system", node_id=agent_id)],
-            )
-        agent_steps = _tool_steps(tools_used, agent_id)
-        agent_steps.append(
-            _step(label=agent["name"], msg=response, type="system", node_id=agent_id)
-        )
+            return err
         await _persist_self_messages(
             db, broadcast_output_round_id, agent_id, _self_messages(response, tools_used)
         )
-        return response, agent_steps
+        return response
 
     bcast = await asyncio.gather(*[_broadcast(a) for a in agents])
     responses: dict[str, str] = {}
-    for agent, (response, agent_steps) in zip(agents, bcast, strict=True):
+    for agent, response in zip(agents, bcast, strict=True):
         agent_id = str(agent["id"])
         responses[agent_id] = response
-        steps.extend(agent_steps)
 
-    rounds_used = 0
     for round_num in range(1, rounds + 1):
         if not any(incoming.values()):
             break
-        rounds_used = round_num
         round_id = await create_round(db, trial_id, round_num + 2, "discussion")
-
-        steps.append(
-            _step(
-                label="SYSTEM",
-                msg=f"Discussion round {round_num} — agents exchange responses…",
-                type="system",
-            )
-        )
 
         async def _discuss(
             agent: dict[str, Any],
             current_round_id: int = round_id,
-        ) -> tuple[str | None, list[SimulationStep]]:
+        ) -> str | None:
             senders = [sid for sid in incoming[agent["id"]] if sid in responses]
             if not senders:
-                return None, []
+                return None
 
             context_lines = [f"- {agent_by_id[sid]['name']}: {responses[sid]}" for sid in senders]
             discussion_prompt = (
@@ -512,17 +430,6 @@ async def _run_broadcast_no_consensus(
                 + "\n\nConsidering these perspectives, what is your updated view?"
             )
 
-            edge_steps = [
-                _step(
-                    label=agent_by_id[sid]["name"],
-                    msg=responses[sid],
-                    type="agent-to-agent",
-                    target=agent["name"],
-                    from_id=sid,
-                    to_id=agent["id"],
-                )
-                for sid in senders
-            ]
             agent_id = str(agent["id"])
             deliveries: list[MessageDelivery] = [(sid, agent_id, responses[sid]) for sid in senders]
             await _persist_agent_deliveries(db, current_round_id, deliveries, "agent_to_agent")
@@ -532,35 +439,21 @@ async def _run_broadcast_no_consensus(
             except Exception as exc:
                 err = f"[error: {exc}]"
                 await _persist_self_messages(db, current_round_id, agent_id, [("agent_error", err)])
-                return (
-                    err,
-                    [
-                        *edge_steps,
-                        _step(label=agent["name"], msg=err, type="system", node_id=agent["id"]),
-                    ],
-                )
+                return err
 
-            reply_steps = _tool_steps(tools_used, agent_id)
-            reply_steps.append(
-                _step(label=agent["name"], msg=response, type="system", node_id=agent_id)
-            )
             await _persist_self_messages(
                 db, current_round_id, agent_id, _self_messages(response, tools_used)
             )
-            return response, [*edge_steps, *reply_steps]
+            return response
 
         results = await asyncio.gather(*[_discuss(a) for a in agents])
 
         new_responses: dict[str, str] = {}
-        for agent, (new_resp, new_steps) in zip(agents, results, strict=True):
+        for agent, new_resp in zip(agents, results, strict=True):
             agent_id = str(agent["id"])
             if new_resp is not None:
                 new_responses[agent_id] = new_resp
-                steps.extend(new_steps)
         responses.update(new_responses)
-
-    steps.append(_step(label="SYSTEM", msg="Simulation complete.", type="system"))
-    return SimulationOutcome(steps=steps, rounds_used=rounds_used)
 
 
 # ── mode 2: weighted opinion pooling (Option A) ───────────────────────────────
@@ -578,15 +471,8 @@ async def _run_weighted_opinion_pool(
     rounds: int,
     agent_context: dict[str, str] | None,
     trial_id: str,
-) -> SimulationOutcome:
+) -> None:
     agent_by_id = {a["id"]: a for a in agents}
-    steps: list[SimulationStep] = [
-        _step(
-            label="SYSTEM",
-            msg=f"Weighted opinion pooling — broadcasting to {len(agents)} agents.",
-            type="system",
-        )
-    ]
     await _persist_system_broadcast(
         db,
         trial_id,
@@ -606,7 +492,7 @@ async def _run_weighted_opinion_pool(
 
     async def _broadcast(
         agent: dict[str, Any],
-    ) -> tuple[str, list[SimulationStep]]:
+    ) -> str:
         agent_id = str(agent["id"])
         try:
             response, tools = await _call_agent(
@@ -617,53 +503,30 @@ async def _run_weighted_opinion_pool(
             await _persist_self_messages(
                 db, broadcast_output_round_id, agent_id, [("agent_error", err)]
             )
-            return (
-                err,
-                [_step(label=agent["name"], msg=err, type="system", node_id=agent_id)],
-            )
-        agent_steps = _tool_steps(tools, agent_id)
-        agent_steps.append(
-            _step(label=agent["name"], msg=response, type="system", node_id=agent_id)
-        )
+            return err
         await _persist_self_messages(
             db, broadcast_output_round_id, agent_id, _self_messages(response, tools)
         )
-        return response, agent_steps
+        return response
 
     bcast = await asyncio.gather(*[_broadcast(a) for a in agents])
     responses: dict[str, str] = {}
-    for agent, (resp, agent_steps) in zip(agents, bcast, strict=True):
+    for agent, resp in zip(agents, bcast, strict=True):
         agent_id = str(agent["id"])
         responses[agent_id] = resp
-        steps.extend(agent_steps)
-
-    # Snapshot broadcast replies for provenance-based routing attribution.
-    broadcast_responses: dict[str, str] = dict(responses)
-
-    rounds_used = 0
-    converged = False
 
     for round_num in range(1, rounds + 1):
         if not any(incoming.values()):
             break
-        rounds_used = round_num
         round_id = await create_round(db, trial_id, round_num + 2, "weighted_opinion_pooling")
-
-        steps.append(
-            _step(
-                label="SYSTEM",
-                msg=f"Round {round_num} — weighted opinion pooling.",
-                type="system",
-            )
-        )
 
         async def _discuss(
             agent: dict[str, Any],
             current_round_id: int = round_id,
-        ) -> tuple[str | None, list[SimulationStep]]:
+        ) -> str | None:
             nbrs = [n for n in incoming[agent["id"]] if n in responses]
             if not nbrs:
-                return None, []
+                return None
 
             weights = trust[agent["id"]]
             context_lines = [
@@ -677,17 +540,6 @@ async def _run_weighted_opinion_pool(
                 + "\n\nGiving more weight to higher-trust voices, what is your updated answer?"
             )
 
-            edge_steps = [
-                _step(
-                    label=agent_by_id[n]["name"],
-                    msg=responses[n],
-                    type="agent-to-agent",
-                    target=agent["name"],
-                    from_id=n,
-                    to_id=agent["id"],
-                )
-                for n in nbrs
-            ]
             agent_id = str(agent["id"])
             deliveries: list[MessageDelivery] = [(n, agent_id, responses[n]) for n in nbrs]
             await _persist_agent_deliveries(
@@ -699,30 +551,21 @@ async def _run_weighted_opinion_pool(
             except Exception as exc:
                 err = f"[error: {exc}]"
                 await _persist_self_messages(db, current_round_id, agent_id, [("agent_error", err)])
-                return (
-                    err,
-                    [
-                        *edge_steps,
-                        _step(label=agent["name"], msg=err, type="system", node_id=agent["id"]),
-                    ],
-                )
+                return err
 
-            tool_s = _tool_steps(tools, agent_id)
-            tool_s.append(_step(label=agent["name"], msg=resp, type="system", node_id=agent_id))
             await _persist_self_messages(
                 db, current_round_id, agent_id, _self_messages(resp, tools)
             )
-            return resp, [*edge_steps, *tool_s]
+            return resp
 
         results = await asyncio.gather(*[_discuss(a) for a in agents])
 
         prev_responses = dict(responses)
         new_responses: dict[str, str] = {}
-        for agent, (new_resp, new_steps) in zip(agents, results, strict=True):
+        for agent, new_resp in zip(agents, results, strict=True):
             agent_id = str(agent["id"])
             if new_resp is not None:
                 new_responses[agent_id] = new_resp
-                steps.extend(new_steps)
 
         # Trust update: increase weight on neighbours whose latest reply
         # agrees most (Jaccard) with the agent's own latest reply.
@@ -757,46 +600,7 @@ async def _run_weighted_opinion_pool(
         responses.update(new_responses)
 
         if max_trust_change < _WEIGHT_EPSILON:
-            steps.append(
-                _step(
-                    label="SYSTEM",
-                    msg=f"Converged after {round_num} round(s) — Δtrust={max_trust_change:.3f}.",
-                    type="system",
-                )
-            )
-            converged = True
             break
-
-    consensus, _centroid_aid = _centroid_response(responses)
-
-    # Provenance attribution: trace the consensus back to whichever agent's
-    # initial broadcast reply most resembled the final consensus string.
-    # That points to the original information source rather than whichever
-    # agent's final reply happened to be the most central in the cluster.
-    consensus_aid: str | None = None
-    if consensus is not None and broadcast_responses:
-        consensus_aid = max(
-            broadcast_responses.items(),
-            key=lambda kv: _jaccard(kv[1], consensus),
-        )[0]
-
-    if consensus is not None:
-        steps.append(
-            _step(
-                label="SYSTEM",
-                msg=f"Selected consensus answer (centroid of replies):\n{consensus}",
-                type="system",
-                node_id=consensus_aid,
-            )
-        )
-    steps.append(_step(label="SYSTEM", msg="Simulation complete.", type="system"))
-    return SimulationOutcome(
-        steps=steps,
-        consensus=consensus,
-        consensus_agent_id=consensus_aid,
-        converged=converged,
-        rounds_used=rounds_used,
-    )
 
 
 # ── mode 3: plurality voting (Option B) ───────────────────────────────────────
@@ -813,15 +617,8 @@ async def _run_voting(
     rounds: int,
     agent_context: dict[str, str] | None,
     trial_id: str,
-) -> SimulationOutcome:
+) -> None:
     agent_by_id = {a["id"]: a for a in agents}
-    steps: list[SimulationStep] = [
-        _step(
-            label="SYSTEM",
-            msg=f"Plurality voting — broadcasting to {len(agents)} agents.",
-            type="system",
-        )
-    ]
     next_round_index = 1
     await _persist_system_broadcast(
         db,
@@ -839,7 +636,7 @@ async def _run_voting(
 
     async def _broadcast(
         agent: dict[str, Any],
-    ) -> tuple[str, str | None, str | None, list[SimulationStep]]:
+    ) -> tuple[str, str | None, str | None]:
         agent_id = str(agent["id"])
         full_prompt = _with_context(prompt, agent_id, agent_context) + _VOTE_INSTRUCTION
         try:
@@ -849,55 +646,37 @@ async def _run_voting(
             await _persist_self_messages(
                 db, broadcast_output_round_id, agent_id, [("agent_error", err)]
             )
-            return (
-                err,
-                None,
-                None,
-                [_step(label=agent["name"], msg=err, type="system", node_id=agent_id)],
-            )
+            return err, None, None
         vote = _extract_vote(response)
         reason = _extract_reason(response)
-        agent_steps = _tool_steps(tools, agent_id)
-        agent_steps.append(
-            _step(label=agent["name"], msg=response, type="system", node_id=agent_id)
-        )
         await _persist_self_messages(
             db, broadcast_output_round_id, agent_id, _self_messages(response, tools)
         )
-        return response, vote, reason, agent_steps
+        return response, vote, reason
 
     bcast = await asyncio.gather(*[_broadcast(a) for a in agents])
     responses: dict[str, str] = {}
     votes: dict[str, str | None] = {}
     reasons: dict[str, str | None] = {}
-    for agent, (resp, vote, reason, agent_steps) in zip(agents, bcast, strict=True):
+    for agent, (resp, vote, reason) in zip(agents, bcast, strict=True):
         agent_id = str(agent["id"])
         responses[agent_id] = resp
         votes[agent_id] = vote
         reasons[agent_id] = reason
-        steps.extend(agent_steps)
-
-    # Snapshot the initial broadcast votes for provenance-based routing attribution.
-    broadcast_votes: dict[str, str | None] = dict(votes)
 
     plurality, counts = _tally(votes)
     tally_message = _format_tally(plurality, counts)
     await _persist_system_self_message(db, broadcast_output_round_id, "vote_tally", tally_message)
-    steps.append(_step(label="TALLY", msg=tally_message, type="system"))
 
-    rounds_used = 0
-    converged = False
     # The broadcast already produced one round of votes — count it toward the
     # stability streak so a single matching follow-up converges (broadcast +
     # 1 follow-up = 2 vote rounds total).
     stable_streak = 1
     last_plurality = plurality
 
-    for round_num in range(1, rounds + 1):
-        rounds_used = round_num
+    for _ in range(1, rounds + 1):
         round_id = await create_round(db, trial_id, next_round_index, "plurality_voting")
         next_round_index += 1
-        steps.append(_step(label="SYSTEM", msg=f"Voting round {round_num}.", type="system"))
         tally_msg = _format_tally(plurality, counts)
         reasons_msg = _format_vote_reasons(agents, votes, reasons)
 
@@ -906,12 +685,7 @@ async def _run_voting(
             tally_msg: str = tally_msg,
             reasons_msg: str = reasons_msg,
             current_round_id: int = round_id,
-        ) -> tuple[
-            str,
-            str | None,
-            str | None,
-            list[SimulationStep],
-        ]:
+        ) -> tuple[str, str | None, str | None]:
             nbrs = [n for n in incoming[agent["id"]] if n in responses]
             own_prev = responses.get(agent["id"], "")
 
@@ -938,17 +712,6 @@ async def _run_voting(
                     f"{reasons.get(n) or 'No reason provided.'}"
                     for n in nbrs
                 ]
-                edge_steps = [
-                    _step(
-                        label=agent_by_id[n]["name"],
-                        msg=responses[n],
-                        type="agent-to-agent",
-                        target=agent["name"],
-                        from_id=n,
-                        to_id=agent["id"],
-                    )
-                    for n in nbrs
-                ]
                 agent_id = str(agent["id"])
                 deliveries: list[MessageDelivery] = [(n, agent_id, responses[n]) for n in nbrs]
                 delivery_type = "voting_agent_to_agent"
@@ -966,7 +729,6 @@ async def _run_voting(
                 )
             else:
                 # Isolated agent: fall back to global tally so it isn't blind.
-                edge_steps = []
                 agent_id = str(agent["id"])
                 deliveries = [(None, agent_id, f"{tally_msg}\n\n{reasons_msg}")]
                 delivery_type = "voting_tally"
@@ -988,47 +750,25 @@ async def _run_voting(
             except Exception as exc:
                 err = f"[error: {exc}]"
                 await _persist_self_messages(db, current_round_id, agent_id, [("agent_error", err)])
-                return (
-                    err,
-                    None,
-                    None,
-                    [
-                        *edge_steps,
-                        _step(label=agent["name"], msg=err, type="system", node_id=agent_id),
-                    ],
-                )
+                return err, None, None
             v = _extract_vote(resp)
             r = _extract_reason(resp)
-            tool_s = _tool_steps(tools, agent_id)
-            tool_s.append(_step(label=agent["name"], msg=resp, type="system", node_id=agent_id))
             await _persist_self_messages(
                 db, current_round_id, agent_id, _self_messages(resp, tools)
             )
-            return (
-                resp,
-                v,
-                r,
-                [*edge_steps, *tool_s],
-            )
+            return resp, v, r
 
         results = await asyncio.gather(*[_discuss(a) for a in agents])
 
-        for agent, (
-            resp,
-            vote,
-            reason,
-            agent_steps,
-        ) in zip(agents, results, strict=True):
+        for agent, (resp, vote, reason) in zip(agents, results, strict=True):
             agent_id = str(agent["id"])
             responses[agent_id] = resp
             votes[agent_id] = vote
             reasons[agent_id] = reason
-            steps.extend(agent_steps)
 
         plurality, counts = _tally(votes)
         tally_message = _format_tally(plurality, counts)
         await _persist_system_self_message(db, round_id, "vote_tally", tally_message)
-        steps.append(_step(label="TALLY", msg=tally_message, type="system"))
 
         if plurality is not None and plurality == last_plurality:
             stable_streak += 1
@@ -1037,29 +777,4 @@ async def _run_voting(
         last_plurality = plurality
 
         if stable_streak >= _VOTE_STABILITY_K:
-            steps.append(
-                _step(
-                    label="SYSTEM",
-                    msg=f"Vote stable for {stable_streak} round(s) — converged.",
-                    type="system",
-                )
-            )
-            converged = True
             break
-
-    # Provenance attribution: pick the first agent who voted for the final
-    # plurality in the *broadcast* round, not the latest round. Late folders
-    # are not the source of the answer; the initial voter is.
-    consensus_aid = (
-        next((aid for aid, v in broadcast_votes.items() if v == plurality), None)
-        if plurality
-        else None
-    )
-    steps.append(_step(label="SYSTEM", msg="Simulation complete.", type="system"))
-    return SimulationOutcome(
-        steps=steps,
-        consensus=plurality,
-        consensus_agent_id=consensus_aid,
-        converged=converged,
-        rounds_used=rounds_used,
-    )

@@ -441,22 +441,6 @@ class CreateDemoBenchmarkResponse(BaseModel):
 
 # ── Simulation ────────────────────────────────────────────────────────────────
 
-_SimStepType = Literal["system", "agent-to-agent", "tool", "agent-to-source"]
-
-
-class SimulationStep(BaseModel):
-    """A single event in the simulation log, mirroring the frontend SimStep type."""
-
-    id: str
-    ts: str
-    label: str
-    msg: str
-    type: _SimStepType
-    target: str | None = None
-    node_id: str | None = None
-    from_id: str | None = None
-    to_id: str | None = None
-
 
 _ConsensusMode = Literal[
     "broadcast_no_consensus",
@@ -491,31 +475,6 @@ class SimulationRunRequest(BaseModel):
             "each agent's prompt is prefixed with its private context. Used by "
             "benchmarks (e.g. needle-in-haystack) to seed each agent with a chunk."
         ),
-    )
-
-
-class SimulationRunResponse(BaseModel):
-    """Result of a topology simulation."""
-
-    steps: list[SimulationStep]
-    consensus: str | None = Field(
-        default=None,
-        description="Final consensus answer when a consensus mode was used.",
-    )
-    consensus_agent_id: str | None = Field(
-        default=None,
-        description=(
-            "Agent whose answer was selected as the consensus, if applicable. "
-            "Used by benchmarks to evaluate routing/attribution correctness."
-        ),
-    )
-    converged: bool = Field(
-        default=False,
-        description="True if the consensus loop met its convergence criterion.",
-    )
-    rounds_used: int = Field(
-        default=0,
-        description="Number of discussion rounds actually executed.",
     )
 
 
