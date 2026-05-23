@@ -2,10 +2,11 @@
 
 from __future__ import annotations
 
+import json
 from datetime import datetime
 from typing import Any, Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class SwarmRunConfig(BaseModel):
@@ -40,6 +41,13 @@ class ThreadSchema(BaseModel):
     thread_embedding: list[float] | None = None
     created_at: datetime
 
+    @field_validator("required_expertise", "thread_embedding", mode="before")
+    @classmethod
+    def _parse_json(cls, v: object) -> object:
+        if isinstance(v, str):
+            return json.loads(v)
+        return v
+
 
 class ContractSchema(BaseModel):
     id: str
@@ -54,6 +62,13 @@ class ContractSchema(BaseModel):
     threads: list[ThreadSchema] = []
     created_at: datetime
 
+    @field_validator("required_expertise", "contract_embedding", mode="before")
+    @classmethod
+    def _parse_json(cls, v: object) -> object:
+        if isinstance(v, str):
+            return json.loads(v)
+        return v
+
 
 class DraftEntrySchema(BaseModel):
     id: str
@@ -61,7 +76,7 @@ class DraftEntrySchema(BaseModel):
     thread_id: str
     round: int
     author_id: str
-    author_name: str
+    author_name: str = ""
     entry_type: Literal["proposal", "reply", "vote", "system"]
     content: str
     reply_to: str | None = None
