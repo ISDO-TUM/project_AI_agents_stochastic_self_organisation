@@ -27,7 +27,6 @@ import { TweaksPanel } from "@/components/tweaks-panel";
 import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
 import { BlackboardPanel } from "@/components/blackboard-panel";
-import { SwarmActivityLog } from "@/components/swarm-activity-log";
 import { useBlackboard } from "@/hooks/useBlackboard";
 import { ModeGate, AppMode } from "@/components/mode-gate";
 import { getTheme } from "@/lib/theme";
@@ -462,9 +461,7 @@ export function App() {
         style={{
           width: runId && appMode !== "swarm"
             ? "30%"
-            : appMode === "swarm"
-            ? "calc(100% - 270px)"
-            : simMode
+            : simMode || appMode === "swarm"
             ? `calc(100vw - ${logSidebarWidth}px)`
             : "100%",
           height: "100%",
@@ -518,7 +515,8 @@ export function App() {
         <PromptBar simMode={simMode} onRun={handleRun} />
       </div>
 
-      {simMode && (
+      {/* Log wall — topology sim steps OR swarm activity (same component) */}
+      {(simMode || appMode === "swarm") && (
         <LogWall
           steps={steps}
           currentStep={cur}
@@ -538,16 +536,32 @@ export function App() {
         </div>
       )}
 
-      {/* Swarm mode: activity log sidebar (always visible) */}
-      {appMode === "swarm" && (
-        <SwarmActivityLog
-          state={blackboardState}
-          runId={runId}
-          onRunIdChange={setRunId}
-          onSeed={handleSeed}
-          seeding={seeding}
-          width={270}
-        />
+      {/* Swarm: seed button on canvas when no run is active yet */}
+      {appMode === "swarm" && !runId && (
+        <button
+          onClick={handleSeed}
+          disabled={seeding}
+          style={{
+            position: "fixed",
+            bottom: 28,
+            left: "50%",
+            transform: "translateX(-50%)",
+            padding: "10px 24px",
+            background: "#8B1A2F",
+            color: "#fff",
+            border: "none",
+            borderRadius: 8,
+            cursor: seeding ? "not-allowed" : "pointer",
+            fontSize: 13,
+            fontWeight: 700,
+            zIndex: 200,
+            opacity: seeding ? 0.6 : 0.9,
+            fontFamily: "'Space Grotesk', system-ui, sans-serif",
+            boxShadow: "0 4px 16px rgba(139,26,47,0.35)",
+          }}
+        >
+          {seeding ? "Seeding…" : "Seed test blackboard"}
+        </button>
       )}
 
       {showTweaks && (
