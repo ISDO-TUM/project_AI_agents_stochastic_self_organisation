@@ -61,3 +61,13 @@ async def test_agents_table_has_new_columns() -> None:
     assert "capability_embedding" in cols
     assert "created_at" in cols
     await close_db()
+
+
+async def test_init_db_is_idempotent() -> None:
+    """Calling init_db() twice must not raise (all CREATE IF NOT EXISTS, ALTER guards)."""
+    await init_db()
+    await init_db()  # second call must succeed
+    from api.db import _db
+    tables = await _get_tables(_db)
+    assert "swarm_runs" in tables
+    await close_db()
