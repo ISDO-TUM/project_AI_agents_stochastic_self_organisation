@@ -276,24 +276,6 @@ export function ModeGate({ onSelect }: ModeGateProps) {
 
       {/* Header */}
       <div style={{ position: "relative", textAlign: "center", display: "flex", flexDirection: "column", gap: 10 }}>
-        <div
-          style={{
-            display: "inline-flex",
-            alignItems: "center",
-            gap: 6,
-            fontSize: 11,
-            fontWeight: 700,
-            letterSpacing: "0.12em",
-            textTransform: "uppercase",
-            color: BURG,
-            fontFamily: "'Space Grotesk', system-ui, sans-serif",
-            marginBottom: 4,
-          }}
-        >
-          <div style={{ width: 16, height: 1, background: BURG, opacity: 0.6 }} />
-          ECSAS Agent Platform
-          <div style={{ width: 16, height: 1, background: BURG, opacity: 0.6 }} />
-        </div>
         <h1
           style={{
             fontSize: 32,
