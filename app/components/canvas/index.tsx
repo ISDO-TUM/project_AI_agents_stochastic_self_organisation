@@ -205,6 +205,7 @@ export function Canvas({
 
   const handleConnectStart = useCallback(
     (fromId: string, e: React.MouseEvent) => {
+      if (appMode === "swarm") return; // connections locked to blackboard in swarm mode
       if (!canvasRef.current) return;
       const node = [...agents, ...sources].find((n) => n.id === fromId);
       if (!node) return;
@@ -375,6 +376,7 @@ export function Canvas({
             selected={selectedNode === agent.id}
             active={activeNodeId === agent.id}
             simMode={simMode}
+            swarmMode={appMode === "swarm"}
             zoom={zoom}
             onSelect={onSelectNode}
             onDragEnd={onMoveNode}
@@ -389,6 +391,7 @@ export function Canvas({
             selected={selectedNode === source.id}
             active={activeNodeId === source.id}
             simMode={simMode}
+            swarmMode={appMode === "swarm"}
             zoom={zoom}
             onSelect={onSelectNode}
             onDragEnd={onMoveNode}
@@ -415,6 +418,7 @@ export function Canvas({
                 overflow: "visible",
               }}
             >
+              {/* MM → BB connector */}
               <line
                 x1={mmPos.x + MM_SIZE * zoom}
                 y1={mmPos.y + (MM_SIZE / 2) * zoom}
@@ -426,6 +430,25 @@ export function Canvas({
               />
               <circle cx={mmPos.x + MM_SIZE * zoom} cy={mmPos.y + (MM_SIZE / 2) * zoom} r="3" fill="rgba(139,26,47,0.5)" />
               <circle cx={bbPos.x} cy={bbPos.y + 19 * zoom} r="3" fill="rgba(139,26,47,0.5)" />
+              {/* Agent → BB connectors */}
+              {agents.map((agent) => {
+                const ax = agent.position.x * zoom + pan.x;
+                const ay = agent.position.y * zoom + pan.y;
+                const bx = bbPos.x + (bbWidth * zoom) / 2;
+                const by = bbPos.y;
+                return (
+                  <line
+                    key={agent.id}
+                    x1={ax}
+                    y1={ay}
+                    x2={bx}
+                    y2={by}
+                    stroke="rgba(139,26,47,0.25)"
+                    strokeWidth="1"
+                    strokeDasharray="4,5"
+                  />
+                );
+              })}
             </svg>
           )}
           <SwarmNodes pos={mmPos} onPosChange={setMmPos} zoom={zoom} />

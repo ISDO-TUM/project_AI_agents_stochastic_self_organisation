@@ -13,6 +13,7 @@ interface AgentNodeProps {
   selected: boolean;
   active: boolean;
   simMode: boolean;
+  swarmMode?: boolean;
   zoom: number;
   onSelect: (id: string, e: React.MouseEvent) => void;
   onDragEnd: (id: string, position: { x: number; y: number }) => void;
@@ -25,6 +26,7 @@ export function AgentNode({
   selected,
   active,
   simMode,
+  swarmMode = false,
   zoom,
   onSelect,
   onDragEnd,
@@ -160,7 +162,7 @@ export function AgentNode({
             ))}
           </div>
         )}
-        {!simMode && (
+        {!simMode && !swarmMode && (
           <div
             className="connect-handle"
             onMouseDown={handleConnectMouseDown}

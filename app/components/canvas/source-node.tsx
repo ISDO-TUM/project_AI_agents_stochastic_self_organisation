@@ -13,6 +13,7 @@ interface SourceNodeProps {
   selected: boolean;
   active: boolean;
   simMode: boolean;
+  swarmMode?: boolean;
   zoom: number;
   onSelect: (id: string, e: React.MouseEvent) => void;
   onDragEnd: (id: string, position: { x: number; y: number }) => void;
@@ -25,6 +26,7 @@ export function SourceNode({
   selected,
   active,
   simMode,
+  swarmMode = false,
   zoom,
   onSelect,
   onDragEnd,
@@ -119,7 +121,7 @@ export function SourceNode({
         >
           {source.type}
         </div>
-        {!simMode && (
+        {!simMode && !swarmMode && (
           <div
             className="connect-handle"
             onMouseDown={handleConnectMouseDown}
