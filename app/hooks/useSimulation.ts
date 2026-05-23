@@ -53,7 +53,11 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
   }, [cur, simMode, steps, edges]);
 
   const runSim = useCallback(
-    async (prompt: string, mode: ConsensusMode = "broadcast") => {
+    async (
+      prompt: string,
+      mode: ConsensusMode = "broadcast",
+      ruleset?: string,
+    ) => {
       if (agents.length === 0) return;
 
       setSim(true);
@@ -75,7 +79,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
       particleTimerRef.current = setTimeout(() => setParticles([]), 3500);
 
       try {
-        const result = await runSimulation(prompt, { mode });
+        const result = await runSimulation(prompt, { mode, ruleset });
         const { steps: simSteps, ...rest } = result;
         setOutcome(rest);
         for (let i = 0; i < simSteps.length; i++) {

@@ -37,8 +37,9 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 import aiosqlite
@@ -48,6 +49,9 @@ from api.llm import call_agent
 from api.schemas import SimulationStep, ToolCall
 
 ConsensusMode = Literal["broadcast", "weighted", "voting"]
+
+# Callable type for the bound agent-call closure passed into runner functions.
+_AgentCall = Callable[[dict[str, Any], str], Awaitable[tuple[str, list[ToolCall]]]]
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -62,11 +66,18 @@ def _step(**kwargs: Any) -> SimulationStep:
 
 
 async def _call_agent(
-    agent: dict[str, Any], prompt: str, db: aiosqlite.Connection
+    agent: dict[str, Any], prompt: str, db: aiosqlite.Connection, ruleset: str | None = None
 ) -> tuple[str, list[ToolCall]]:
-    """Invoke an agent and return (response_text, tools_used)."""
+    """Invoke an agent and return (response_text, tools_used).
+
+    `ruleset`, when provided, is prepended to the agent's system prompt so every
+    LLM call in a simulation run automatically abides by the shared rules.
+    """
     file_names = await load_agent_file_names(db, agent["id"])
     system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, file_names)
+    if ruleset and ruleset.strip():
+        system_prompt = f"## RULESET\n{ruleset.strip()}\n\n{system_prompt or ''}"
+    system_prompt = f"## CURRENT DATE\n{date.today().isoformat()}\n\n{system_prompt or ''}"
     response, tools_used = await call_agent(
         prompt,
         provider=agent["provider"],
@@ -297,6 +308,7 @@ async def run_topology(
     rounds: int = 3,
     mode: ConsensusMode = "broadcast",
     agent_context: dict[str, str] | None = None,
+    ruleset: str | None = None,
 ) -> SimulationOutcome:
     """Run a topology simulation under the chosen consensus mode."""
     async with db.execute("SELECT * FROM agents") as cur:
@@ -308,11 +320,14 @@ async def run_topology(
 
     incoming = _build_incoming(agents)
 
+    async def call(agent: dict[str, Any], prompt: str) -> tuple[str, list[ToolCall]]:
+        return await _call_agent(agent, prompt, db, ruleset)
+
     if mode == "weighted":
-        return await _run_weighted_pool(prompt, agents, incoming, db, rounds, agent_context)
+        return await _run_weighted_pool(prompt, agents, incoming, call, rounds, agent_context)
     if mode == "voting":
-        return await _run_voting(prompt, agents, incoming, db, rounds, agent_context)
-    return await _run_broadcast(prompt, agents, incoming, db, rounds, agent_context)
+        return await _run_voting(prompt, agents, incoming, call, rounds, agent_context)
+    return await _run_broadcast(prompt, agents, incoming, call, rounds, agent_context)
 
 
 # ── mode 1: broadcast (no consensus) ──────────────────────────────────────────
@@ -322,7 +337,7 @@ async def _run_broadcast(
     prompt: str,
     agents: list[dict[str, Any]],
     incoming: dict[str, list[str]],
-    db: aiosqlite.Connection,
+    call: _AgentCall,
     rounds: int,
     agent_context: dict[str, str] | None,
 ) -> SimulationOutcome:
@@ -337,8 +352,8 @@ async def _run_broadcast(
 
     async def _broadcast(agent: dict[str, Any]) -> tuple[str, list[SimulationStep]]:
         try:
-            response, tools_used = await _call_agent(
-                agent, _with_context(prompt, agent["id"], agent_context), db
+            response, tools_used = await call(
+                agent, _with_context(prompt, agent["id"], agent_context)
             )
         except Exception as exc:
             err = f"[error: {exc}]"
@@ -395,7 +410,7 @@ async def _run_broadcast(
             ]
 
             try:
-                response, tools_used = await _call_agent(agent, discussion_prompt, db)
+                response, tools_used = await call(agent, discussion_prompt)
             except Exception as exc:
                 err = f"[error: {exc}]"
                 return err, [
@@ -433,7 +448,7 @@ async def _run_weighted_pool(
     prompt: str,
     agents: list[dict[str, Any]],
     incoming: dict[str, list[str]],
-    db: aiosqlite.Connection,
+    call: _AgentCall,
     rounds: int,
     agent_context: dict[str, str] | None,
 ) -> SimulationOutcome:
@@ -454,9 +469,7 @@ async def _run_weighted_pool(
 
     async def _broadcast(agent: dict[str, Any]) -> tuple[str, list[SimulationStep]]:
         try:
-            response, tools = await _call_agent(
-                agent, _with_context(prompt, agent["id"], agent_context), db
-            )
+            response, tools = await call(agent, _with_context(prompt, agent["id"], agent_context))
         except Exception as exc:
             err = f"[error: {exc}]"
             return err, [_step(label=agent["name"], msg=err, type="system", node_id=agent["id"])]
@@ -521,7 +534,7 @@ async def _run_weighted_pool(
             ]
 
             try:
-                resp, tools = await _call_agent(agent, discussion_prompt, db)
+                resp, tools = await call(agent, discussion_prompt)
             except Exception as exc:
                 err = f"[error: {exc}]"
                 return err, [
@@ -627,7 +640,7 @@ async def _run_voting(
     prompt: str,
     agents: list[dict[str, Any]],
     incoming: dict[str, list[str]],
-    db: aiosqlite.Connection,
+    call: _AgentCall,
     rounds: int,
     agent_context: dict[str, str] | None,
 ) -> SimulationOutcome:
@@ -645,7 +658,7 @@ async def _run_voting(
     ) -> tuple[str, str | None, str | None, list[SimulationStep]]:
         full_prompt = _with_context(prompt, agent["id"], agent_context) + _VOTE_INSTRUCTION
         try:
-            response, tools = await _call_agent(agent, full_prompt, db)
+            response, tools = await call(agent, full_prompt)
         except Exception as exc:
             err = f"[error: {exc}]"
             return (
@@ -762,7 +775,7 @@ async def _run_voting(
                 )
 
             try:
-                resp, tools = await _call_agent(agent, full_prompt, db)
+                resp, tools = await call(agent, full_prompt)
             except Exception as exc:
                 err = f"[error: {exc}]"
                 return (
