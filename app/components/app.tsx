@@ -27,6 +27,8 @@ import { TweaksPanel } from "@/components/tweaks-panel";
 import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
 import { BlackboardPanel } from "@/components/blackboard-panel";
+import { SwarmActivityLog } from "@/components/swarm-activity-log";
+import { useBlackboard } from "@/hooks/useBlackboard";
 import { ModeGate, AppMode } from "@/components/mode-gate";
 import { getTheme } from "@/lib/theme";
 
@@ -103,6 +105,26 @@ export function App() {
   const [importError, setImportError] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [appMode, setAppMode] = useState<AppMode | null>(null);
+  const [seeding, setSeeding] = useState(false);
+  const { state: blackboardState } = useBlackboard(appMode === "swarm" ? runId : null);
+
+  const handleSeed = useCallback(async () => {
+    setSeeding(true);
+    try {
+      const res = await fetch("/api/simulation/seed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ prompt: "Test blackboard seeding", agent_ids: [] }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { run_id: string; thread_id: string };
+      setRunId(data.run_id);
+    } catch (err) {
+      console.error("Seed failed:", err);
+    } finally {
+      setSeeding(false);
+    }
+  }, []);
 
   useEffect(() => {
     fetchRules()
@@ -438,8 +460,10 @@ export function App() {
 
       <div
         style={{
-          width: runId
+          width: runId && appMode !== "swarm"
             ? "30%"
+            : appMode === "swarm"
+            ? "calc(100% - 270px)"
             : simMode
             ? `calc(100vw - ${logSidebarWidth}px)`
             : "100%",
@@ -473,6 +497,8 @@ export function App() {
           tweaks={tweaks}
           onCanvasClick={onCanvasClick}
           panAdjust={panAdjust}
+          blackboardState={blackboardState}
+          appMode={appMode}
         />
 
         <Toolbar
@@ -506,34 +532,22 @@ export function App() {
         />
       )}
 
-      {runId && (
+      {runId && appMode !== "swarm" && (
         <div style={{ flex: 1, height: "100%", overflow: "hidden" }}>
           <BlackboardPanel runId={runId} onRunIdChange={setRunId} />
         </div>
       )}
 
-      {!runId && !simMode && (
-        <button
-          onClick={() => setRunId("__open__")}
-          style={{
-            position: "fixed",
-            bottom: 24,
-            right: 24,
-            padding: "8px 16px",
-            background: "#8B1A2F",
-            color: "#fff",
-            border: "none",
-            borderRadius: 6,
-            cursor: "pointer",
-            fontSize: 12,
-            fontWeight: 700,
-            zIndex: 1000,
-            opacity: 0.85,
-          }}
-          title="Open Blackboard panel (dev)"
-        >
-          Blackboard
-        </button>
+      {/* Swarm mode: activity log sidebar (always visible) */}
+      {appMode === "swarm" && (
+        <SwarmActivityLog
+          state={blackboardState}
+          runId={runId}
+          onRunIdChange={setRunId}
+          onSeed={handleSeed}
+          seeding={seeding}
+          width={270}
+        />
       )}
 
       {showTweaks && (

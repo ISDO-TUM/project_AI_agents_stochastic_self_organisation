@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Agent, Source, Edge, AnimatedParticle, Tweaks } from "@/lib/types";
+import { Agent, Source, Edge, AnimatedParticle, Tweaks, BlackboardState } from "@/lib/types";
 import { clamp } from "@/lib/utils";
 import { useTheme } from "@/lib/theme-context";
 
@@ -9,6 +9,8 @@ import { AgentNode } from "./agent-node";
 import { SourceNode } from "./source-node";
 import { EdgeLayer } from "./edge-layer";
 import { Minimap } from "./minimap";
+import { BlackboardCanvas } from "./blackboard-canvas";
+import { SwarmNodes } from "./swarm-nodes";
 
 interface CanvasProps {
   agents: Agent[];
@@ -27,9 +29,10 @@ interface CanvasProps {
   animatedParticles: AnimatedParticle[];
   tweaks: Tweaks;
   onCanvasClick: () => void;
-  /** Fired by parent when the available canvas width changes; dx is the
-   *  translation to apply to the current pan so nodes stay put visually. */
   panAdjust?: { dx: number; seq: number };
+  /** Swarm mode: blackboard state to render in-world */
+  blackboardState?: BlackboardState;
+  appMode?: "topology" | "swarm" | null;
 }
 
 interface ConnectingState {
@@ -63,6 +66,8 @@ export function Canvas({
   tweaks,
   onCanvasClick,
   panAdjust,
+  blackboardState,
+  appMode,
 }: CanvasProps) {
   const { dark } = useTheme();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -359,6 +364,13 @@ export function Canvas({
             tweaks={tweaks}
           />
         ))}
+        {/* ── Swarm-mode world-space elements ── */}
+        {appMode === "swarm" && (
+          <SwarmNodes boardX={0} boardY={0} />
+        )}
+        {appMode === "swarm" && blackboardState && (
+          <BlackboardCanvas state={blackboardState} x={0} y={0} />
+        )}
       </div>
 
       {/* Empty state */}
