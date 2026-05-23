@@ -42,11 +42,7 @@ export function SourcePanel({
       icon={source ? "FileText" : "Plus"}
     >
       <FLabel>Name</FLabel>
-      <FInput
-        value={name}
-        onChange={setName}
-        placeholder="filename.txt"
-      />
+      <FInput value={name} onChange={setName} placeholder="filename.txt" />
       <FLabel>Content</FLabel>
       <FInput
         value={content}

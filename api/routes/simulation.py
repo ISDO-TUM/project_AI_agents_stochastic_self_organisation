@@ -1,4 +1,4 @@
-"""Simulation routes — blackboard read endpoint and dev seed endpoint."""
+"""Simulation routes — blackboard read endpoint, dev seed endpoint, and topology run."""
 
 from __future__ import annotations
 
@@ -12,6 +12,8 @@ import aiosqlite
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 
 from api.db import get_db
+from api.schemas import SimulationRunRequest, SimulationRunResponse
+from api.simulation import run_topology
 from api.swarm.blackboard import Blackboard
 from api.swarm.schemas import (
     BlackboardResponse,
@@ -187,3 +189,39 @@ async def seed_blackboard(body: SeedRequest, db: DBDep) -> SeedResponse:
 
     await db.commit()
     return SeedResponse(run_id=run_id, thread_id=thread_id)
+
+
+@router.post(
+    "/run",
+    response_model=SimulationRunResponse,
+    summary="Run a topology simulation",
+    description=(
+        "Broadcast a prompt to all agents, then run discussion rounds where agents "
+        "with incoming connections receive their neighbours' responses and reply with "
+        "an updated view."
+    ),
+)
+async def run_simulation(body: SimulationRunRequest, db: DBDep) -> SimulationRunResponse:
+    async with db.execute("SELECT COUNT(*) as n FROM agents") as cur:
+        row = await cur.fetchone()
+    if row is None or row["n"] == 0:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail="No agents found. Add at least one agent before running a simulation.",
+        )
+
+    outcome = await run_topology(
+        body.prompt,
+        db,
+        rounds=body.rounds,
+        mode=body.mode,
+        agent_context=body.agent_context,
+        ruleset=body.ruleset,
+    )
+    return SimulationRunResponse(
+        steps=outcome.steps,
+        consensus=outcome.consensus,
+        consensus_agent_id=outcome.consensus_agent_id,
+        converged=outcome.converged,
+        rounds_used=outcome.rounds_used,
+    )

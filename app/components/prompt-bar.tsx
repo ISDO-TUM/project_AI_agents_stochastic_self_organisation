@@ -5,15 +5,29 @@ import { LIcon } from "@/lib/icons";
 import { BURG, BURG_LT, BURG_GLOW, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import type { ConsensusMode } from "@/lib/types";
 
 interface PromptBarProps {
   simMode: boolean;
-  onRun: (prompt: string) => void;
+  onRun: (prompt: string, mode: ConsensusMode) => void;
 }
+
+const MODE_LABELS: Partial<Record<ConsensusMode, string>> = {
+  weighted: "Weighted pooling",
+  voting: "Plurality voting",
+};
 
 export function PromptBar({ simMode, onRun }: PromptBarProps) {
   const [val, setVal] = useState("");
   const [preview, setPreview] = useState(false);
+  const [mode, setMode] = useState<ConsensusMode>("voting");
   const { dark } = useTheme();
   const t = getTheme(dark);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -21,10 +35,10 @@ export function PromptBar({ simMode, onRun }: PromptBarProps) {
 
   const handleSubmit = useCallback(() => {
     if (!canRun) return;
-    onRun(val);
+    onRun(val, mode);
     setVal("");
     setPreview(false);
-  }, [canRun, onRun, val]);
+  }, [canRun, onRun, val, mode]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -163,6 +177,26 @@ export function PromptBar({ simMode, onRun }: PromptBarProps) {
             />
           </button>
         )}
+
+        {/* Consensus mode selector */}
+        <Select
+          value={mode}
+          onValueChange={(v) => setMode(v as ConsensusMode)}
+          disabled={simMode}
+        >
+          <SelectTrigger disabled={simMode}>
+            <SelectValue />
+          </SelectTrigger>
+          <SelectContent>
+            {(Object.entries(MODE_LABELS) as [ConsensusMode, string][]).map(
+              ([m, label]) => (
+                <SelectItem key={m} value={m}>
+                  {label}
+                </SelectItem>
+              ),
+            )}
+          </SelectContent>
+        </Select>
 
         {/* Run button */}
         <button

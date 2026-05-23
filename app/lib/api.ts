@@ -5,7 +5,14 @@
  * No NEXT_PUBLIC_ env var needed — the proxy handles both dev and Docker.
  */
 
-import type { Agent, KnowledgeFile, Provider } from "./types";
+import type {
+  Agent,
+  ConsensusMode,
+  KnowledgeFile,
+  Provider,
+  Rule,
+  SimStep,
+} from "./types";
 
 // ─── Wire types ──────────────────────────────────────────────────────────────
 
@@ -28,6 +35,10 @@ interface AgentPayload {
   model: string;
   tools: string[];
   connections: string[];
+}
+
+interface AgentCreatePayload extends AgentPayload {
+  id?: string;
 }
 
 type AgentUpdate = Partial<AgentPayload>;
@@ -95,8 +106,13 @@ export async function fetchAgents(
   );
 }
 
-export async function createAgent(agent: Agent): Promise<Agent> {
-  const out = await request<AgentOut>("POST", "/api/agents/", toWire(agent));
+export async function createAgent(
+  agent: Agent,
+  options: { preserveId?: boolean } = {},
+): Promise<Agent> {
+  const payload: AgentCreatePayload = toWire(agent);
+  if (options.preserveId) payload.id = agent.id;
+  const out = await request<AgentOut>("POST", "/api/agents/", payload);
   return fromWire(out, agent.position);
 }
 
@@ -113,7 +129,14 @@ export async function deleteAgentApi(id: string): Promise<void> {
   await request<void>("DELETE", `/api/agents/${id}`);
 }
 
-export async function patchAgentTools(id: string, tools: string[]): Promise<void> {
+export async function clearAll(): Promise<void> {
+  await request<void>("DELETE", "/api/agents/");
+}
+
+export async function patchAgentTools(
+  id: string,
+  tools: string[],
+): Promise<void> {
   await request<AgentOut>("PATCH", `/api/agents/${id}`, { tools });
 }
 
@@ -143,15 +166,23 @@ export async function deleteFileApi(id: string): Promise<void> {
   await request<void>("DELETE", `/api/files/${id}`);
 }
 
-export async function fetchAgentFiles(agentId: string): Promise<KnowledgeFile[]> {
+export async function fetchAgentFiles(
+  agentId: string,
+): Promise<KnowledgeFile[]> {
   return request<KnowledgeFile[]>("GET", `/api/agents/${agentId}/files`);
 }
 
-export async function attachFile(agentId: string, fileId: string): Promise<void> {
+export async function attachFile(
+  agentId: string,
+  fileId: string,
+): Promise<void> {
   await request<void>("POST", `/api/agents/${agentId}/files/${fileId}`);
 }
 
-export async function detachFile(agentId: string, fileId: string): Promise<void> {
+export async function detachFile(
+  agentId: string,
+  fileId: string,
+): Promise<void> {
   await request<void>("DELETE", `/api/agents/${agentId}/files/${fileId}`);
 }
 
@@ -174,4 +205,97 @@ export async function runAgent(
   return request<AgentRunResponse>("POST", `/api/agents/${agentId}/run`, {
     prompt,
   });
+}
+
+// ─── Models endpoint ─────────────────────────────────────────────────────────
+
+export interface ModelEntry {
+  id: string;
+  name: string;
+  provider: string;
+  type: string;
+}
+
+export async function fetchModels(): Promise<ModelEntry[]> {
+  return request<ModelEntry[]>("GET", "/api/models");
+}
+
+// ─── Simulation run ───────────────────────────────────────────────────────────
+
+interface WireSimStep {
+  id: string;
+  ts: string;
+  label: string;
+  msg: string;
+  type: SimStep["type"];
+  target?: string | null;
+  node_id?: string | null;
+  from_id?: string | null;
+  to_id?: string | null;
+}
+
+function wireToSimStep(w: WireSimStep): SimStep {
+  return {
+    id: w.id,
+    ts: w.ts,
+    label: w.label,
+    msg: w.msg,
+    type: w.type,
+    ...(w.target != null && { target: w.target }),
+    ...(w.node_id != null && { nodeId: w.node_id }),
+    ...(w.from_id != null && { fromId: w.from_id }),
+    ...(w.to_id != null && { toId: w.to_id }),
+  };
+}
+
+export interface SimulationResult {
+  steps: SimStep[];
+  consensus: string | null;
+  consensusAgentId: string | null;
+  converged: boolean;
+  roundsUsed: number;
+}
+
+interface WireSimulationResponse {
+  steps: WireSimStep[];
+  consensus: string | null;
+  consensus_agent_id: string | null;
+  converged: boolean;
+  rounds_used: number;
+}
+
+export async function runSimulation(
+  prompt: string,
+  options: {
+    rounds?: number;
+    mode?: ConsensusMode;
+    agentContext?: Record<string, string>;
+    ruleset?: string;
+  } = {},
+): Promise<SimulationResult> {
+  const { rounds = 3, mode = "broadcast", agentContext, ruleset } = options;
+  const data = await request<WireSimulationResponse>(
+    "POST",
+    "/api/simulation/run",
+    {
+      prompt,
+      rounds,
+      mode,
+      ...(agentContext && { agent_context: agentContext }),
+      ...(ruleset && ruleset.trim() && { ruleset }),
+    },
+  );
+  return {
+    steps: data.steps.map(wireToSimStep),
+    consensus: data.consensus,
+    consensusAgentId: data.consensus_agent_id,
+    converged: data.converged,
+    roundsUsed: data.rounds_used,
+  };
+}
+
+// ─── Rules ───────────────────────────────────────────────────────────────────
+
+export async function fetchRules(): Promise<Rule[]> {
+  return request<Rule[]>("GET", "/api/rules/");
 }

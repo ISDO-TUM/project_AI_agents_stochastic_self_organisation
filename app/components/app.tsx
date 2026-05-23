@@ -1,12 +1,23 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { CanvasState, Tweaks } from "@/lib/types";
+import { CanvasState, ConsensusMode, Rule, Tweaks } from "@/lib/types";
 import { BURG } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { useCanvasState } from "@/hooks/useCanvasState";
 import { useSimulation } from "@/hooks/useSimulation";
 import { useUIState } from "@/hooks/useUIState";
+import {
+  fetchAgents,
+  fetchFiles,
+  fetchRules,
+  createAgent,
+  deleteAgentApi,
+  createFile,
+  deleteFileApi,
+  attachFile,
+  clearAll,
+} from "@/lib/api";
 import { Canvas } from "@/components/canvas";
 import { LogWall } from "@/components/log-wall";
 import { Toolbar } from "@/components/toolbar";
@@ -32,12 +43,7 @@ const defaultTweaks: Tweaks = {
 export function App() {
   const { dark, toggle: toggleTheme } = useTheme();
 
-  const [tweaks, setTweaks] = useState<Tweaks>(defaultTweaks);
-  const setTweak = useCallback(
-    (k: keyof Tweaks, v: Tweaks[keyof Tweaks]) =>
-      setTweaks((t) => ({ ...t, [k]: v })),
-    [],
-  );
+  const [tweaks] = useState<Tweaks>(defaultTweaks);
 
   const {
     agents,
@@ -91,8 +97,42 @@ export function App() {
     setShowTweaks,
   } = useUIState();
 
+  const [rules, setRules] = useState<Rule[]>([]);
+  const [selectedRules, setSelectedRules] = useState<Set<string>>(new Set());
   const [importError, setImportError] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
+
+  useEffect(() => {
+    fetchRules()
+      .then((rs) => {
+        setRules(rs);
+        setSelectedRules((prev) => {
+          if (prev.size > 0) return prev;
+          return new Set(rs.filter((r) => r.default).map((r) => r.id));
+        });
+      })
+      .catch(() => {});
+  }, []);
+
+  const toggleRule = useCallback((id: string) => {
+    setSelectedRules((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }, []);
+
+  const handleRun = useCallback(
+    (prompt: string, mode: ConsensusMode) => {
+      const active = rules.filter((r) => selectedRules.has(r.id));
+      const ruleset = active.length
+        ? active.map((r) => `- ${r.instruction}`).join("\n")
+        : undefined;
+      runSim(prompt, mode, ruleset);
+    },
+    [rules, selectedRules, runSim],
+  );
   const importErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -131,13 +171,12 @@ export function App() {
         !e.ctrlKey
       ) {
         if (selNode) {
-          if (agents.some((a) => a.id === selNode))
-            dispatch({ type: "DELETE_AGENT", id: selNode });
-          else dispatch({ type: "DELETE_SOURCE", id: selNode });
+          if (agents.some((a) => a.id === selNode)) deleteAgent(selNode);
+          else deleteSource(selNode);
           setSelNode(null);
         }
         if (selEdge) {
-          dispatch({ type: "DELETE_EDGE", id: selEdge });
+          deleteEdge(selEdge);
           setSelEdge(null);
         }
       }
@@ -148,7 +187,9 @@ export function App() {
     selNode,
     selEdge,
     agents,
-    dispatch,
+    deleteAgent,
+    deleteSource,
+    deleteEdge,
     setPanel,
     setCtx,
     setSelNode,
@@ -157,17 +198,18 @@ export function App() {
   ]);
 
   const exportCanvas = useCallback(() => {
-    const blob = new Blob(
-      [JSON.stringify({ agents, sources, edges }, null, 2)],
-      { type: "application/json" },
-    );
+    const payload: CanvasState = { agents, sources, edges };
+    if (selectedRules.size > 0) payload.selectedRules = [...selectedRules];
+    const blob = new Blob([JSON.stringify(payload, null, 2)], {
+      type: "application/json",
+    });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
     a.download = "canvas.json";
     a.click();
     URL.revokeObjectURL(url);
-  }, [agents, sources, edges]);
+  }, [agents, sources, edges, selectedRules]);
 
   const showImportError = useCallback((msg: string) => {
     if (importErrorTimerRef.current) clearTimeout(importErrorTimerRef.current);
@@ -176,22 +218,71 @@ export function App() {
   }, []);
 
   const importCanvas = useCallback(
-    (raw: string) => {
+    async (raw: string) => {
+      let data: CanvasState;
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        const data = JSON.parse(raw) as any;
+        const parsed = JSON.parse(raw) as any;
         if (
-          Array.isArray(data.agents) &&
-          Array.isArray(data.sources) &&
-          Array.isArray(data.edges)
-        )
-          dispatch({ type: "LOAD", state: data as CanvasState });
-        else
+          !Array.isArray(parsed.agents) ||
+          !Array.isArray(parsed.sources) ||
+          !Array.isArray(parsed.edges)
+        ) {
           showImportError(
             "Invalid canvas file — missing agents, sources, or edges",
           );
+          return;
+        }
+        data = parsed as CanvasState;
       } catch {
         showImportError("Invalid JSON file");
+        return;
+      }
+
+      // Render the imported canvas locally first so the user sees it instantly.
+      dispatch({ type: "LOAD", state: data });
+      if (Array.isArray(data.selectedRules)) {
+        setSelectedRules(
+          new Set(data.selectedRules.filter((x) => typeof x === "string")),
+        );
+      }
+
+      // Persist to the backend so simulations have the same state. Do it on a
+      // best-effort basis — if the API is offline we keep the local view but
+      // surface the error.
+      try {
+        const [existingAgents, existingFiles] = await Promise.all([
+          fetchAgents(),
+          fetchFiles(),
+        ]);
+        await Promise.all([
+          ...existingAgents.map((a) => deleteAgentApi(a.id).catch(() => {})),
+          ...existingFiles.map((f) => deleteFileApi(f.id).catch(() => {})),
+        ]);
+
+        await Promise.all(
+          data.sources.map((s) =>
+            createFile(s.name, s.content, s.id).catch(() => {}),
+          ),
+        );
+        await Promise.all(
+          data.agents.map((a) => createAgent(a, { preserveId: true })),
+        );
+        const fileIds = new Set(data.sources.map((s) => s.id));
+        await Promise.all(
+          data.edges
+            .filter(
+              (e) =>
+                data.agents.some((a) => a.id === e.from) && fileIds.has(e.to),
+            )
+            .map((e) => attachFile(e.from, e.to).catch(() => {})),
+        );
+      } catch (err) {
+        showImportError(
+          `Imported locally, but failed to sync to API: ${
+            err instanceof Error ? err.message : "unknown error"
+          }`,
+        );
       }
     },
     [dispatch, showImportError],
@@ -281,7 +372,10 @@ export function App() {
     setSelNode(null);
   }, [setPanel, setSelNode]);
 
-  const onClear = useCallback(() => dispatch({ type: "CLEAR" }), [dispatch]);
+  const onClear = useCallback(async () => {
+    await clearAll().catch(() => {});
+    dispatch({ type: "CLEAR" });
+  }, [dispatch]);
   const onAutoLayout = useCallback(
     () => dispatch({ type: "AUTO_LAYOUT" }),
     [dispatch],
@@ -389,7 +483,7 @@ export function App() {
           onToggleTweaks={onToggleTweaks}
         />
 
-        <PromptBar simMode={simMode} onRun={runSim} />
+        <PromptBar simMode={simMode} onRun={handleRun} />
       </div>
 
       {simMode && (
@@ -398,6 +492,7 @@ export function App() {
           currentStep={cur}
           onNext={() => setCur((s) => Math.min(s + 1, steps.length - 1))}
           onPrev={() => setCur((s) => Math.max(s - 1, 0))}
+          onJumpTo={(idx) => setCur(idx)}
           expanded={logExp}
           onToggleExpand={() => setLogExp((x) => !x)}
           sidebarWidth={logSidebarWidth}
@@ -437,8 +532,9 @@ export function App() {
 
       {showTweaks && (
         <TweaksPanel
-          tweaks={tweaks}
-          onChange={setTweak}
+          rules={rules}
+          selectedRules={selectedRules}
+          onToggleRule={toggleRule}
           onClose={() => setShowTweaks(false)}
         />
       )}

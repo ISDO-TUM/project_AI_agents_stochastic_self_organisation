@@ -1,8 +1,9 @@
 "use client";
 
-import { useState, useMemo } from "react";
+import { useState, useMemo, useEffect } from "react";
 import { Agent, Provider } from "@/lib/types";
 import { uuid, shortId, PROVIDERS, TOOLS } from "@/lib/utils";
+import { fetchModels, ModelEntry } from "@/lib/api";
 import { BURG, BURG_LT, BURG_DIM, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { LIcon, TOOL_ICON } from "@/lib/icons";
@@ -50,6 +51,41 @@ export function AgentPanel({
   onDelete,
   onClose,
 }: AgentPanelProps) {
+  const [availableModels, setAvailableModels] = useState<ModelEntry[]>([]);
+
+  useEffect(() => {
+    fetchModels().then(setAvailableModels).catch(console.error);
+  }, []);
+
+  const providers = useMemo(() => {
+    const map: Record<
+      string,
+      { label: string; models: Array<{ label: string; value: string }> }
+    > = {};
+    for (const m of availableModels) {
+      if (!map[m.provider]) {
+        map[m.provider] = {
+          label: m.provider.charAt(0).toUpperCase() + m.provider.slice(1),
+          models: [],
+        };
+      }
+      map[m.provider].models.push({ label: m.name, value: m.id });
+    }
+    return map;
+  }, [availableModels]);
+
+  useEffect(() => {
+    if (!availableModels.length) return;
+    setForm((f) => {
+      const providerModels = providers[f.provider]?.models ?? [];
+      const isValid = providerModels.some((m) => m.value === f.model);
+      if (!isValid && providerModels.length > 0) {
+        return { ...f, model: providerModels[0].value };
+      }
+      return f;
+    });
+  }, [availableModels, providers]);
+
   const [form, setForm] = useState<AgentForm>(
     agent
       ? {
@@ -78,10 +114,11 @@ export function AgentPanel({
 
   const handleProv = (v: string) => {
     const provider = v as Provider;
+    const firstModel = providers[provider]?.models[0]?.value ?? "";
     setForm((f) => ({
       ...f,
       provider,
-      model: PROVIDERS[provider].models[0].value,
+      model: firstModel,
     }));
   };
 
@@ -132,7 +169,7 @@ export function AgentPanel({
       <FSelect
         value={form.provider}
         onChange={handleProv}
-        options={Object.entries(PROVIDERS).map(([value, { label }]) => ({
+        options={Object.entries(providers).map(([value, { label }]) => ({
           value,
           label,
         }))}
@@ -141,7 +178,7 @@ export function AgentPanel({
       <FSelect
         value={form.model}
         onChange={(v) => set("model", v)}
-        options={PROVIDERS[form.provider].models.map((m) => ({
+        options={(providers[form.provider]?.models ?? []).map((m) => ({
           value: m.value,
           label: m.label,
         }))}

@@ -1,10 +1,12 @@
-export type Provider = "openai" | "anthropic" | "groq";
+export type Provider = "openai" | "anthropic" | "groq" | "gemini";
 export type SourceType = "text" | "document";
 export type SimStepType =
   | "system"
   | "agent-to-agent"
   | "tool"
   | "agent-to-source";
+
+export type ConsensusMode = "broadcast" | "weighted" | "voting";
 
 export interface Position {
   x: number;
@@ -78,6 +80,14 @@ export interface CanvasState {
   agents: Agent[];
   sources: Source[];
   edges: Edge[];
+  selectedRules?: string[];
+}
+
+export interface Rule {
+  id: string;
+  label: string;
+  instruction: string;
+  default?: boolean;
 }
 
 export type CanvasAction =

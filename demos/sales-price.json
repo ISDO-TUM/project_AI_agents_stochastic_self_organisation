@@ -1,0 +1,95 @@
+{
+  "agents": [
+    {
+      "id": "a1111111-1111-4111-8111-111111111111",
+      "name": "Sales Manager",
+      "description": "Maintains the official price list for all products.",
+      "systemPrompt": "You answer questions about product pricing using your attached files. If the answer is in your files, reply with just the price (no full sentence, no explanation). If it is not, reply with the literal string \"unknown\".",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["files"],
+      "connections": [
+        "a2222222-2222-4222-8222-222222222222",
+        "a3333333-3333-4333-8333-333333333333"
+      ],
+      "position": { "x": 200, "y": 160 }
+    },
+    {
+      "id": "a2222222-2222-4222-8222-222222222222",
+      "name": "Finance Controller",
+      "description": "Holds the management-approved pricing documents.",
+      "systemPrompt": "You answer questions about product pricing using your attached files. If the answer is in your files, reply with just the price (no full sentence, no explanation). If it is not, reply with the literal string \"unknown\".",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["files"],
+      "connections": ["a3333333-3333-4333-8333-333333333333"],
+      "position": { "x": 460, "y": 80 }
+    },
+    {
+      "id": "a3333333-3333-4333-8333-333333333333",
+      "name": "Sales Representative",
+      "description": "Working from a local price export pulled from the CRM last quarter.",
+      "systemPrompt": "You answer questions about product pricing using your attached files. If the answer is in your files, reply with just the price (no full sentence, no explanation). If it is not, reply with the literal string \"unknown\".",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["files"],
+      "connections": [],
+      "position": { "x": 760, "y": 160 }
+    }
+  ],
+  "sources": [
+    {
+      "id": "f1111111-1111-4111-8111-111111111111",
+      "name": "price_list_2026.txt",
+      "type": "text",
+      "content": "Official Price List — Effective 1 January 2026. The ProFlow 400 conveyor unit is priced at €3,200 per unit. This list supersedes all previously issued price sheets. Approved by the Head of Sales on 15 December 2025.",
+      "position": { "x": 200, "y": 460 }
+    },
+    {
+      "id": "f2222222-2222-4222-8222-222222222222",
+      "name": "pricing_approval_q1_2026.txt",
+      "type": "text",
+      "content": "Pricing Approval Memo — Q1 2026. Following the annual cost review, management has approved a list price of €3,200 for the ProFlow 400 conveyor unit, effective 1 January 2026. All customer quotes must be based on this rate.",
+      "position": { "x": 460, "y": 380 }
+    },
+    {
+      "id": "f3333333-3333-4333-8333-333333333333",
+      "name": "crm_export_q3_2025.txt",
+      "type": "text",
+      "content": "CRM Price Export — September 2025. ProFlow 400 conveyor unit: €2,850 per unit. This export was pulled from the CRM system in Q3 2025 and has not been updated since.",
+      "position": { "x": 760, "y": 460 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-sm-fc",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "a2222222-2222-4222-8222-222222222222"
+    },
+    {
+      "id": "e-sm-sr",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "a3333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-fc-sr",
+      "from": "a2222222-2222-4222-8222-222222222222",
+      "to": "a3333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-sm-f1",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "f1111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "e-fc-f2",
+      "from": "a2222222-2222-4222-8222-222222222222",
+      "to": "f2222222-2222-4222-8222-222222222222"
+    },
+    {
+      "id": "e-sr-f3",
+      "from": "a3333333-3333-4333-8333-333333333333",
+      "to": "f3333333-3333-4333-8333-333333333333"
+    }
+  ]
+}

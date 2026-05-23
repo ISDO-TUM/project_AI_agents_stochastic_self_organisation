@@ -15,6 +15,7 @@ interface LogWallProps {
   currentStep: number;
   onNext: () => void;
   onPrev: () => void;
+  onJumpTo: (idx: number) => void;
   expanded: boolean;
   onToggleExpand: () => void;
   sidebarWidth: number;
@@ -55,6 +56,7 @@ export function LogWall({
   currentStep,
   onNext,
   onPrev,
+  onJumpTo,
   expanded,
   onToggleExpand,
   sidebarWidth,
@@ -151,30 +153,63 @@ export function LogWall({
             Activity Log
           </span>
         </div>
-        <button
-          onClick={onToggleExpand}
-          style={{
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            color: t.textDim,
-            display: "flex",
-            padding: 4,
-            borderRadius: 5,
-          }}
-          onMouseEnter={(e) =>
-            ((e.currentTarget as HTMLButtonElement).style.color = t.text)
-          }
-          onMouseLeave={(e) =>
-            ((e.currentTarget as HTMLButtonElement).style.color = t.textDim)
-          }
-        >
-          <LIcon
-            name={expanded ? "Minimize2" : "Maximize2"}
-            size={13}
-            color="currentColor"
-          />
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <button
+            onClick={() => {
+              const blob = new Blob([JSON.stringify(steps, null, 2)], {
+                type: "application/json",
+              });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "activity-log.json";
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            title="Download log as JSON"
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: t.textDim,
+              display: "flex",
+              padding: 4,
+              borderRadius: 5,
+            }}
+            onMouseEnter={(e) =>
+              ((e.currentTarget as HTMLButtonElement).style.color = t.text)
+            }
+            onMouseLeave={(e) =>
+              ((e.currentTarget as HTMLButtonElement).style.color = t.textDim)
+            }
+          >
+            <LIcon name="Download" size={13} color="currentColor" />
+          </button>
+          <button
+            onClick={onToggleExpand}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: t.textDim,
+              display: "flex",
+              padding: 4,
+              borderRadius: 5,
+            }}
+            onMouseEnter={(e) =>
+              ((e.currentTarget as HTMLButtonElement).style.color = t.text)
+            }
+            onMouseLeave={(e) =>
+              ((e.currentTarget as HTMLButtonElement).style.color = t.textDim)
+            }
+          >
+            <LIcon
+              name={expanded ? "Minimize2" : "Maximize2"}
+              size={13}
+              color="currentColor"
+            />
+          </button>
+        </div>
       </div>
 
       {/* Steps */}
@@ -191,6 +226,7 @@ export function LogWall({
             <div
               key={step.id}
               data-active={isActive ? "true" : "false"}
+              onClick={() => onJumpTo(idx)}
               style={{
                 padding: "11px 18px",
                 borderLeft: `2.5px solid ${isActive ? BURG : "transparent"}`,
@@ -201,6 +237,7 @@ export function LogWall({
                   : "transparent",
                 opacity: isFuture ? 0.15 : isPast ? 0.45 : 1,
                 transition: "all 0.2s",
+                cursor: "pointer",
               }}
             >
               <div
