@@ -122,8 +122,14 @@ def _jaccard(a: str, b: str) -> float:
     return len(sa & sb) / len(sa | sb)
 
 
-_REASON_RE = re.compile(r"^\s*REASON:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
-_VOTE_RE = re.compile(r"^\s*VOTE:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+_REASON_RE = re.compile(
+    r"^\s*(?:>\s*)?(?:[-*+]\s*|\d+[.)]\s*)?(?:\*\*)?REASON(?:\*\*)?\s*[:\-]\s*(?:\*\*)?(.+?)\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+_VOTE_RE = re.compile(
+    r"^\s*(?:>\s*)?(?:[-*+]\s*|\d+[.)]\s*)?(?:\*\*)?VOTE(?:\*\*)?\s*[:\-]\s*(?:\*\*)?(.+?)\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
 _ZERO_SCORE_VOTES = frozenset({"unknown"})
 _VOTE_INSTRUCTION = (
     "\n\nIMPORTANT: End your response with these two lines in this EXACT format:\n"
