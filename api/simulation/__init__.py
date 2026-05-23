@@ -440,7 +440,7 @@ async def _run_broadcast_no_consensus(
 
     async def _broadcast(
         agent: dict[str, Any],
-    ) -> tuple[str, list[SimulationStep], list[SelfMessage]]:
+    ) -> tuple[str, list[SimulationStep]]:
         agent_id = str(agent["id"])
         try:
             response, tools_used = await _call_agent(
@@ -448,24 +448,28 @@ async def _run_broadcast_no_consensus(
             )
         except Exception as exc:
             err = f"[error: {exc}]"
+            await _persist_self_messages(
+                db, broadcast_output_round_id, agent_id, [("agent_error", err)]
+            )
             return (
                 err,
                 [_step(label=agent["name"], msg=err, type="system", node_id=agent_id)],
-                [("agent_error", err)],
             )
         agent_steps = _tool_steps(tools_used, agent_id)
         agent_steps.append(
             _step(label=agent["name"], msg=response, type="system", node_id=agent_id)
         )
-        return response, agent_steps, _self_messages(response, tools_used)
+        await _persist_self_messages(
+            db, broadcast_output_round_id, agent_id, _self_messages(response, tools_used)
+        )
+        return response, agent_steps
 
     bcast = await asyncio.gather(*[_broadcast(a) for a in agents])
     responses: dict[str, str] = {}
-    for agent, (response, agent_steps, self_messages) in zip(agents, bcast, strict=True):
+    for agent, (response, agent_steps) in zip(agents, bcast, strict=True):
         agent_id = str(agent["id"])
         responses[agent_id] = response
         steps.extend(agent_steps)
-        await _persist_self_messages(db, broadcast_output_round_id, agent_id, self_messages)
 
     rounds_used = 0
     for round_num in range(1, rounds + 1):
@@ -484,10 +488,11 @@ async def _run_broadcast_no_consensus(
 
         async def _discuss(
             agent: dict[str, Any],
-        ) -> tuple[str | None, list[SimulationStep], list[MessageDelivery], list[SelfMessage]]:
+            current_round_id: int = round_id,
+        ) -> tuple[str | None, list[SimulationStep]]:
             senders = [sid for sid in incoming[agent["id"]] if sid in responses]
             if not senders:
-                return None, [], [], []
+                return None, []
 
             context_lines = [f"- {agent_by_id[sid]['name']}: {responses[sid]}" for sid in senders]
             discussion_prompt = (
@@ -510,44 +515,38 @@ async def _run_broadcast_no_consensus(
             ]
             agent_id = str(agent["id"])
             deliveries: list[MessageDelivery] = [(sid, agent_id, responses[sid]) for sid in senders]
+            await _persist_agent_deliveries(db, current_round_id, deliveries, "agent_to_agent")
 
             try:
                 response, tools_used = await _call_agent(agent, discussion_prompt, db)
             except Exception as exc:
                 err = f"[error: {exc}]"
+                await _persist_self_messages(db, current_round_id, agent_id, [("agent_error", err)])
                 return (
                     err,
                     [
                         *edge_steps,
                         _step(label=agent["name"], msg=err, type="system", node_id=agent["id"]),
                     ],
-                    deliveries,
-                    [("agent_error", err)],
                 )
 
             reply_steps = _tool_steps(tools_used, agent_id)
             reply_steps.append(
                 _step(label=agent["name"], msg=response, type="system", node_id=agent_id)
             )
-            return (
-                response,
-                [*edge_steps, *reply_steps],
-                deliveries,
-                _self_messages(response, tools_used),
+            await _persist_self_messages(
+                db, current_round_id, agent_id, _self_messages(response, tools_used)
             )
+            return response, [*edge_steps, *reply_steps]
 
         results = await asyncio.gather(*[_discuss(a) for a in agents])
 
         new_responses: dict[str, str] = {}
-        for agent, (new_resp, new_steps, deliveries, self_messages) in zip(
-            agents, results, strict=True
-        ):
+        for agent, (new_resp, new_steps) in zip(agents, results, strict=True):
             agent_id = str(agent["id"])
             if new_resp is not None:
                 new_responses[agent_id] = new_resp
                 steps.extend(new_steps)
-                await _persist_agent_deliveries(db, round_id, deliveries, "agent_to_agent")
-                await _persist_self_messages(db, round_id, agent_id, self_messages)
         responses.update(new_responses)
 
     steps.append(_step(label="SYSTEM", msg="Simulation complete.", type="system"))
@@ -597,7 +596,7 @@ async def _run_weighted_opinion_pool(
 
     async def _broadcast(
         agent: dict[str, Any],
-    ) -> tuple[str, list[SimulationStep], list[SelfMessage]]:
+    ) -> tuple[str, list[SimulationStep]]:
         agent_id = str(agent["id"])
         try:
             response, tools = await _call_agent(
@@ -605,24 +604,28 @@ async def _run_weighted_opinion_pool(
             )
         except Exception as exc:
             err = f"[error: {exc}]"
+            await _persist_self_messages(
+                db, broadcast_output_round_id, agent_id, [("agent_error", err)]
+            )
             return (
                 err,
                 [_step(label=agent["name"], msg=err, type="system", node_id=agent_id)],
-                [("agent_error", err)],
             )
         agent_steps = _tool_steps(tools, agent_id)
         agent_steps.append(
             _step(label=agent["name"], msg=response, type="system", node_id=agent_id)
         )
-        return response, agent_steps, _self_messages(response, tools)
+        await _persist_self_messages(
+            db, broadcast_output_round_id, agent_id, _self_messages(response, tools)
+        )
+        return response, agent_steps
 
     bcast = await asyncio.gather(*[_broadcast(a) for a in agents])
     responses: dict[str, str] = {}
-    for agent, (resp, agent_steps, self_messages) in zip(agents, bcast, strict=True):
+    for agent, (resp, agent_steps) in zip(agents, bcast, strict=True):
         agent_id = str(agent["id"])
         responses[agent_id] = resp
         steps.extend(agent_steps)
-        await _persist_self_messages(db, broadcast_output_round_id, agent_id, self_messages)
 
     # Snapshot broadcast replies for provenance-based routing attribution.
     broadcast_responses: dict[str, str] = dict(responses)
@@ -646,10 +649,11 @@ async def _run_weighted_opinion_pool(
 
         async def _discuss(
             agent: dict[str, Any],
-        ) -> tuple[str | None, list[SimulationStep], list[MessageDelivery], list[SelfMessage]]:
+            current_round_id: int = round_id,
+        ) -> tuple[str | None, list[SimulationStep]]:
             nbrs = [n for n in incoming[agent["id"]] if n in responses]
             if not nbrs:
-                return None, [], [], []
+                return None, []
 
             weights = trust[agent["id"]]
             context_lines = [
@@ -676,38 +680,39 @@ async def _run_weighted_opinion_pool(
             ]
             agent_id = str(agent["id"])
             deliveries: list[MessageDelivery] = [(n, agent_id, responses[n]) for n in nbrs]
+            await _persist_agent_deliveries(
+                db, current_round_id, deliveries, "weighted_agent_to_agent"
+            )
 
             try:
                 resp, tools = await _call_agent(agent, discussion_prompt, db)
             except Exception as exc:
                 err = f"[error: {exc}]"
+                await _persist_self_messages(db, current_round_id, agent_id, [("agent_error", err)])
                 return (
                     err,
                     [
                         *edge_steps,
                         _step(label=agent["name"], msg=err, type="system", node_id=agent["id"]),
                     ],
-                    deliveries,
-                    [("agent_error", err)],
                 )
 
             tool_s = _tool_steps(tools, agent_id)
             tool_s.append(_step(label=agent["name"], msg=resp, type="system", node_id=agent_id))
-            return resp, [*edge_steps, *tool_s], deliveries, _self_messages(resp, tools)
+            await _persist_self_messages(
+                db, current_round_id, agent_id, _self_messages(resp, tools)
+            )
+            return resp, [*edge_steps, *tool_s]
 
         results = await asyncio.gather(*[_discuss(a) for a in agents])
 
         prev_responses = dict(responses)
         new_responses: dict[str, str] = {}
-        for agent, (new_resp, new_steps, deliveries, self_messages) in zip(
-            agents, results, strict=True
-        ):
+        for agent, (new_resp, new_steps) in zip(agents, results, strict=True):
             agent_id = str(agent["id"])
             if new_resp is not None:
                 new_responses[agent_id] = new_resp
                 steps.extend(new_steps)
-                await _persist_agent_deliveries(db, round_id, deliveries, "weighted_agent_to_agent")
-                await _persist_self_messages(db, round_id, agent_id, self_messages)
 
         # Trust update: increase weight on neighbours whose latest reply
         # agrees most (Jaccard) with the agent's own latest reply.
@@ -824,19 +829,21 @@ async def _run_voting(
 
     async def _broadcast(
         agent: dict[str, Any],
-    ) -> tuple[str, str | None, str | None, list[SimulationStep], list[SelfMessage]]:
+    ) -> tuple[str, str | None, str | None, list[SimulationStep]]:
         agent_id = str(agent["id"])
         full_prompt = _with_context(prompt, agent_id, agent_context) + _VOTE_INSTRUCTION
         try:
             response, tools = await _call_agent(agent, full_prompt, db)
         except Exception as exc:
             err = f"[error: {exc}]"
+            await _persist_self_messages(
+                db, broadcast_output_round_id, agent_id, [("agent_error", err)]
+            )
             return (
                 err,
                 None,
                 None,
                 [_step(label=agent["name"], msg=err, type="system", node_id=agent_id)],
-                [("agent_error", err)],
             )
         vote = _extract_vote(response)
         reason = _extract_reason(response)
@@ -844,19 +851,21 @@ async def _run_voting(
         agent_steps.append(
             _step(label=agent["name"], msg=response, type="system", node_id=agent_id)
         )
-        return response, vote, reason, agent_steps, _self_messages(response, tools)
+        await _persist_self_messages(
+            db, broadcast_output_round_id, agent_id, _self_messages(response, tools)
+        )
+        return response, vote, reason, agent_steps
 
     bcast = await asyncio.gather(*[_broadcast(a) for a in agents])
     responses: dict[str, str] = {}
     votes: dict[str, str | None] = {}
     reasons: dict[str, str | None] = {}
-    for agent, (resp, vote, reason, agent_steps, self_messages) in zip(agents, bcast, strict=True):
+    for agent, (resp, vote, reason, agent_steps) in zip(agents, bcast, strict=True):
         agent_id = str(agent["id"])
         responses[agent_id] = resp
         votes[agent_id] = vote
         reasons[agent_id] = reason
         steps.extend(agent_steps)
-        await _persist_self_messages(db, broadcast_output_round_id, agent_id, self_messages)
 
     # Snapshot the initial broadcast votes for provenance-based routing attribution.
     broadcast_votes: dict[str, str | None] = dict(votes)
@@ -884,14 +893,12 @@ async def _run_voting(
             agent: dict[str, Any],
             tally_msg: str = tally_msg,
             reasons_msg: str = reasons_msg,
+            current_round_id: int = round_id,
         ) -> tuple[
             str,
             str | None,
             str | None,
             list[SimulationStep],
-            list[MessageDelivery],
-            str,
-            list[SelfMessage],
         ]:
             nbrs = [n for n in incoming[agent["id"]] if n in responses]
             own_prev = responses.get(agent["id"], "")
@@ -963,10 +970,12 @@ async def _run_voting(
                     + _VOTE_INSTRUCTION
                 )
 
+            await _persist_agent_deliveries(db, current_round_id, deliveries, delivery_type)
             try:
                 resp, tools = await _call_agent(agent, full_prompt, db)
             except Exception as exc:
                 err = f"[error: {exc}]"
+                await _persist_self_messages(db, current_round_id, agent_id, [("agent_error", err)])
                 return (
                     err,
                     None,
@@ -975,22 +984,19 @@ async def _run_voting(
                         *edge_steps,
                         _step(label=agent["name"], msg=err, type="system", node_id=agent_id),
                     ],
-                    deliveries,
-                    delivery_type,
-                    [("agent_error", err)],
                 )
             v = _extract_vote(resp)
             r = _extract_reason(resp)
             tool_s = _tool_steps(tools, agent_id)
             tool_s.append(_step(label=agent["name"], msg=resp, type="system", node_id=agent_id))
+            await _persist_self_messages(
+                db, current_round_id, agent_id, _self_messages(resp, tools)
+            )
             return (
                 resp,
                 v,
                 r,
                 [*edge_steps, *tool_s],
-                deliveries,
-                delivery_type,
-                _self_messages(resp, tools),
             )
 
         results = await asyncio.gather(*[_discuss(a) for a in agents])
@@ -1000,17 +1006,12 @@ async def _run_voting(
             vote,
             reason,
             agent_steps,
-            deliveries,
-            delivery_type,
-            self_messages,
         ) in zip(agents, results, strict=True):
             agent_id = str(agent["id"])
             responses[agent_id] = resp
             votes[agent_id] = vote
             reasons[agent_id] = reason
             steps.extend(agent_steps)
-            await _persist_agent_deliveries(db, round_id, deliveries, delivery_type)
-            await _persist_self_messages(db, round_id, agent_id, self_messages)
 
         plurality, counts = _tally(votes)
         steps.append(_step(label="TALLY", msg=_format_tally(plurality, counts), type="system"))
