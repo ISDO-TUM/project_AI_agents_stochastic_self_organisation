@@ -152,7 +152,15 @@ class FilesToolResponse(BaseModel):
 
 # ── Simulation ────────────────────────────────────────────────────────────────
 
-_SimStepType = Literal["system", "agent-to-agent", "tool", "agent-to-source"]
+_SimStepType = Literal[
+    # V0 (unchanged)
+    "system", "agent-to-agent", "tool", "agent-to-source",
+    # ECSAS
+    "bid", "abstain", "bb-post", "bb-cite", "bb-vote",
+    "bb-promote", "bb-delete", "bb-mention",
+    "amendment", "amendment-approved", "amendment-rejected",
+    "convergence",
+]
 
 
 class SimulationStep(BaseModel):
