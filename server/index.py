@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 import os
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
@@ -9,8 +10,27 @@ from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from server.db import close_db, init_db
+from server.db import cleanup_stale_data, close_db, get_engine, init_db
 from server.llm.credentials import MissingCredentialsError
+
+logger = logging.getLogger(__name__)
+
+_CLEANUP_INTERVAL_SECONDS = 3600  # run every hour
+_STALE_AFTER_HOURS = 24
+
+
+async def _cleanup_loop() -> None:
+    """Background task: delete agents and files older than 24 h, then wait an hour."""
+    while True:
+        try:
+            deleted = await cleanup_stale_data(get_engine(), max_age_hours=_STALE_AFTER_HOURS)
+            if deleted:
+                logger.info("Periodic cleanup: removed %d stale agent(s)", deleted)
+        except Exception:
+            logger.exception("Periodic cleanup failed — will retry next cycle")
+        await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
+
+
 from server.routes import (
     agents_router,
     benchmark_router,
@@ -27,8 +47,12 @@ load_dotenv()
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     """Initialise the session database on startup and close it on shutdown."""
     await init_db()
-    yield
-    await close_db()
+    cleanup_task = asyncio.create_task(_cleanup_loop())
+    try:
+        yield
+    finally:
+        cleanup_task.cancel()
+        await close_db()
 
 
 app = FastAPI(

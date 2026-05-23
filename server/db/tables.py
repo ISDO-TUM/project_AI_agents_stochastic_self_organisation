@@ -11,12 +11,14 @@ from __future__ import annotations
 from sqlalchemy import (
     CheckConstraint,
     Column,
+    DateTime,
     ForeignKey,
     Integer,
     MetaData,
     Table,
     Text,
     UniqueConstraint,
+    func,
     text,
 )
 
@@ -33,6 +35,7 @@ agents = Table(
     Column("model", Text, nullable=False),
     Column("tools", Text, nullable=False, server_default=text("'[]'")),
     Column("connections", Text, nullable=False, server_default=text("'[]'")),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     CheckConstraint(
         "provider IN ('openai', 'anthropic', 'groq', 'gemini')",
         name="ck_agents_provider",
@@ -45,6 +48,7 @@ knowledge_files = Table(
     Column("id", Text, primary_key=True),
     Column("name", Text, nullable=False),
     Column("content", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
 )
 
 agent_files = Table(

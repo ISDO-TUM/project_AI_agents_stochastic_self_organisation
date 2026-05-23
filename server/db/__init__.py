@@ -10,15 +10,28 @@ run ``pytest``. Connection-string schemes handed out by Railway/Heroku
 from __future__ import annotations
 
 import json
+import logging
 import os
 from collections.abc import AsyncGenerator
+from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import RowMapping, event, select
+from sqlalchemy import RowMapping, delete, event, select
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from sqlalchemy.pool import StaticPool
 
-from server.db.tables import agent_files, knowledge_files, metadata
+from server.db.tables import (
+    agent_files,
+    agents,
+    connections,
+    knowledge_files,
+    messages,
+    metadata,
+    rounds,
+    trials,
+)
+
+logger = logging.getLogger(__name__)
 
 _engine: AsyncEngine | None = None
 
@@ -57,6 +70,60 @@ def _build_engine(url: str) -> AsyncEngine:
             cursor.close()
 
     return engine
+
+
+async def cleanup_stale_data(engine: AsyncEngine, max_age_hours: int = 24) -> int:
+    """Delete agents and knowledge files older than *max_age_hours*.
+
+    Deletion respects every FK constraint by following the same order as the
+    DELETE ALL route: messages → connections → orphaned rounds → orphaned
+    trials → agents (cascades agent_files) → orphaned knowledge_files.
+
+    Returns:
+        Number of agents deleted.
+    """
+    cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
+
+    async with engine.connect() as conn:
+        stale_result = await conn.execute(select(agents.c.id).where(agents.c.created_at < cutoff))
+        stale_agent_ids = [row.id for row in stale_result]
+
+        if not stale_agent_ids:
+            return 0
+
+        # 1. Messages whose connection touches a stale agent
+        stale_conn_result = await conn.execute(
+            select(connections.c.id).where(
+                connections.c.from_agent_id.in_(stale_agent_ids)
+                | connections.c.to_agent_id.in_(stale_agent_ids)
+            )
+        )
+        stale_conn_ids = [row.id for row in stale_conn_result]
+
+        if stale_conn_ids:
+            await conn.execute(delete(messages).where(messages.c.connection_id.in_(stale_conn_ids)))
+            await conn.execute(delete(connections).where(connections.c.id.in_(stale_conn_ids)))
+
+        # 2. Rounds and trials that are now orphaned (no remaining connections)
+        await conn.execute(delete(rounds).where(rounds.c.id.not_in(select(connections.c.round_id))))
+        await conn.execute(delete(trials).where(trials.c.id.not_in(select(rounds.c.trial_id))))
+
+        # 3. Stale agents — CASCADE removes agent_files rows
+        await conn.execute(delete(agents).where(agents.c.id.in_(stale_agent_ids)))
+
+        # 4. Knowledge files no longer attached to any agent
+        await conn.execute(
+            delete(knowledge_files).where(
+                knowledge_files.c.id.not_in(select(agent_files.c.file_id))
+            )
+        )
+
+        await conn.commit()
+
+    logger.info(
+        "Cleanup removed %d stale agent(s) (older than %dh)", len(stale_agent_ids), max_age_hours
+    )
+    return len(stale_agent_ids)
 
 
 async def init_db() -> None:
