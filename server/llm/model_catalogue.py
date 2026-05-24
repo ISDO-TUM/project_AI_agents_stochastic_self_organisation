@@ -64,10 +64,10 @@ STANDARD_MODELS: list[_ModelEntry] = [
 ]
 
 # ---------------------------------------------------------------------------
-# SAP / proxy models (returned when a base-URL override is set)
+# Proxy / base-URL-override models (returned when a base-URL override is set)
 # ---------------------------------------------------------------------------
 
-SAP_MODELS: list[_ModelEntry] = [
+PROXY_MODELS: list[_ModelEntry] = [
     _ModelEntry("anthropic--claude-4-sonnet", "Claude 4 Sonnet", "anthropic"),
     _ModelEntry("anthropic--claude-4.5-haiku", "Claude 4.5 Haiku", "anthropic"),
     _ModelEntry("anthropic--claude-4.5-opus", "Claude 4.5 Opus", "anthropic"),
@@ -88,4 +88,4 @@ SAP_MODELS: list[_ModelEntry] = [
 # ---------------------------------------------------------------------------
 
 #: Every model ID that may appear in an agent's ``model`` field.
-ALLOWED_MODEL_IDS: frozenset[str] = frozenset(m.id for m in STANDARD_MODELS + SAP_MODELS)
+ALLOWED_MODEL_IDS: frozenset[str] = frozenset(m.id for m in STANDARD_MODELS + PROXY_MODELS)
