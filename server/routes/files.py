@@ -32,7 +32,9 @@ async def create_knowledge_file(body: KnowledgeFileCreate, db: DBDep) -> Knowled
     try:
         sanitize_prompt(body.content, field_name="knowledge file content")
     except PromptInjectionError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     file_id = body.id or str(uuid.uuid4())
     await db.execute(
         insert(knowledge_files).values(id=file_id, name=body.name, content=body.content)
@@ -86,7 +88,9 @@ async def replace_knowledge_file(
     try:
         sanitize_prompt(body.content, field_name="knowledge file content")
     except PromptInjectionError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
     existing = await db.execute(select(knowledge_files.c.id).where(knowledge_files.c.id == file_id))
     if existing.first() is None:
         raise HTTPException(
@@ -128,7 +132,9 @@ async def update_knowledge_file(
         try:
             sanitize_prompt(body.content, field_name="knowledge file content")
         except PromptInjectionError as exc:
-            raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
 
     updates: dict[str, str] = {
         field: value

@@ -610,7 +610,10 @@ class SimulationRunRequest(BaseModel):
             )
         for key, value in v.items():
             if not isinstance(value, str):
-                raise ValueError(f"agent_context values must be strings, got {type(value)} for key '{key}'.")
+                raise ValueError(
+                    f"agent_context values must be strings, "
+                    f"got {type(value)} for key '{key}'."
+                )
             if len(value) > _MAX_AGENT_CONTEXT_VALUE_LEN:
                 raise ValueError(
                     f"agent_context['{key}'] exceeds {_MAX_AGENT_CONTEXT_VALUE_LEN} characters."
