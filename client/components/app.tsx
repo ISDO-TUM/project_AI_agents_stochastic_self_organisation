@@ -478,7 +478,11 @@ export function App() {
           onToggleTweaks={onToggleTweaks}
         />
 
-        <PromptBar simMode={simMode} onRun={handleRun} onOpenKeys={() => setShowKeys(true)} />
+        <PromptBar
+          simMode={simMode}
+          onRun={handleRun}
+          onOpenKeys={() => setShowKeys(true)}
+        />
       </div>
 
       {simMode && (
