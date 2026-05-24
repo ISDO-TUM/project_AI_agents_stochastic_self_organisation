@@ -1,0 +1,26 @@
+# Python
+api/.venv
+api/__pycache__
+api/**/*.pyc
+api/**/*.pyo
+api/.env
+api/requirements-dev.txt
+api/.coverage*
+
+# Node
+app/node_modules
+app/.next
+node_modules
+*.tsbuildinfo
+
+# Git & tooling
+.git
+.env
+.pre-commit-config.yaml
+.ruff_cache
+.mypy_cache
+
+# Repo content not needed at runtime
+demos/
+docs/
+scripts/

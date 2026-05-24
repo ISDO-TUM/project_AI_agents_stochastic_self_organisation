@@ -12,7 +12,11 @@ if ! command -v uv &> /dev/null; then
 fi
 
 if ! command -v pnpm &> /dev/null; then
-    curl -fsSL https://get.pnpm.io/install.sh | env PNPM_VERSION=9.0.0 sh -
+    # Install the exact pnpm version pinned in package.json's "packageManager"
+    # field (the single source of truth). pnpm then self-manages this version
+    # on every run, keeping local installs in lock-step with CI and Docker.
+    PNPM_VERSION="$(grep -oE 'pnpm@[0-9]+\.[0-9]+\.[0-9]+' package.json | head -1 | cut -d@ -f2)"
+    curl -fsSL https://get.pnpm.io/install.sh | env PNPM_VERSION="$PNPM_VERSION" sh -
     export PATH="$HOME/.local/share/pnpm:$PATH"
     echo ""
     echo "⚠️  pnpm was just installed. Its PATH entry is written to your shell config"
@@ -23,11 +27,13 @@ if ! command -v pnpm &> /dev/null; then
 fi
 
 if [ ! -f .env ]; then
-    touch .env
+    # Seed the connection string for the bundled docker-compose Postgres so
+    # `docker compose up -d postgres` + `pnpm dev` works out of the box.
+    echo "DATABASE_URL=postgresql+asyncpg://app:app@localhost:5432/app" > .env
 fi
 
 pnpm install
-cd api
+cd server
 uv venv
 uv pip install -r requirements-dev.txt
 uv run pre-commit install -t pre-commit -t commit-msg
@@ -42,7 +48,7 @@ cat > .git/hooks/pre-commit << 'HOOK'
 # even when git invokes this hook with a stripped PATH.
 export PATH="$HOME/.local/bin:$HOME/.cargo/bin:$HOME/.local/share/pnpm:$PATH"
 ROOT=$(git rev-parse --show-toplevel)
-exec "$ROOT/api/.venv/bin/python" "$ROOT/scripts/pre-commit-formatter.py" "$@"
+exec "$ROOT/server/.venv/bin/python" "$ROOT/scripts/pre-commit-formatter.py" "$@"
 HOOK
 chmod +x .git/hooks/pre-commit
 

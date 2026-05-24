@@ -1,0 +1,112 @@
+"""SQLAlchemy Core table definitions shared by every dialect.
+
+Defining the schema with Core constructs (rather than raw ``CREATE TABLE``
+strings) lets the same code emit SQLite DDL for the test suite and PostgreSQL
+DDL in production. JSON-bearing columns (``tools``, ``connections``) stay as
+TEXT so the application keeps owning (de)serialisation via :mod:`json`.
+"""
+
+from __future__ import annotations
+
+from sqlalchemy import (
+    CheckConstraint,
+    Column,
+    DateTime,
+    ForeignKey,
+    Integer,
+    MetaData,
+    Table,
+    Text,
+    UniqueConstraint,
+    func,
+    text,
+)
+
+metadata = MetaData()
+
+agents = Table(
+    "agents",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("name", Text, nullable=False),
+    Column("description", Text, nullable=False),
+    Column("system_prompt", Text, nullable=False),
+    Column("provider", Text, nullable=False),
+    Column("model", Text, nullable=False),
+    Column("tools", Text, nullable=False, server_default=text("'[]'")),
+    Column("connections", Text, nullable=False, server_default=text("'[]'")),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    CheckConstraint(
+        "provider IN ('openai', 'anthropic', 'groq', 'gemini')",
+        name="ck_agents_provider",
+    ),
+)
+
+knowledge_files = Table(
+    "knowledge_files",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("name", Text, nullable=False),
+    Column("content", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+)
+
+agent_files = Table(
+    "agent_files",
+    metadata,
+    Column("agent_id", Text, ForeignKey("agents.id", ondelete="CASCADE"), primary_key=True),
+    Column(
+        "file_id",
+        Text,
+        ForeignKey("knowledge_files.id", ondelete="CASCADE"),
+        primary_key=True,
+    ),
+)
+
+trials = Table(
+    "trials",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("user_prompt", Text, nullable=False),
+    Column("description", Text, nullable=False),
+    Column("mode", Text),
+    Column("status", Text, nullable=False, server_default=text("'running'")),
+    Column("created_at", Text, nullable=False),
+    Column("completed_at", Text),
+)
+
+rounds = Table(
+    "rounds",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("trial_id", Text, ForeignKey("trials.id", ondelete="CASCADE"), nullable=False),
+    Column("round_index", Integer, nullable=False),
+    Column("phase", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    UniqueConstraint("trial_id", "round_index", "phase", name="uq_rounds_trial_round_phase"),
+)
+
+connections = Table(
+    "connections",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column("round_id", Integer, ForeignKey("rounds.id", ondelete="CASCADE"), nullable=False),
+    Column("from_agent_id", Text, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True),
+    Column("to_agent_id", Text, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True),
+    UniqueConstraint("round_id", "from_agent_id", "to_agent_id", name="uq_connections_edge"),
+)
+
+messages = Table(
+    "messages",
+    metadata,
+    Column("id", Integer, primary_key=True, autoincrement=True),
+    Column(
+        "connection_id", Integer, ForeignKey("connections.id", ondelete="CASCADE"), nullable=False
+    ),
+    Column("round_id", Integer, ForeignKey("rounds.id", ondelete="CASCADE"), nullable=False),
+    Column("from_agent_id", Text, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True),
+    Column("to_agent_id", Text, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True),
+    Column("message_type", Text, nullable=False),
+    Column("message", Text),
+    Column("created_at", Text, nullable=False),
+)
