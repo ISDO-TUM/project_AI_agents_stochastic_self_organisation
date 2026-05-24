@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   fetchAgents,
   fetchHistoryMessages,
@@ -27,35 +27,38 @@ export function HistoryPage({ onBack }: HistoryPageProps) {
   const [agentId, setAgentId] = useState(ALL);
   const [messageType, setMessageType] = useState(ALL);
   const [selected, setSelected] = useState<HistoryMessage | null>(null);
-  const [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-
-  const load = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [trialRows, agentRows, messageRows] = await Promise.all([
-        fetchHistoryTrials(),
-        fetchAgents(),
-        fetchHistoryMessages({
-          trialId: trialId || undefined,
-          agentId: agentId || undefined,
-          messageType: messageType || undefined,
-        }),
-      ]);
-      setTrials(trialRows);
-      setAgents(agentRows);
-      setMessages(messageRows);
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to load history");
-    } finally {
-      setLoading(false);
-    }
-  }, [agentId, messageType, trialId]);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
-    void load();
-  }, [load]);
+    let cancelled = false;
+    Promise.all([
+      fetchHistoryTrials(),
+      fetchAgents(),
+      fetchHistoryMessages({
+        trialId: trialId || undefined,
+        agentId: agentId || undefined,
+        messageType: messageType || undefined,
+      }),
+    ])
+      .then(([trialRows, agentRows, messageRows]) => {
+        if (cancelled) return;
+        setTrials(trialRows);
+        setAgents(agentRows);
+        setMessages(messageRows);
+        setError(null);
+        setLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setError(err instanceof Error ? err.message : "Failed to load history");
+        setLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [agentId, messageType, trialId, reloadKey]);
 
   const messageTypes = useMemo(
     () => Array.from(new Set(messages.map((m) => m.messageType))).sort(),
@@ -114,7 +117,10 @@ export function HistoryPage({ onBack }: HistoryPageProps) {
         </button>
         <div style={{ fontSize: 14, fontWeight: 800 }}>Simulation History</div>
         <button
-          onClick={() => void load()}
+          onClick={() => {
+            setLoading(true);
+            setReloadKey((k) => k + 1);
+          }}
           style={{
             display: "flex",
             alignItems: "center",
@@ -146,7 +152,10 @@ export function HistoryPage({ onBack }: HistoryPageProps) {
       >
         <select
           value={trialId}
-          onChange={(e) => setTrialId(e.target.value)}
+          onChange={(e) => {
+            setLoading(true);
+            setTrialId(e.target.value);
+          }}
           style={controlStyle}
         >
           <option value={ALL}>All trials</option>
@@ -158,7 +167,10 @@ export function HistoryPage({ onBack }: HistoryPageProps) {
         </select>
         <select
           value={agentId}
-          onChange={(e) => setAgentId(e.target.value)}
+          onChange={(e) => {
+            setLoading(true);
+            setAgentId(e.target.value);
+          }}
           style={controlStyle}
         >
           <option value={ALL}>All agents</option>
@@ -170,7 +182,10 @@ export function HistoryPage({ onBack }: HistoryPageProps) {
         </select>
         <select
           value={messageType}
-          onChange={(e) => setMessageType(e.target.value)}
+          onChange={(e) => {
+            setLoading(true);
+            setMessageType(e.target.value);
+          }}
           style={controlStyle}
         >
           <option value={ALL}>All message types</option>
