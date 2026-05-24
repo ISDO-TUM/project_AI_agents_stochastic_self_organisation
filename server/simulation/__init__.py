@@ -37,8 +37,9 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from typing import Any, Literal
 
 from sqlalchemy import select
@@ -50,6 +51,9 @@ from server.llm import call_agent
 from server.schemas import SimulationStep, ToolCall
 
 ConsensusMode = Literal["broadcast", "weighted", "voting"]
+
+# Callable type for the bound agent-call closure passed into runner functions.
+_AgentCall = Callable[[dict[str, Any], str], Awaitable[tuple[str, list[ToolCall]]]]
 
 # ── helpers ───────────────────────────────────────────────────────────────────
 
@@ -64,15 +68,18 @@ def _step(**kwargs: Any) -> SimulationStep:
 
 
 async def _call_agent(
-    agent: dict[str, Any], prompt: str, files: dict[str, str]
+    agent: dict[str, Any], prompt: str, files: dict[str, str], ruleset: str | None = None
 ) -> tuple[str, list[ToolCall]]:
     """Invoke an agent and return (response_text, tools_used).
 
-    ``files`` is the agent's pre-loaded ``{name: content}`` map, supplied to the
-    files tool via context so no database access happens during the concurrent
-    LLM phase.
+    `ruleset`, when provided, is prepended to the agent's system prompt so every
+    LLM call in a simulation run automatically abides by the shared rules.
     """
-    system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, list(files))
+    file_names = list(files.keys())
+    system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, file_names)
+    if ruleset and ruleset.strip():
+        system_prompt = f"## RULESET\n{ruleset.strip()}\n\n{system_prompt or ''}"
+    system_prompt = f"## CURRENT DATE\n{date.today().isoformat()}\n\n{system_prompt or ''}"
     response, tools_used = await call_agent(
         prompt,
         provider=agent["provider"],
@@ -303,6 +310,7 @@ async def run_topology(
     rounds: int = 3,
     mode: ConsensusMode = "broadcast",
     agent_context: dict[str, str] | None = None,
+    ruleset: str | None = None,
 ) -> SimulationOutcome:
     """Run a topology simulation under the chosen consensus mode.
 
@@ -319,13 +327,14 @@ async def run_topology(
     files_by_agent = await load_files_by_agent(db)
     incoming = _build_incoming(agents)
 
+    async def call(agent: dict[str, Any], prompt: str) -> tuple[str, list[ToolCall]]:
+        return await _call_agent(agent, prompt, files_by_agent.get(agent["id"], {}), ruleset)
+
     if mode == "weighted":
-        return await _run_weighted_pool(
-            prompt, agents, incoming, files_by_agent, rounds, agent_context
-        )
+        return await _run_weighted_pool(prompt, agents, incoming, call, rounds, agent_context)
     if mode == "voting":
-        return await _run_voting(prompt, agents, incoming, files_by_agent, rounds, agent_context)
-    return await _run_broadcast(prompt, agents, incoming, files_by_agent, rounds, agent_context)
+        return await _run_voting(prompt, agents, incoming, call, rounds, agent_context)
+    return await _run_broadcast(prompt, agents, incoming, call, rounds, agent_context)
 
 
 # ── mode 1: broadcast (no consensus) ──────────────────────────────────────────
@@ -335,7 +344,7 @@ async def _run_broadcast(
     prompt: str,
     agents: list[dict[str, Any]],
     incoming: dict[str, list[str]],
-    files_by_agent: dict[str, dict[str, str]],
+    call: _AgentCall,
     rounds: int,
     agent_context: dict[str, str] | None,
 ) -> SimulationOutcome:
@@ -350,10 +359,8 @@ async def _run_broadcast(
 
     async def _broadcast(agent: dict[str, Any]) -> tuple[str, list[SimulationStep]]:
         try:
-            response, tools_used = await _call_agent(
-                agent,
-                _with_context(prompt, agent["id"], agent_context),
-                files_by_agent.get(agent["id"], {}),
+            response, tools_used = await call(
+                agent, _with_context(prompt, agent["id"], agent_context)
             )
         except Exception as exc:
             err = f"[error: {exc}]"
@@ -410,9 +417,7 @@ async def _run_broadcast(
             ]
 
             try:
-                response, tools_used = await _call_agent(
-                    agent, discussion_prompt, files_by_agent.get(agent["id"], {})
-                )
+                response, tools_used = await call(agent, discussion_prompt)
             except Exception as exc:
                 err = f"[error: {exc}]"
                 return err, [
@@ -450,7 +455,7 @@ async def _run_weighted_pool(
     prompt: str,
     agents: list[dict[str, Any]],
     incoming: dict[str, list[str]],
-    files_by_agent: dict[str, dict[str, str]],
+    call: _AgentCall,
     rounds: int,
     agent_context: dict[str, str] | None,
 ) -> SimulationOutcome:
@@ -471,11 +476,7 @@ async def _run_weighted_pool(
 
     async def _broadcast(agent: dict[str, Any]) -> tuple[str, list[SimulationStep]]:
         try:
-            response, tools = await _call_agent(
-                agent,
-                _with_context(prompt, agent["id"], agent_context),
-                files_by_agent.get(agent["id"], {}),
-            )
+            response, tools = await call(agent, _with_context(prompt, agent["id"], agent_context))
         except Exception as exc:
             err = f"[error: {exc}]"
             return err, [_step(label=agent["name"], msg=err, type="system", node_id=agent["id"])]
@@ -540,9 +541,7 @@ async def _run_weighted_pool(
             ]
 
             try:
-                resp, tools = await _call_agent(
-                    agent, discussion_prompt, files_by_agent.get(agent["id"], {})
-                )
+                resp, tools = await call(agent, discussion_prompt)
             except Exception as exc:
                 err = f"[error: {exc}]"
                 return err, [
@@ -648,7 +647,7 @@ async def _run_voting(
     prompt: str,
     agents: list[dict[str, Any]],
     incoming: dict[str, list[str]],
-    files_by_agent: dict[str, dict[str, str]],
+    call: _AgentCall,
     rounds: int,
     agent_context: dict[str, str] | None,
 ) -> SimulationOutcome:
@@ -666,9 +665,7 @@ async def _run_voting(
     ) -> tuple[str, str | None, str | None, list[SimulationStep]]:
         full_prompt = _with_context(prompt, agent["id"], agent_context) + _VOTE_INSTRUCTION
         try:
-            response, tools = await _call_agent(
-                agent, full_prompt, files_by_agent.get(agent["id"], {})
-            )
+            response, tools = await call(agent, full_prompt)
         except Exception as exc:
             err = f"[error: {exc}]"
             return (
@@ -785,9 +782,7 @@ async def _run_voting(
                 )
 
             try:
-                resp, tools = await _call_agent(
-                    agent, full_prompt, files_by_agent.get(agent["id"], {})
-                )
+                resp, tools = await call(agent, full_prompt)
             except Exception as exc:
                 err = f"[error: {exc}]"
                 return (

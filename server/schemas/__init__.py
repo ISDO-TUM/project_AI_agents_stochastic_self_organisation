@@ -456,6 +456,13 @@ class SimulationRunRequest(BaseModel):
             "benchmarks (e.g. needle-in-haystack) to seed each agent with a chunk."
         ),
     )
+    ruleset: str | None = Field(
+        default=None,
+        description=(
+            "Optional global ruleset prepended to every agent's system prompt. "
+            "Use this to define shared rules that all agents must abide by."
+        ),
+    )
 
 
 class SimulationRunResponse(BaseModel):
