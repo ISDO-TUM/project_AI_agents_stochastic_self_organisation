@@ -98,6 +98,11 @@ async def _call_agent(
     guarded_system_prompt = build_guarded_system_prompt(raw_system_prompt)
 
     if ruleset and ruleset.strip():
+        # Sanitise ruleset before injecting it into the system prompt
+        try:
+            sanitize_prompt(ruleset, field_name="ruleset")
+        except PromptInjectionError as exc:
+            return f"[GUARDRAIL BLOCKED ruleset] {exc}", []
         guarded_system_prompt = f"## RULESET\n{ruleset.strip()}\n\n{guarded_system_prompt}"
     guarded_system_prompt = f"## CURRENT DATE\n{date.today().isoformat()}\n\n{guarded_system_prompt}"
 
@@ -139,9 +144,19 @@ def _self_messages(response: str, tools_used: list[ToolCall]) -> list[SelfMessag
 
 
 def _with_context(prompt: str, agent_id: str, agent_context: dict[str, str] | None) -> str:
-    """Prepend an agent's private context to its prompt, if any."""
+    """Prepend an agent's private context to its prompt, if any.
+
+    Context values are sanitised for injection attempts; a blocked context is
+    silently omitted (the simulation continues without the private context).
+    """
     if agent_context and agent_id in agent_context and agent_context[agent_id]:
-        return f"Your private context:\n{agent_context[agent_id]}\n\n{prompt}"
+        ctx = agent_context[agent_id]
+        try:
+            sanitize_prompt(ctx, field_name=f"agent_context[{agent_id}]")
+        except PromptInjectionError:
+            # Log and skip – don't abort the whole simulation
+            return prompt
+        return f"Your private context:\n{ctx}\n\n{prompt}"
     return prompt
 
 

@@ -15,13 +15,16 @@ Three layers of protection:
    text is returned to the caller.
 """
 
-from .input_sanitizer import InputSanitizer, sanitize_prompt
-from .output_validator import OutputValidator, validate_llm_output
+from .input_sanitizer import InputSanitizer, PromptInjectionError, sanitize_prompt
+from .output_validator import InjectionEchoError, LLMRefusalError, OutputValidator, validate_llm_output
 from .prompt_builder import build_guarded_system_prompt
 
 __all__ = [
     "InputSanitizer",
+    "PromptInjectionError",
     "sanitize_prompt",
+    "InjectionEchoError",
+    "LLMRefusalError",
     "OutputValidator",
     "validate_llm_output",
     "build_guarded_system_prompt",

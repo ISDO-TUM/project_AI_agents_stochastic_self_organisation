@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import re
+import uuid as _uuid_module
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from server.llm.model_catalogue import ALLOWED_MODEL_IDS
 
 # ---------------------------------------------------------------------------
 # Field-length constants (defence against token-exhaustion / DoS)
@@ -17,37 +21,33 @@ _MAX_PROMPT_LEN = 4_000
 _MAX_FILE_NAME_LEN = 255
 _MAX_FILE_CONTENT_LEN = 500_000  # 500 KB plain-text ceiling
 _MAX_RULESET_LEN = 4_000
+_MAX_TOOLS_COUNT = 20
+_MAX_CONNECTIONS_COUNT = 50
+_MAX_AGENT_CONTEXT_VALUE_LEN = 8_000
+_MAX_AGENT_CONTEXT_ENTRIES = 100
+
+# Expose as ALLOWED_MODELS for backwards compatibility with tests
+ALLOWED_MODELS: frozenset[str] = ALLOWED_MODEL_IDS
 
 # ---------------------------------------------------------------------------
-# Model allowlist — only models explicitly registered in the /api/models
-# catalogue are accepted.  Unknown model strings are rejected at validation
-# time so an attacker cannot route calls to arbitrarily expensive models.
+# UUID validator helper
 # ---------------------------------------------------------------------------
 
-ALLOWED_MODELS: frozenset[str] = frozenset(
-    {
-        # OpenAI
-        "gpt-4.1-nano",
-        "gpt-4.1-mini",
-        "gpt-4.1",
-        "gpt-4o-mini",
-        "gpt-4o",
-        "o1-mini",
-        "o3-mini",
-        # Anthropic
-        "claude-haiku-4-5-20251001",
-        "claude-sonnet-4-5-20251015",
-        "claude-opus-4-5-20251001",
-        # Groq
-        "llama-3.3-70b-versatile",
-        "llama-3.1-8b-instant",
-        "mixtral-8x7b-32768",
-        # Gemini
-        "gemini-2.0-flash",
-        "gemini-1.5-pro",
-        "gemini-1.5-flash",
-    }
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
 )
+
+
+def _validate_uuid(v: str | None, field_name: str = "id") -> str | None:
+    """Reject non-UUID strings when an id is explicitly supplied."""
+    if v is None:
+        return v
+    if not _UUID_RE.match(v):
+        raise ValueError(
+            f"{field_name} must be a valid UUID (e.g. '550e8400-e29b-41d4-a716-446655440000')."
+        )
+    return v
 
 # ---------------------------------------------------------------------------
 # Models
@@ -86,11 +86,14 @@ class AgentBase(BaseModel):
     provider: ProviderType
     model: str = Field(description="Model identifier, e.g. 'gpt-4o'.")
     tools: list[str] = Field(
-        default_factory=list, description="Tool names available to this agent."
+        default_factory=list,
+        description="Tool names available to this agent.",
+        max_length=_MAX_TOOLS_COUNT,
     )
     connections: list[str] = Field(
         default_factory=list,
         description="UUIDs of agents this agent may delegate work to.",
+        max_length=_MAX_CONNECTIONS_COUNT,
     )
 
     @field_validator("model")
@@ -115,17 +118,32 @@ class AgentCreate(AgentBase):
         ),
     )
 
+    @field_validator("id")
+    @classmethod
+    def id_must_be_uuid(cls, v: str | None) -> str | None:
+        return _validate_uuid(v, "id")
+
 
 class AgentUpdate(BaseModel):
     """Partial update body; only supplied fields are written to the database."""
 
-    name: str | None = None
-    description: str | None = None
-    system_prompt: str | None = None
+    name: str | None = Field(default=None, max_length=_MAX_NAME_LEN)
+    description: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_LEN)
+    system_prompt: str | None = Field(default=None, max_length=_MAX_SYSTEM_PROMPT_LEN)
     provider: ProviderType | None = None
     model: str | None = None
-    tools: list[str] | None = None
-    connections: list[str] | None = None
+    tools: list[str] | None = Field(default=None, max_length=_MAX_TOOLS_COUNT)
+    connections: list[str] | None = Field(default=None, max_length=_MAX_CONNECTIONS_COUNT)
+
+    @field_validator("model")
+    @classmethod
+    def model_must_be_allowlisted(cls, v: str | None) -> str | None:
+        if v is not None and v not in ALLOWED_MODELS:
+            raise ValueError(
+                f"Model '{v}' is not in the allowed model list. "
+                f"Choose from: {sorted(ALLOWED_MODELS)}"
+            )
+        return v
 
 
 class AgentResponse(AgentBase):
@@ -309,12 +327,17 @@ class KnowledgeFileCreate(KnowledgeFileBase):
 
     id: str | None = None
 
+    @field_validator("id")
+    @classmethod
+    def id_must_be_uuid(cls, v: str | None) -> str | None:
+        return _validate_uuid(v, "id")
+
 
 class KnowledgeFileUpdate(BaseModel):
     """Partial update body; only supplied fields are written to the database."""
 
-    name: str | None = None
-    content: str | None = None
+    name: str | None = Field(default=None, max_length=_MAX_NAME_LEN)
+    content: str | None = Field(default=None, max_length=_MAX_FILE_CONTENT_LEN)
 
 
 class KnowledgeFileResponse(KnowledgeFileBase):
@@ -389,7 +412,11 @@ class FilesToolRequest(BaseModel):
 
     action: str = Field(..., description="'list' or 'read'.")
     file_name: str | None = Field(None, description="Required when action is 'read'.")
-    files: dict[str, str] = Field(..., description="Mock file store: name -> content.")
+    files: dict[str, str] = Field(
+        ...,
+        description="Mock file store: name -> content.",
+        max_length=_MAX_TOOLS_COUNT,
+    )
 
 
 class FilesToolResponse(BaseModel):
@@ -570,6 +597,25 @@ class SimulationRunRequest(BaseModel):
             "benchmarks (e.g. needle-in-haystack) to seed each agent with a chunk."
         ),
     )
+
+    @field_validator("agent_context")
+    @classmethod
+    def validate_agent_context(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        if v is None:
+            return v
+        if len(v) > _MAX_AGENT_CONTEXT_ENTRIES:
+            raise ValueError(
+                f"agent_context may contain at most {_MAX_AGENT_CONTEXT_ENTRIES} entries, "
+                f"got {len(v)}."
+            )
+        for key, value in v.items():
+            if not isinstance(value, str):
+                raise ValueError(f"agent_context values must be strings, got {type(value)} for key '{key}'.")
+            if len(value) > _MAX_AGENT_CONTEXT_VALUE_LEN:
+                raise ValueError(
+                    f"agent_context['{key}'] exceeds {_MAX_AGENT_CONTEXT_VALUE_LEN} characters."
+                )
+        return v
     ruleset: str | None = Field(
         default=None,
         max_length=_MAX_RULESET_LEN,
