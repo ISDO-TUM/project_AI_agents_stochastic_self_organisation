@@ -420,25 +420,20 @@ async def _run_broadcast_no_consensus(
 
     async def _broadcast(
         agent: dict[str, Any],
-    ) -> str:
+    ) -> tuple[str, list[SelfMessage]]:
         agent_id = str(agent["id"])
         try:
             response, tools_used = await call(agent, _with_context(prompt, agent_id, agent_context))
         except Exception as exc:
             err = f"[error: {exc}]"
-            await _persist_self_messages(
-                db, broadcast_output_round_id, agent_id, [("agent_error", err)]
-            )
-            return err
-        await _persist_self_messages(
-            db, broadcast_output_round_id, agent_id, _self_messages(response, tools_used)
-        )
-        return response
+            return err, [("agent_error", err)]
+        return response, _self_messages(response, tools_used)
 
     bcast = await asyncio.gather(*[_broadcast(a) for a in agents])
     responses: dict[str, str] = {}
-    for agent, response in zip(agents, bcast, strict=True):
+    for agent, (response, self_messages) in zip(agents, bcast, strict=True):
         agent_id = str(agent["id"])
+        await _persist_self_messages(db, broadcast_output_round_id, agent_id, self_messages)
         responses[agent_id] = response
 
     for round_num in range(1, rounds + 1):
@@ -448,8 +443,7 @@ async def _run_broadcast_no_consensus(
 
         async def _discuss(
             agent: dict[str, Any],
-            current_round_id: int = round_id,
-        ) -> str | None:
+        ) -> tuple[str, list[MessageDelivery], list[SelfMessage], str] | None:
             senders = [sid for sid in incoming[agent["id"]] if sid in responses]
             if not senders:
                 return None
@@ -464,27 +458,25 @@ async def _run_broadcast_no_consensus(
 
             agent_id = str(agent["id"])
             deliveries: list[MessageDelivery] = [(sid, agent_id, responses[sid]) for sid in senders]
-            await _persist_agent_deliveries(db, current_round_id, deliveries, "agent_to_agent")
 
             try:
                 response, tools_used = await call(agent, discussion_prompt)
             except Exception as exc:
                 err = f"[error: {exc}]"
-                await _persist_self_messages(db, current_round_id, agent_id, [("agent_error", err)])
-                return err
+                return agent_id, deliveries, [("agent_error", err)], err
 
-            await _persist_self_messages(
-                db, current_round_id, agent_id, _self_messages(response, tools_used)
-            )
-            return response
+            return agent_id, deliveries, _self_messages(response, tools_used), response
 
         results = await asyncio.gather(*[_discuss(a) for a in agents])
 
         new_responses: dict[str, str] = {}
-        for agent, new_resp in zip(agents, results, strict=True):
-            agent_id = str(agent["id"])
-            if new_resp is not None:
-                new_responses[agent_id] = new_resp
+        for result in results:
+            if result is None:
+                continue
+            agent_id, deliveries, self_messages, new_resp = result
+            await _persist_agent_deliveries(db, round_id, deliveries, "agent_to_agent")
+            await _persist_self_messages(db, round_id, agent_id, self_messages)
+            new_responses[agent_id] = new_resp
         responses.update(new_responses)
 
 
@@ -525,25 +517,20 @@ async def _run_weighted_opinion_pool(
 
     async def _broadcast(
         agent: dict[str, Any],
-    ) -> str:
+    ) -> tuple[str, list[SelfMessage]]:
         agent_id = str(agent["id"])
         try:
-            response, tools = await call(agent, _with_context(prompt, agent["id"], agent_context))
+            response, tools = await call(agent, _with_context(prompt, agent_id, agent_context))
         except Exception as exc:
             err = f"[error: {exc}]"
-            await _persist_self_messages(
-                db, broadcast_output_round_id, agent_id, [("agent_error", err)]
-            )
-            return err
-        await _persist_self_messages(
-            db, broadcast_output_round_id, agent_id, _self_messages(response, tools)
-        )
-        return response
+            return err, [("agent_error", err)]
+        return response, _self_messages(response, tools)
 
     bcast = await asyncio.gather(*[_broadcast(a) for a in agents])
     responses: dict[str, str] = {}
-    for agent, resp in zip(agents, bcast, strict=True):
+    for agent, (resp, self_messages) in zip(agents, bcast, strict=True):
         agent_id = str(agent["id"])
+        await _persist_self_messages(db, broadcast_output_round_id, agent_id, self_messages)
         responses[agent_id] = resp
 
     for round_num in range(1, rounds + 1):
@@ -553,8 +540,7 @@ async def _run_weighted_opinion_pool(
 
         async def _discuss(
             agent: dict[str, Any],
-            current_round_id: int = round_id,
-        ) -> str | None:
+        ) -> tuple[str, list[MessageDelivery], list[SelfMessage], str] | None:
             nbrs = [n for n in incoming[agent["id"]] if n in responses]
             if not nbrs:
                 return None
@@ -573,30 +559,26 @@ async def _run_weighted_opinion_pool(
 
             agent_id = str(agent["id"])
             deliveries: list[MessageDelivery] = [(n, agent_id, responses[n]) for n in nbrs]
-            await _persist_agent_deliveries(
-                db, current_round_id, deliveries, "weighted_agent_to_agent"
-            )
 
             try:
                 resp, tools = await call(agent, discussion_prompt)
             except Exception as exc:
                 err = f"[error: {exc}]"
-                await _persist_self_messages(db, current_round_id, agent_id, [("agent_error", err)])
-                return err
+                return agent_id, deliveries, [("agent_error", err)], err
 
-            await _persist_self_messages(
-                db, current_round_id, agent_id, _self_messages(resp, tools)
-            )
-            return resp
+            return agent_id, deliveries, _self_messages(resp, tools), resp
 
         results = await asyncio.gather(*[_discuss(a) for a in agents])
 
         prev_responses = dict(responses)
         new_responses: dict[str, str] = {}
-        for agent, new_resp in zip(agents, results, strict=True):
-            agent_id = str(agent["id"])
-            if new_resp is not None:
-                new_responses[agent_id] = new_resp
+        for result in results:
+            if result is None:
+                continue
+            agent_id, deliveries, self_messages, new_resp = result
+            await _persist_agent_deliveries(db, round_id, deliveries, "weighted_agent_to_agent")
+            await _persist_self_messages(db, round_id, agent_id, self_messages)
+            new_responses[agent_id] = new_resp
 
         # Trust update: increase weight on neighbours whose latest reply
         # agrees most (Jaccard) with the agent's own latest reply.
@@ -668,30 +650,25 @@ async def _run_voting(
 
     async def _broadcast(
         agent: dict[str, Any],
-    ) -> tuple[str, str | None, str | None]:
+    ) -> tuple[str, str | None, str | None, list[SelfMessage]]:
         agent_id = str(agent["id"])
         full_prompt = _with_context(prompt, agent_id, agent_context) + _VOTE_INSTRUCTION
         try:
             response, tools = await call(agent, full_prompt)
         except Exception as exc:
             err = f"[error: {exc}]"
-            await _persist_self_messages(
-                db, broadcast_output_round_id, agent_id, [("agent_error", err)]
-            )
-            return err, None, None
+            return err, None, None, [("agent_error", err)]
         vote = _extract_vote(response)
         reason = _extract_reason(response)
-        await _persist_self_messages(
-            db, broadcast_output_round_id, agent_id, _self_messages(response, tools)
-        )
-        return response, vote, reason
+        return response, vote, reason, _self_messages(response, tools)
 
     bcast = await asyncio.gather(*[_broadcast(a) for a in agents])
     responses: dict[str, str] = {}
     votes: dict[str, str | None] = {}
     reasons: dict[str, str | None] = {}
-    for agent, (resp, vote, reason) in zip(agents, bcast, strict=True):
+    for agent, (resp, vote, reason, self_messages) in zip(agents, bcast, strict=True):
         agent_id = str(agent["id"])
+        await _persist_self_messages(db, broadcast_output_round_id, agent_id, self_messages)
         responses[agent_id] = resp
         votes[agent_id] = vote
         reasons[agent_id] = reason
@@ -716,8 +693,15 @@ async def _run_voting(
             agent: dict[str, Any],
             tally_msg: str = tally_msg,
             reasons_msg: str = reasons_msg,
-            current_round_id: int = round_id,
-        ) -> tuple[str, str | None, str | None]:
+        ) -> tuple[
+            str,
+            list[MessageDelivery],
+            str,
+            list[SelfMessage],
+            str,
+            str | None,
+            str | None,
+        ]:
             nbrs = [n for n in incoming[agent["id"]] if n in responses]
             own_prev = responses.get(agent["id"], "")
 
@@ -776,24 +760,20 @@ async def _run_voting(
                     + _VOTE_INSTRUCTION
                 )
 
-            await _persist_agent_deliveries(db, current_round_id, deliveries, delivery_type)
             try:
                 resp, tools = await call(agent, full_prompt)
             except Exception as exc:
                 err = f"[error: {exc}]"
-                await _persist_self_messages(db, current_round_id, agent_id, [("agent_error", err)])
-                return err, None, None
+                return agent_id, deliveries, delivery_type, [("agent_error", err)], err, None, None
             v = _extract_vote(resp)
             r = _extract_reason(resp)
-            await _persist_self_messages(
-                db, current_round_id, agent_id, _self_messages(resp, tools)
-            )
-            return resp, v, r
+            return agent_id, deliveries, delivery_type, _self_messages(resp, tools), resp, v, r
 
         results = await asyncio.gather(*[_discuss(a) for a in agents])
 
-        for agent, (resp, vote, reason) in zip(agents, results, strict=True):
-            agent_id = str(agent["id"])
+        for agent_id, deliveries, delivery_type, self_messages, resp, vote, reason in results:
+            await _persist_agent_deliveries(db, round_id, deliveries, delivery_type)
+            await _persist_self_messages(db, round_id, agent_id, self_messages)
             responses[agent_id] = resp
             votes[agent_id] = vote
             reasons[agent_id] = reason

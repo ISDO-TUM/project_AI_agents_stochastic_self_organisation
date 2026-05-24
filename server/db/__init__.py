@@ -424,6 +424,17 @@ async def create_connection(
     Agent ids are nullable so synthetic SYSTEM messages can be represented
     without requiring a real agent row.
     """
+    row = await conn.execute(
+        select(connections.c.id).where(
+            connections.c.round_id == round_id,
+            _col_eq(connections.c.from_agent_id, from_agent_id),
+            _col_eq(connections.c.to_agent_id, to_agent_id),
+        )
+    )
+    existing_pk = row.scalar_one_or_none()
+    if existing_pk is not None:
+        return int(existing_pk)
+
     try:
         result = await conn.execute(
             connections.insert().values(
