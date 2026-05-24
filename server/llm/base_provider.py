@@ -78,9 +78,7 @@ class BaseLLMProvider(ABC):
                 timeout=self.timeout_seconds,
             )
         except TimeoutError as err:
-            logger.warning(
-                "LLM call timed out after %ds (model=%s)", self.timeout_seconds, model
-            )
+            logger.warning("LLM call timed out after %ds (model=%s)", self.timeout_seconds, model)
             raise TimeoutError(
                 f"The LLM call exceeded the maximum allowed time ({self.timeout_seconds}s). "
                 "Please try again with a shorter prompt or fewer tools."

@@ -88,6 +88,4 @@ SAP_MODELS: list[_ModelEntry] = [
 # ---------------------------------------------------------------------------
 
 #: Every model ID that may appear in an agent's ``model`` field.
-ALLOWED_MODEL_IDS: frozenset[str] = frozenset(
-    m.id for m in STANDARD_MODELS + SAP_MODELS
-)
+ALLOWED_MODEL_IDS: frozenset[str] = frozenset(m.id for m in STANDARD_MODELS + SAP_MODELS)

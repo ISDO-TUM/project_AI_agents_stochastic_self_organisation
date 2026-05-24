@@ -10,9 +10,7 @@ from server.schemas import Model
 
 router = APIRouter(prefix="/api/models", tags=["Models"])
 
-MODELS = [
-    Model(id=m.id, name=m.name, provider=m.provider, type=m.type) for m in STANDARD_MODELS
-]
+MODELS = [Model(id=m.id, name=m.name, provider=m.provider, type=m.type) for m in STANDARD_MODELS]
 SAP_SUPPORTED_MODELS = [
     Model(id=m.id, name=m.name, provider=m.provider, type=m.type) for m in SAP_MODELS
 ]

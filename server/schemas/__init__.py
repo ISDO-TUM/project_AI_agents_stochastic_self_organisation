@@ -49,6 +49,7 @@ def _validate_uuid(v: str | None, field_name: str = "id") -> str | None:
         )
     return v
 
+
 # ---------------------------------------------------------------------------
 # Models
 # ---------------------------------------------------------------------------
@@ -611,14 +612,14 @@ class SimulationRunRequest(BaseModel):
         for key, value in v.items():
             if not isinstance(value, str):
                 raise ValueError(
-                    f"agent_context values must be strings, "
-                    f"got {type(value)} for key '{key}'."
+                    f"agent_context values must be strings, got {type(value)} for key '{key}'."
                 )
             if len(value) > _MAX_AGENT_CONTEXT_VALUE_LEN:
                 raise ValueError(
                     f"agent_context['{key}'] exceeds {_MAX_AGENT_CONTEXT_VALUE_LEN} characters."
                 )
         return v
+
     ruleset: str | None = Field(
         default=None,
         max_length=_MAX_RULESET_LEN,

@@ -26,9 +26,7 @@ _ECHO_INJECTION_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"\bignore\s+(all\s+)?(previous|prior)\s+instructions?\b", re.IGNORECASE),
     re.compile(r"\byou\s+are\s+now\s+(a\s+|an\s+)?\w+\b", re.IGNORECASE),
     re.compile(r"\bDAN\s+mode\s+enabled\b", re.IGNORECASE),
-    re.compile(
-        r"\b(as\s+(a\s+|an\s+)?DAN|operating\s+in\s+developer\s+mode)\b", re.IGNORECASE
-    ),
+    re.compile(r"\b(as\s+(a\s+|an\s+)?DAN|operating\s+in\s+developer\s+mode)\b", re.IGNORECASE),
 ]
 
 # Common provider refusal / content-policy phrases
@@ -78,8 +76,7 @@ class OutputValidator:
 
         if not stripped:
             raise ValueError(
-                "The LLM returned an empty response. "
-                "Please rephrase your prompt or try again."
+                "The LLM returned an empty response. Please rephrase your prompt or try again."
             )
 
         for pattern in _ECHO_INJECTION_PATTERNS:
@@ -96,9 +93,7 @@ class OutputValidator:
 
         for pattern in _REFUSAL_PATTERNS:
             if pattern.search(stripped):
-                logger.info(
-                    "LLM refusal detected in output: excerpt=%r", stripped[:120]
-                )
+                logger.info("LLM refusal detected in output: excerpt=%r", stripped[:120])
                 raise LLMRefusalError(
                     "The model declined to answer this request. "
                     "Please rephrase your prompt or adjust the agent's configuration."
