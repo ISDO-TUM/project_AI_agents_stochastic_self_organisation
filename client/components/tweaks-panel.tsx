@@ -19,6 +19,7 @@ export function TweaksPanel({
   selectedRules,
   onToggleRule,
   onClose,
+  onOpenKeys,
 }: TweaksPanelProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -111,6 +112,42 @@ export function TweaksPanel({
             No rules available.
           </div>
         )}
+
+        <button
+          onClick={onOpenKeys}
+          style={{
+            width: "100%",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            background: t.inputBg,
+            border: `1.5px solid ${t.border}`,
+            borderRadius: 10,
+            padding: "10px 14px",
+            color: t.text,
+            fontSize: 12,
+            fontWeight: 600,
+            cursor: "pointer",
+            transition: "all 0.15s",
+            marginBottom: 14,
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = BURG;
+            (e.currentTarget as HTMLButtonElement).style.borderColor = BURG;
+            (e.currentTarget as HTMLButtonElement).style.color = "#fff";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLButtonElement).style.background = t.inputBg;
+            (e.currentTarget as HTMLButtonElement).style.borderColor = t.border;
+            (e.currentTarget as HTMLButtonElement).style.color = t.text;
+          }}
+        >
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <LIcon name="KeyRound" size={14} color="currentColor" />
+            API Keys
+          </div>
+          <LIcon name="ChevronRight" size={14} color="currentColor" />
+        </button>
 
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
           {rules.map((rule) => {

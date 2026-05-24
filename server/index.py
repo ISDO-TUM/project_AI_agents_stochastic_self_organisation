@@ -12,6 +12,15 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from server.db import cleanup_stale_data, close_db, get_engine, init_db
 from server.llm.credentials import MissingCredentialsError
+from server.routes import (
+    agents_router,
+    benchmark_router,
+    knowledge_files_router,
+    models_router,
+    rules_router,
+    simulation_router,
+    test_router,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,17 +38,6 @@ async def _cleanup_loop() -> None:
         except Exception:
             logger.exception("Periodic cleanup failed — will retry next cycle")
         await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
-
-
-from server.routes import (
-    agents_router,
-    benchmark_router,
-    knowledge_files_router,
-    models_router,
-    rules_router,
-    simulation_router,
-    test_router,
-)
 
 load_dotenv()
 

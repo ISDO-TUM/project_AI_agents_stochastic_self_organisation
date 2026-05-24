@@ -100,6 +100,7 @@ export function App() {
   const [rules, setRules] = useState<Rule[]>([]);
   const [selectedRules, setSelectedRules] = useState<Set<string>>(new Set());
   const [importError, setImportError] = useState<string | null>(null);
+  const [showKeys, setShowKeys] = useState(false);
 
   useEffect(() => {
     fetchRules()
@@ -477,7 +478,7 @@ export function App() {
           onToggleTweaks={onToggleTweaks}
         />
 
-        <PromptBar simMode={simMode} onRun={handleRun} />
+        <PromptBar simMode={simMode} onRun={handleRun} onOpenKeys={() => setShowKeys(true)} />
       </div>
 
       {simMode && (
@@ -570,6 +571,8 @@ export function App() {
           onClose={() => setCtx(null)}
         />
       )}
+
+      {showKeys && <ApiKeysModal onClose={() => setShowKeys(false)} />}
 
       {!simMode && hasNodes && (
         <div
