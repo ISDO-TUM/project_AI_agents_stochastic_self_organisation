@@ -160,30 +160,63 @@ export function LogWall({
             Activity Log
           </span>
         </div>
-        <button
-          onClick={onToggleExpand}
-          style={{
-            background: "none",
-            border: "none",
-            cursor: "pointer",
-            color: t.textDim,
-            display: "flex",
-            padding: 4,
-            borderRadius: 5,
-          }}
-          onMouseEnter={(e) =>
-            ((e.currentTarget as HTMLButtonElement).style.color = t.text)
-          }
-          onMouseLeave={(e) =>
-            ((e.currentTarget as HTMLButtonElement).style.color = t.textDim)
-          }
-        >
-          <LIcon
-            name={expanded ? "Minimize2" : "Maximize2"}
-            size={13}
-            color="currentColor"
-          />
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
+          <button
+            onClick={() => {
+              const blob = new Blob([JSON.stringify(steps, null, 2)], {
+                type: "application/json",
+              });
+              const url = URL.createObjectURL(blob);
+              const a = document.createElement("a");
+              a.href = url;
+              a.download = "activity-log.json";
+              a.click();
+              URL.revokeObjectURL(url);
+            }}
+            title="Download log as JSON"
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: t.textDim,
+              display: "flex",
+              padding: 4,
+              borderRadius: 5,
+            }}
+            onMouseEnter={(e) =>
+              ((e.currentTarget as HTMLButtonElement).style.color = t.text)
+            }
+            onMouseLeave={(e) =>
+              ((e.currentTarget as HTMLButtonElement).style.color = t.textDim)
+            }
+          >
+            <LIcon name="Download" size={13} color="currentColor" />
+          </button>
+          <button
+            onClick={onToggleExpand}
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              color: t.textDim,
+              display: "flex",
+              padding: 4,
+              borderRadius: 5,
+            }}
+            onMouseEnter={(e) =>
+              ((e.currentTarget as HTMLButtonElement).style.color = t.text)
+            }
+            onMouseLeave={(e) =>
+              ((e.currentTarget as HTMLButtonElement).style.color = t.textDim)
+            }
+          >
+            <LIcon
+              name={expanded ? "Minimize2" : "Maximize2"}
+              size={13}
+              color="currentColor"
+            />
+          </button>
+        </div>
       </div>
 
       {/* Steps */}

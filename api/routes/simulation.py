@@ -23,6 +23,7 @@ async def _run_simulation_background(
     mode: ConsensusMode,
     agent_context: dict[str, str] | None,
     trial_id: str,
+    ruleset: str | None,
 ) -> None:
     try:
         await run_topology(
@@ -32,6 +33,7 @@ async def _run_simulation_background(
             mode=mode,
             agent_context=agent_context,
             trial_id=trial_id,
+            ruleset=ruleset,
         )
     except Exception:
         await update_trial_status(db, trial_id, "failed")
@@ -71,5 +73,6 @@ async def run_simulation(
         body.mode,
         body.agent_context,
         trial_id,
+        body.ruleset,
     )
     return SimulationStartResponse(trial_id=trial_id)

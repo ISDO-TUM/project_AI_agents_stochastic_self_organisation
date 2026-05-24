@@ -12,6 +12,7 @@ import type {
   HistoryTrial,
   KnowledgeFile,
   Provider,
+  Rule,
 } from "./types";
 
 // ─── Wire types ──────────────────────────────────────────────────────────────
@@ -296,9 +297,15 @@ export async function runSimulation(
     rounds?: number;
     mode?: ConsensusMode;
     agentContext?: Record<string, string>;
+    ruleset?: string;
   } = {},
 ): Promise<SimulationResult> {
-  const { rounds = 3, mode = "broadcast_no_consensus", agentContext } = options;
+  const {
+    rounds = 3,
+    mode = "broadcast_no_consensus",
+    agentContext,
+    ruleset,
+  } = options;
   const data = await request<WireSimulationResponse>(
     "POST",
     "/api/simulation/run",
@@ -307,6 +314,7 @@ export async function runSimulation(
       rounds,
       mode,
       ...(agentContext && { agent_context: agentContext }),
+      ...(ruleset && ruleset.trim() && { ruleset }),
     },
   );
   return {
@@ -351,4 +359,10 @@ export async function fetchHistoryMessages(filters: {
     `/api/history/messages${suffix}`,
   );
   return rows.map(wireToHistoryMessage);
+}
+
+// ─── Rules ───────────────────────────────────────────────────────────────────
+
+export async function fetchRules(): Promise<Rule[]> {
+  return request<Rule[]>("GET", "/api/rules/");
 }

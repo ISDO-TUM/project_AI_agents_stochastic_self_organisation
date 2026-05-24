@@ -36,7 +36,10 @@ from __future__ import annotations
 
 import asyncio
 import re
-from datetime import datetime
+import uuid
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from datetime import date, datetime
 from typing import Any, Literal
 
 import aiosqlite
@@ -57,6 +60,10 @@ ConsensusMode = Literal[
     "weighted_opinion_pooling",
     "plurality_voting",
 ]
+
+# Callable type for the bound agent-call closure passed into runner functions.
+_AgentCall = Callable[[dict[str, Any], str], Awaitable[tuple[str, list[ToolCall]]]]
+
 MessageDelivery = tuple[str | None, str, str]
 SelfMessage = tuple[str, str]
 
@@ -64,11 +71,18 @@ SelfMessage = tuple[str, str]
 
 
 async def _call_agent(
-    agent: dict[str, Any], prompt: str, db: aiosqlite.Connection
+    agent: dict[str, Any], prompt: str, db: aiosqlite.Connection, ruleset: str | None = None
 ) -> tuple[str, list[ToolCall]]:
-    """Invoke an agent and return (response_text, tools_used)."""
+    """Invoke an agent and return (response_text, tools_used).
+
+    `ruleset`, when provided, is prepended to the agent's system prompt so every
+    LLM call in a simulation run automatically abides by the shared rules.
+    """
     file_names = await load_agent_file_names(db, agent["id"])
     system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, file_names)
+    if ruleset and ruleset.strip():
+        system_prompt = f"## RULESET\n{ruleset.strip()}\n\n{system_prompt or ''}"
+    system_prompt = f"## CURRENT DATE\n{date.today().isoformat()}\n\n{system_prompt or ''}"
     response, tools_used = await call_agent(
         prompt,
         provider=agent["provider"],
@@ -348,6 +362,7 @@ async def run_topology(
     mode: ConsensusMode = "broadcast_no_consensus",
     agent_context: dict[str, str] | None = None,
     trial_id: str | None = None,
+    ruleset: str | None = None,
 ) -> None:
     """Run a topology simulation under the chosen consensus mode."""
     async with db.execute("SELECT * FROM agents") as cur:
@@ -361,15 +376,20 @@ async def run_topology(
     if trial_id is None:
         trial_id = await create_trial(db, prompt, _trial_description(mode), mode)
 
+    async def call(agent: dict[str, Any], prompt: str) -> tuple[str, list[ToolCall]]:
+        return await _call_agent(agent, prompt, db, ruleset)
+
     if mode == "weighted_opinion_pooling":
         await _run_weighted_opinion_pool(
-            prompt, agents, incoming, db, rounds, agent_context, trial_id
+            prompt, agents, incoming, call, db, rounds, agent_context, trial_id
         )
         return
     if mode == "plurality_voting":
-        await _run_voting(prompt, agents, incoming, db, rounds, agent_context, trial_id)
+        await _run_voting(prompt, agents, incoming, call, db, rounds, agent_context, trial_id)
         return
-    await _run_broadcast_no_consensus(prompt, agents, incoming, db, rounds, agent_context, trial_id)
+    await _run_broadcast_no_consensus(
+        prompt, agents, incoming, call, db, rounds, agent_context, trial_id
+    )
 
 
 # ── mode 1: broadcast (no consensus) ──────────────────────────────────────────
@@ -379,6 +399,7 @@ async def _run_broadcast_no_consensus(
     prompt: str,
     agents: list[dict[str, Any]],
     incoming: dict[str, list[str]],
+    call: _AgentCall,
     db: aiosqlite.Connection,
     rounds: int,
     agent_context: dict[str, str] | None,
@@ -395,9 +416,7 @@ async def _run_broadcast_no_consensus(
     ) -> str:
         agent_id = str(agent["id"])
         try:
-            response, tools_used = await _call_agent(
-                agent, _with_context(prompt, agent_id, agent_context), db
-            )
+            response, tools_used = await call(agent, _with_context(prompt, agent_id, agent_context))
         except Exception as exc:
             err = f"[error: {exc}]"
             await _persist_self_messages(
@@ -441,7 +460,7 @@ async def _run_broadcast_no_consensus(
             await _persist_agent_deliveries(db, current_round_id, deliveries, "agent_to_agent")
 
             try:
-                response, tools_used = await _call_agent(agent, discussion_prompt, db)
+                response, tools_used = await call(agent, discussion_prompt)
             except Exception as exc:
                 err = f"[error: {exc}]"
                 await _persist_self_messages(db, current_round_id, agent_id, [("agent_error", err)])
@@ -473,6 +492,7 @@ async def _run_weighted_opinion_pool(
     prompt: str,
     agents: list[dict[str, Any]],
     incoming: dict[str, list[str]],
+    call: _AgentCall,
     db: aiosqlite.Connection,
     rounds: int,
     agent_context: dict[str, str] | None,
@@ -501,9 +521,7 @@ async def _run_weighted_opinion_pool(
     ) -> str:
         agent_id = str(agent["id"])
         try:
-            response, tools = await _call_agent(
-                agent, _with_context(prompt, agent_id, agent_context), db
-            )
+            response, tools = await call(agent, _with_context(prompt, agent["id"], agent_context))
         except Exception as exc:
             err = f"[error: {exc}]"
             await _persist_self_messages(
@@ -553,7 +571,7 @@ async def _run_weighted_opinion_pool(
             )
 
             try:
-                resp, tools = await _call_agent(agent, discussion_prompt, db)
+                resp, tools = await call(agent, discussion_prompt)
             except Exception as exc:
                 err = f"[error: {exc}]"
                 await _persist_self_messages(db, current_round_id, agent_id, [("agent_error", err)])
@@ -619,6 +637,7 @@ async def _run_voting(
     prompt: str,
     agents: list[dict[str, Any]],
     incoming: dict[str, list[str]],
+    call: _AgentCall,
     db: aiosqlite.Connection,
     rounds: int,
     agent_context: dict[str, str] | None,
@@ -646,7 +665,7 @@ async def _run_voting(
         agent_id = str(agent["id"])
         full_prompt = _with_context(prompt, agent_id, agent_context) + _VOTE_INSTRUCTION
         try:
-            response, tools = await _call_agent(agent, full_prompt, db)
+            response, tools = await call(agent, full_prompt)
         except Exception as exc:
             err = f"[error: {exc}]"
             await _persist_self_messages(
@@ -752,7 +771,7 @@ async def _run_voting(
 
             await _persist_agent_deliveries(db, current_round_id, deliveries, delivery_type)
             try:
-                resp, tools = await _call_agent(agent, full_prompt, db)
+                resp, tools = await call(agent, full_prompt)
             except Exception as exc:
                 err = f"[error: {exc}]"
                 await _persist_self_messages(db, current_round_id, agent_id, [("agent_error", err)])

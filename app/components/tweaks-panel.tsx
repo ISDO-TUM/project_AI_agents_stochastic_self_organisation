@@ -1,134 +1,24 @@
 "use client";
 
-import { Tweaks } from "@/lib/types";
-import { BURG, getTheme } from "@/lib/theme";
+import { Rule } from "@/lib/types";
+import { BURG, BURG_DIM, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
-
 import { LIcon } from "@/lib/icons";
-import { Toggle } from "./panels/panel-primitives";
-
-type ThemeTokens = ReturnType<typeof getTheme>;
+import { Checkbox } from "./panels/panel-primitives";
 
 interface TweaksPanelProps {
-  tweaks: Tweaks;
-  onChange: (key: keyof Tweaks, value: Tweaks[keyof Tweaks]) => void;
+  rules: Rule[];
+  selectedRules: Set<string>;
+  onToggleRule: (id: string) => void;
   onClose: () => void;
 }
 
-const ACCENT_SWATCHES = ["#8B1A2F", "#1A3A8B", "#1A7A3A", "#6B1A8B", "#7A5A1A"];
-
-function Slider({
-  label,
-  k,
-  min,
-  max,
-  step = 1,
-  unit = "",
-  tweaks,
-  onChange,
-  t,
-}: {
-  label: string;
-  k: keyof Tweaks;
-  min: number;
-  max: number;
-  step?: number;
-  unit?: string;
-  tweaks: Tweaks;
-  onChange: (key: keyof Tweaks, value: Tweaks[keyof Tweaks]) => void;
-  t: ThemeTokens;
-}) {
-  return (
-    <div style={{ marginBottom: 16 }}>
-      <div
-        style={{
-          display: "flex",
-          justifyContent: "space-between",
-          marginBottom: 6,
-        }}
-      >
-        <span style={{ fontSize: 12, color: t.textSub }}>{label}</span>
-        <span
-          style={{
-            fontSize: 11,
-            color: BURG,
-            fontFamily: "'JetBrains Mono', monospace",
-          }}
-        >
-          {tweaks[k] as number}
-          {unit}
-        </span>
-      </div>
-      <input
-        type="range"
-        min={min}
-        max={max}
-        step={step}
-        value={tweaks[k] as number}
-        onChange={(e) => onChange(k, Number(e.target.value))}
-        style={{ width: "100%", accentColor: BURG, cursor: "pointer" }}
-      />
-    </div>
-  );
-}
-
-function Row({
-  label,
-  children,
-  t,
-}: {
-  label: string;
-  children: React.ReactNode;
-  t: ThemeTokens;
-}) {
-  return (
-    <div
-      style={{
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "space-between",
-        marginBottom: 14,
-      }}
-    >
-      <span style={{ fontSize: 12, color: t.textSub }}>{label}</span>
-      {children}
-    </div>
-  );
-}
-
-function Sec({
-  title,
-  children,
-  t,
-}: {
-  title: string;
-  children: React.ReactNode;
-  t: ThemeTokens;
-}) {
-  return (
-    <>
-      <div
-        style={{
-          fontSize: 9.5,
-          fontWeight: 700,
-          letterSpacing: 1.4,
-          textTransform: "uppercase",
-          color: t.textDim,
-          marginTop: 20,
-          marginBottom: 12,
-          paddingBottom: 7,
-          borderBottom: `1px solid ${t.border}`,
-          fontFamily: "'JetBrains Mono', monospace",
-        }}
-      >
-        {title}
-      </div>
-      {children}
-    </>
-  );
-}
-
-export function TweaksPanel({ tweaks, onChange, onClose }: TweaksPanelProps) {
+export function TweaksPanel({
+  rules,
+  selectedRules,
+  onToggleRule,
+  onClose,
+}: TweaksPanelProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
 
@@ -138,7 +28,7 @@ export function TweaksPanel({ tweaks, onChange, onClose }: TweaksPanelProps) {
         position: "fixed",
         bottom: 96,
         left: 16,
-        width: 264,
+        width: 320,
         background: dark ? "rgba(8,6,16,0.97)" : "rgba(255,253,255,0.98)",
         backdropFilter: "blur(28px)",
         border: `1px solid ${t.borderHi}`,
@@ -161,9 +51,9 @@ export function TweaksPanel({ tweaks, onChange, onClose }: TweaksPanelProps) {
         }}
       >
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <LIcon name="Settings2" size={14} color={BURG} />
+          <LIcon name="ScrollText" size={14} color={BURG} />
           <span style={{ fontSize: 12, fontWeight: 700, color: t.text }}>
-            Settings
+            Ruleset
           </span>
         </div>
         <button
@@ -189,108 +79,102 @@ export function TweaksPanel({ tweaks, onChange, onClose }: TweaksPanelProps) {
       </div>
 
       <div
-        style={{ padding: "4px 18px 18px", maxHeight: 420, overflowY: "auto" }}
+        style={{
+          padding: "12px 18px 18px",
+          maxHeight: 480,
+          overflowY: "auto",
+        }}
       >
-        <Sec title="Canvas" t={t}>
-          <Slider
-            label="Node Size"
-            k="nodeSize"
-            min={60}
-            max={120}
-            unit="px"
-            tweaks={tweaks}
-            onChange={onChange}
-            t={t}
-          />
-          <Slider
-            label="Edge Width"
-            k="edgeWidth"
-            min={1}
-            max={4}
-            step={0.5}
-            unit="px"
-            tweaks={tweaks}
-            onChange={onChange}
-            t={t}
-          />
-          <Slider
-            label="Grid Density"
-            k="gridDensity"
-            min={16}
-            max={48}
-            unit="px"
-            tweaks={tweaks}
-            onChange={onChange}
-            t={t}
-          />
-          <Row label="Show Grid" t={t}>
-            <Toggle
-              checked={tweaks.showGrid}
-              onChange={() => onChange("showGrid", !tweaks.showGrid)}
-            />
-          </Row>
-          <Row label="Ambient Orbs" t={t}>
-            <Toggle
-              checked={tweaks.showOrbs}
-              onChange={() => onChange("showOrbs", !tweaks.showOrbs)}
-            />
-          </Row>
-        </Sec>
+        <p
+          style={{
+            fontSize: 11,
+            color: t.textDim,
+            lineHeight: 1.5,
+            margin: "0 0 14px",
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
+          Checked rules are joined as bullet points and prepended to every
+          agent&apos;s system prompt.
+        </p>
 
-        <Sec title="Animation" t={t}>
-          <Slider
-            label="Particle Speed"
-            k="particleSpeed"
-            min={0.3}
-            max={2}
-            step={0.1}
-            unit="s"
-            tweaks={tweaks}
-            onChange={onChange}
-            t={t}
-          />
-          <Row label="Pulse Rings" t={t}>
-            <Toggle
-              checked={tweaks.showPulse}
-              onChange={() => onChange("showPulse", !tweaks.showPulse)}
-            />
-          </Row>
-        </Sec>
-
-        <Sec title="Accent Color" t={t}>
+        {rules.length === 0 && (
           <div
-            style={{ display: "flex", gap: 8, marginTop: 6, flexWrap: "wrap" }}
+            style={{
+              fontSize: 12,
+              color: t.textDim,
+              padding: "20px 0",
+              textAlign: "center",
+            }}
           >
-            {ACCENT_SWATCHES.map((col) => (
+            No rules available.
+          </div>
+        )}
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {rules.map((rule) => {
+            const active = selectedRules.has(rule.id);
+            return (
               <div
-                key={col}
-                role="radio"
-                aria-checked={tweaks.accentColor === col}
-                aria-label={`Accent colour ${col}`}
+                key={rule.id}
+                role="checkbox"
+                aria-checked={active}
                 tabIndex={0}
-                onClick={() => onChange("accentColor", col)}
+                onClick={() => onToggleRule(rule.id)}
                 onKeyDown={(e) =>
-                  (e.key === " " || e.key === "Enter") &&
-                  onChange("accentColor", col)
+                  (e.key === " " || e.key === "Enter") && onToggleRule(rule.id)
                 }
                 style={{
-                  width: 28,
-                  height: 28,
-                  borderRadius: "50%",
-                  background: col,
+                  display: "flex",
+                  alignItems: "flex-start",
+                  gap: 10,
                   cursor: "pointer",
-                  border:
-                    tweaks.accentColor === col
-                      ? "2.5px solid #fff"
-                      : "2.5px solid transparent",
+                  padding: "10px 12px",
+                  borderRadius: 10,
+                  border: `1.5px solid ${
+                    active ? "rgba(139,26,47,0.38)" : t.border
+                  }`,
+                  background: active ? BURG_DIM : t.inputBg,
                   transition: "all 0.15s",
-                  boxShadow:
-                    tweaks.accentColor === col ? `0 0 10px ${col}` : undefined,
                 }}
-              />
-            ))}
-          </div>
-        </Sec>
+              >
+                <div style={{ paddingTop: 1, flexShrink: 0 }}>
+                  <Checkbox
+                    checked={active}
+                    onChange={() => onToggleRule(rule.id)}
+                  />
+                </div>
+                <div
+                  style={{
+                    display: "flex",
+                    flexDirection: "column",
+                    gap: 4,
+                    minWidth: 0,
+                  }}
+                >
+                  <span
+                    style={{
+                      fontSize: 13,
+                      color: t.text,
+                      fontWeight: active ? 600 : 500,
+                    }}
+                  >
+                    {rule.label}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 11,
+                      color: t.textSub,
+                      lineHeight: 1.5,
+                    }}
+                  >
+                    {rule.instruction}
+                  </span>
+                </div>
+              </div>
+            );
+          })}
+        </div>
       </div>
     </div>
   );

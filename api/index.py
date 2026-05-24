@@ -16,6 +16,7 @@ from api.routes import (
     history_router,
     knowledge_files_router,
     models_router,
+    rules_router,
     simulation_router,
     test_router,
 )
@@ -61,8 +62,8 @@ app.include_router(knowledge_files_router)
 app.include_router(history_router)
 app.include_router(models_router)
 app.include_router(benchmark_router)
+app.include_router(rules_router)
 app.include_router(simulation_router)
-app.include_router(benchmark_router)
 app.include_router(test_router)
 
 
