@@ -55,6 +55,8 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         try:
             await cleanup_task
         except asyncio.CancelledError:
+            # Expected during shutdown after explicit task cancellation.
+            # Intentionally ignored so application teardown can continue.
             pass
         await close_db()
 
