@@ -54,6 +54,8 @@ from server.db import (
     record_message,
 )
 from server.db.tables import agents as agents_table
+from server.guardrails import build_guarded_system_prompt, sanitize_prompt
+from server.guardrails.input_sanitizer import PromptInjectionError
 from server.llm import call_agent
 from server.schemas import ToolCall
 
@@ -79,17 +81,31 @@ async def _call_agent(
 
     `ruleset`, when provided, is prepended to the agent's system prompt so every
     LLM call in a simulation run automatically abides by the shared rules.
+
+    The prompt is sanitised for injection attempts before being forwarded to the
+    LLM.  The system prompt is wrapped with anti-hallucination guardrails.
     """
+    # Sanitise the incoming prompt (raises PromptInjectionError on attack)
+    try:
+        sanitize_prompt(prompt, field_name="simulation prompt")
+    except PromptInjectionError as exc:
+        return f"[GUARDRAIL BLOCKED] {exc}", []
+
     file_names = list(files.keys())
-    system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, file_names)
+    raw_system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, file_names)
+
+    # Wrap with anti-hallucination guardrails
+    guarded_system_prompt = build_guarded_system_prompt(raw_system_prompt)
+
     if ruleset and ruleset.strip():
-        system_prompt = f"## RULESET\n{ruleset.strip()}\n\n{system_prompt or ''}"
-    system_prompt = f"## CURRENT DATE\n{date.today().isoformat()}\n\n{system_prompt or ''}"
+        guarded_system_prompt = f"## RULESET\n{ruleset.strip()}\n\n{guarded_system_prompt}"
+    guarded_system_prompt = f"## CURRENT DATE\n{date.today().isoformat()}\n\n{guarded_system_prompt}"
+
     response, tools_used = await call_agent(
         prompt,
         provider=agent["provider"],
         model=agent["model"],
-        system_prompt=system_prompt,
+        system_prompt=guarded_system_prompt,
         tool_names=agent["tools"] or None,
         tool_context={"files": files},
     )

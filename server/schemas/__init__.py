@@ -4,7 +4,50 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+# ---------------------------------------------------------------------------
+# Field-length constants (defence against token-exhaustion / DoS)
+# ---------------------------------------------------------------------------
+
+_MAX_NAME_LEN = 200
+_MAX_DESCRIPTION_LEN = 1_000
+_MAX_SYSTEM_PROMPT_LEN = 8_000
+_MAX_PROMPT_LEN = 4_000
+_MAX_FILE_NAME_LEN = 255
+_MAX_FILE_CONTENT_LEN = 500_000  # 500 KB plain-text ceiling
+_MAX_RULESET_LEN = 4_000
+
+# ---------------------------------------------------------------------------
+# Model allowlist — only models explicitly registered in the /api/models
+# catalogue are accepted.  Unknown model strings are rejected at validation
+# time so an attacker cannot route calls to arbitrarily expensive models.
+# ---------------------------------------------------------------------------
+
+ALLOWED_MODELS: frozenset[str] = frozenset(
+    {
+        # OpenAI
+        "gpt-4.1-nano",
+        "gpt-4.1-mini",
+        "gpt-4.1",
+        "gpt-4o-mini",
+        "gpt-4o",
+        "o1-mini",
+        "o3-mini",
+        # Anthropic
+        "claude-haiku-4-5-20251001",
+        "claude-sonnet-4-5-20251015",
+        "claude-opus-4-5-20251001",
+        # Groq
+        "llama-3.3-70b-versatile",
+        "llama-3.1-8b-instant",
+        "mixtral-8x7b-32768",
+        # Gemini
+        "gemini-2.0-flash",
+        "gemini-1.5-pro",
+        "gemini-1.5-flash",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Models
@@ -31,9 +74,15 @@ class Model(BaseModel):
 class AgentBase(BaseModel):
     """Shared agent fields used by create and response schemas."""
 
-    name: str
-    description: str = Field(description="Role description, e.g. 'Sales agent'.")
-    system_prompt: str = Field(description="System prompt prepended to every LLM call.")
+    name: str = Field(max_length=_MAX_NAME_LEN)
+    description: str = Field(
+        description="Role description, e.g. 'Sales agent'.",
+        max_length=_MAX_DESCRIPTION_LEN,
+    )
+    system_prompt: str = Field(
+        description="System prompt prepended to every LLM call.",
+        max_length=_MAX_SYSTEM_PROMPT_LEN,
+    )
     provider: ProviderType
     model: str = Field(description="Model identifier, e.g. 'gpt-4o'.")
     tools: list[str] = Field(
@@ -43,6 +92,16 @@ class AgentBase(BaseModel):
         default_factory=list,
         description="UUIDs of agents this agent may delegate work to.",
     )
+
+    @field_validator("model")
+    @classmethod
+    def model_must_be_allowlisted(cls, v: str) -> str:
+        if v not in ALLOWED_MODELS:
+            raise ValueError(
+                f"Model '{v}' is not in the allowed model list. "
+                f"Choose from: {sorted(ALLOWED_MODELS)}"
+            )
+        return v
 
 
 class AgentCreate(AgentBase):
@@ -78,7 +137,11 @@ class AgentResponse(AgentBase):
 class AgentRunRequest(BaseModel):
     """Request body for running an agent."""
 
-    prompt: str = Field(description="The user message to send to the agent.")
+    prompt: str = Field(
+        description="The user message to send to the agent.",
+        min_length=1,
+        max_length=_MAX_PROMPT_LEN,
+    )
 
 
 class ToolCall(BaseModel):
@@ -231,8 +294,14 @@ class MessageTraceResponse(BaseModel):
 class KnowledgeFileBase(BaseModel):
     """Shared knowledge-file fields used by create and response schemas."""
 
-    name: str = Field(description="Human-readable filename.")
-    content: str = Field(description="Full text content of the file.")
+    name: str = Field(
+        description="Human-readable filename.",
+        max_length=_MAX_FILE_NAME_LEN,
+    )
+    content: str = Field(
+        description="Full text content of the file.",
+        max_length=_MAX_FILE_CONTENT_LEN,
+    )
 
 
 class KnowledgeFileCreate(KnowledgeFileBase):
@@ -262,22 +331,43 @@ _GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
 class OpenAIPromptRequest(BaseModel):
     """Request body for testing OpenAI connectivity."""
 
-    prompt: str = Field(..., examples=["Hello"])
+    prompt: str = Field(..., examples=["Hello"], min_length=1, max_length=_MAX_PROMPT_LEN)
     model: str = Field(_OPENAI_DEFAULT_MODEL, examples=[_OPENAI_DEFAULT_MODEL])
+
+    @field_validator("model")
+    @classmethod
+    def model_must_be_allowlisted(cls, v: str) -> str:
+        if v not in ALLOWED_MODELS:
+            raise ValueError(f"Model '{v}' is not in the allowed model list.")
+        return v
 
 
 class AnthropicPromptRequest(BaseModel):
     """Request body for testing Anthropic connectivity."""
 
-    prompt: str = Field(..., examples=["Hello"])
+    prompt: str = Field(..., examples=["Hello"], min_length=1, max_length=_MAX_PROMPT_LEN)
     model: str = Field(_ANTHROPIC_DEFAULT_MODEL, examples=[_ANTHROPIC_DEFAULT_MODEL])
+
+    @field_validator("model")
+    @classmethod
+    def model_must_be_allowlisted(cls, v: str) -> str:
+        if v not in ALLOWED_MODELS:
+            raise ValueError(f"Model '{v}' is not in the allowed model list.")
+        return v
 
 
 class GroqPromptRequest(BaseModel):
     """Request body for testing Groq connectivity."""
 
-    prompt: str = Field(..., examples=["Hello"])
+    prompt: str = Field(..., examples=["Hello"], min_length=1, max_length=_MAX_PROMPT_LEN)
     model: str = Field(_GROQ_DEFAULT_MODEL, examples=[_GROQ_DEFAULT_MODEL])
+
+    @field_validator("model")
+    @classmethod
+    def model_must_be_allowlisted(cls, v: str) -> str:
+        if v not in ALLOWED_MODELS:
+            raise ValueError(f"Model '{v}' is not in the allowed model list.")
+        return v
 
 
 class PromptResponse(BaseModel):
@@ -452,7 +542,11 @@ _ConsensusMode = Literal[
 class SimulationRunRequest(BaseModel):
     """Request body for running a topology simulation."""
 
-    prompt: str = Field(description="The prompt broadcast to all agents.")
+    prompt: str = Field(
+        description="The prompt broadcast to all agents.",
+        min_length=1,
+        max_length=_MAX_PROMPT_LEN,
+    )
     rounds: int = Field(
         default=3,
         ge=1,
@@ -478,6 +572,7 @@ class SimulationRunRequest(BaseModel):
     )
     ruleset: str | None = Field(
         default=None,
+        max_length=_MAX_RULESET_LEN,
         description=(
             "Optional global ruleset prepended to every agent's system prompt. "
             "Use this to define shared rules that all agents must abide by."
