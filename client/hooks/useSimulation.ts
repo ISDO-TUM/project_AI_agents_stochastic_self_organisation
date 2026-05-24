@@ -4,6 +4,7 @@ import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   Agent,
   ConsensusMode,
+  ConversationTurn,
   Edge,
   HistoryMessage,
   SimStep,
@@ -103,7 +104,12 @@ function historyMessageToStep(
 export function useSimulation(agents: Agent[], edges: Edge[]) {
   const [steps, setSteps] = useState<SimStep[]>([]);
   const [cur, setCur] = useState(0);
+  // simMode = the log/run view is open. running = a run is in flight.
+  // Splitting them keeps the input bar usable after a run completes,
+  // which is what enables multi-turn follow-ups.
   const [simMode, setSim] = useState(false);
+  const [running, setRunning] = useState(false);
+  const [turns, setTurns] = useState<ConversationTurn[]>([]);
   const [logExp, setLogExp] = useState(false);
   const [activeNode, setActNode] = useState<string | null>(null);
   const [activeEdge, setActEdge] = useState<string | null>(null);
@@ -179,6 +185,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
       if (agents.length === 0) return;
 
       setSim(true);
+      setRunning(true);
       setLogExp(false);
       setSteps([]);
       setCur(0);
@@ -242,6 +249,10 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
             await new Promise<void>((r) => setTimeout(r, 750));
           }
         }
+        setTurns((prev) => [
+          ...prev,
+          { prompt, mode, answer: result.consensus ?? null },
+        ]);
       } catch (err) {
         setSteps([
           {
@@ -255,6 +266,8 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
           },
         ]);
         setCur(0);
+      } finally {
+        setRunning(false);
       }
     },
     [agents, edges],
@@ -264,6 +277,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     runSeqRef.current += 1;
     if (particleTimerRef.current) clearTimeout(particleTimerRef.current);
     setSim(false);
+    setRunning(false);
     setSteps([]);
     setCur(0);
     setActNode(null);
@@ -273,11 +287,20 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     setOutcome(null);
   }, []);
 
+  // Reset the conversation — drop accumulated turns and exit the run view
+  // so the next prompt starts from a clean slate.
+  const resetContext = useCallback(() => {
+    setTurns([]);
+    stopSim();
+  }, [stopSim]);
+
   return {
     steps,
     cur,
     setCur,
     simMode,
+    running,
+    turns,
     logExp,
     setLogExp,
     activeNode,
@@ -286,6 +309,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     particles,
     runSim,
     stopSim,
+    resetContext,
     outcome,
     dynamicEdges,
   };

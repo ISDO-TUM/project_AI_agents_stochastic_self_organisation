@@ -128,6 +128,12 @@ export interface HistoryMessage {
   createdAt: string;
 }
 
+export interface ConversationTurn {
+  prompt: string;
+  mode: ConsensusMode;
+  answer: string | null;
+}
+
 export type CanvasAction =
   | { type: "ADD_AGENT"; agent: Agent }
   | { type: "UPDATE_AGENT"; agent: Agent }

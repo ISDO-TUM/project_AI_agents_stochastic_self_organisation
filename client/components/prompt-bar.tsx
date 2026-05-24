@@ -9,14 +9,22 @@ import { fetchModels } from "@/lib/api";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 
 interface PromptBarProps {
-  simMode: boolean;
+  running: boolean;
+  turnCount: number;
   // Consensus mode, topology and fan-out now live in the Settings panel; the
   // prompt bar only collects the prompt and triggers the run.
   onRun: (prompt: string) => void;
+  onResetContext: () => void;
   onOpenKeys: () => void;
 }
 
-export function PromptBar({ simMode, onRun, onOpenKeys }: PromptBarProps) {
+export function PromptBar({
+  running,
+  turnCount,
+  onRun,
+  onResetContext,
+  onOpenKeys,
+}: PromptBarProps) {
   const [val, setVal] = useState("");
   const [preview, setPreview] = useState(false);
   const { dark } = useTheme();
@@ -33,7 +41,8 @@ export function PromptBar({ simMode, onRun, onOpenKeys }: PromptBarProps) {
   }, [hasLocalKey]);
 
   const hasAnyKey = hasLocalKey || hasServerModels;
-  const canRun = !simMode && hasAnyKey && val.trim().length > 0;
+  const inputDisabled = running || !hasAnyKey;
+  const canRun = !running && hasAnyKey && val.trim().length > 0;
 
   const handleSubmit = useCallback(() => {
     if (!canRun) return;
@@ -165,7 +174,7 @@ export function PromptBar({ simMode, onRun, onOpenKeys }: PromptBarProps) {
           value={val}
           onChange={(e) => setVal(e.target.value)}
           onKeyDown={handleKeyDown}
-          disabled={simMode || !hasAnyKey}
+          disabled={inputDisabled}
           placeholder={
             hasAnyKey
               ? "Analyze market trends and reach a consensus recommendation…"
@@ -177,13 +186,13 @@ export function PromptBar({ simMode, onRun, onOpenKeys }: PromptBarProps) {
             background: "transparent",
             border: "none",
             outline: "none",
-            color: simMode || !hasAnyKey ? t.textDim : t.text,
+            color: inputDisabled ? t.textDim : t.text,
             caretColor: t.text,
             colorScheme: dark ? "dark" : "light",
             fontSize: 13.5,
             lineHeight: 1.55,
-            opacity: simMode || !hasAnyKey ? 0.5 : 1,
-            cursor: simMode || !hasAnyKey ? "not-allowed" : "text",
+            opacity: inputDisabled ? 0.5 : 1,
+            cursor: inputDisabled ? "not-allowed" : "text",
             resize: "none",
             width: "100%",
             height: 28,
@@ -266,6 +275,45 @@ export function PromptBar({ simMode, onRun, onOpenKeys }: PromptBarProps) {
           Run
         </button>
       </div>
+
+      {/* Conversation reset — only shown after at least one completed turn */}
+      {turnCount > 0 && !running && (
+        <button
+          onClick={onResetContext}
+          title="Start a fresh conversation"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            background: t.pill,
+            border: `1px solid ${t.pillBorder}`,
+            borderRadius: 100,
+            padding: "4px 12px",
+            cursor: "pointer",
+            color: t.textSub,
+            fontSize: 10.5,
+            fontFamily: "'JetBrains Mono', monospace",
+            letterSpacing: 0.3,
+            transition: "color 0.15s, border-color 0.15s",
+          }}
+          onMouseEnter={(e) => {
+            const el = e.currentTarget as HTMLButtonElement;
+            el.style.color = t.text;
+            el.style.borderColor = BURG;
+          }}
+          onMouseLeave={(e) => {
+            const el = e.currentTarget as HTMLButtonElement;
+            el.style.color = t.textSub;
+            el.style.borderColor = t.pillBorder;
+          }}
+        >
+          <LIcon name="RotateCcw" size={11} color="currentColor" />
+          New conversation
+          <span style={{ opacity: 0.6 }}>
+            · {turnCount} turn{turnCount === 1 ? "" : "s"}
+          </span>
+        </button>
+      )}
 
       {/* Disclaimer */}
       <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
