@@ -10,8 +10,13 @@ Covers:
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 from pydantic import ValidationError
+
+if TYPE_CHECKING:
+    from httpx import AsyncClient
 
 from server.guardrails.input_sanitizer import InputSanitizer, PromptInjectionError
 from server.guardrails.output_validator import (
@@ -37,7 +42,8 @@ class TestInputSanitizer:
     sanitizer = InputSanitizer()
 
     def test_clean_prompt_passes(self) -> None:
-        assert self.sanitizer.sanitize("What is the capital of France?") == "What is the capital of France?"
+        clean = "What is the capital of France?"
+        assert self.sanitizer.sanitize(clean) == clean
 
     def test_ignore_previous_instructions_blocked(self) -> None:
         with pytest.raises(PromptInjectionError):
@@ -101,7 +107,10 @@ class TestInputSanitizer:
         assert self.sanitizer.sanitize(prompt) == prompt
 
     def test_multiline_clean_prompt_passes(self) -> None:
-        prompt = "Here are three data points:\n1. Revenue: $1M\n2. Costs: $800k\n3. Profit: $200k\nAnalyse."
+        prompt = (
+            "Here are three data points:\n"
+            "1. Revenue: $1M\n2. Costs: $800k\n3. Profit: $200k\nAnalyse."
+        )
         assert self.sanitizer.sanitize(prompt) == prompt
 
 
@@ -190,8 +199,8 @@ class TestPromptBuilder:
 
 
 class TestSchemaLengthLimits:
-    def _valid_agent_payload(self, **overrides: object) -> dict:
-        base: dict = {
+    def _valid_agent_payload(self, **overrides: object) -> dict[str, object]:
+        base: dict[str, object] = {
             "name": "Test Agent",
             "description": "A test agent.",
             "system_prompt": "You are helpful.",
@@ -246,7 +255,7 @@ class TestSchemaLengthLimits:
 
 
 class TestModelAllowlist:
-    def _base(self) -> dict:
+    def _base(self) -> dict[str, object]:
         return {
             "name": "Agent",
             "description": "desc",
@@ -289,7 +298,7 @@ class TestModelAllowlist:
 
 
 class TestSchemaSecondPass:
-    def _base_agent(self) -> dict:
+    def _base_agent(self) -> dict[str, object]:
         return {
             "name": "Agent",
             "description": "desc",
@@ -400,22 +409,22 @@ class TestHintFilesInPrompt:
 
 class TestHistoryMessageTypeAllowlist:
     @pytest.mark.anyio
-    async def test_invalid_message_type_returns_422(self, client) -> None:
+    async def test_invalid_message_type_returns_422(self, client: AsyncClient) -> None:
         response = await client.get("/api/history/messages?message_type=__injected__")
         assert response.status_code == 422
 
     @pytest.mark.anyio
-    async def test_valid_message_type_accepted(self, client) -> None:
+    async def test_valid_message_type_accepted(self, client: AsyncClient) -> None:
         response = await client.get("/api/history/messages?message_type=agent_output")
         assert response.status_code == 200
 
     @pytest.mark.anyio
-    async def test_limit_param_too_large_rejected(self, client) -> None:
+    async def test_limit_param_too_large_rejected(self, client: AsyncClient) -> None:
         response = await client.get("/api/history/messages?limit=99999")
         assert response.status_code == 422
 
     @pytest.mark.anyio
-    async def test_limit_param_valid_accepted(self, client) -> None:
+    async def test_limit_param_valid_accepted(self, client: AsyncClient) -> None:
         response = await client.get("/api/history/messages?limit=100")
         assert response.status_code == 200
 

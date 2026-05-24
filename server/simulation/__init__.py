@@ -104,7 +104,9 @@ async def _call_agent(
         except PromptInjectionError as exc:
             return f"[GUARDRAIL BLOCKED ruleset] {exc}", []
         guarded_system_prompt = f"## RULESET\n{ruleset.strip()}\n\n{guarded_system_prompt}"
-    guarded_system_prompt = f"## CURRENT DATE\n{date.today().isoformat()}\n\n{guarded_system_prompt}"
+    guarded_system_prompt = (
+        f"## CURRENT DATE\n{date.today().isoformat()}\n\n{guarded_system_prompt}"
+    )
 
     response, tools_used = await call_agent(
         prompt,
@@ -154,7 +156,7 @@ def _with_context(prompt: str, agent_id: str, agent_context: dict[str, str] | No
         try:
             sanitize_prompt(ctx, field_name=f"agent_context[{agent_id}]")
         except PromptInjectionError:
-            # Log and skip – don't abort the whole simulation
+            # Log and skip - don't abort the whole simulation
             return prompt
         return f"Your private context:\n{ctx}\n\n{prompt}"
     return prompt
