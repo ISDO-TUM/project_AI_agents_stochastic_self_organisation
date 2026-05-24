@@ -26,7 +26,6 @@ import { ContextMenu, ContextMenuItem } from "@/components/context-menu";
 import { TweaksPanel } from "@/components/tweaks-panel";
 import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
-import { ApiKeysModal } from "@/components/panels/api-keys-modal";
 import { getTheme } from "@/lib/theme";
 
 const defaultTweaks: Tweaks = {
@@ -100,7 +99,6 @@ export function App() {
   const [rules, setRules] = useState<Rule[]>([]);
   const [selectedRules, setSelectedRules] = useState<Set<string>>(new Set());
   const [importError, setImportError] = useState<string | null>(null);
-  const [showKeys, setShowKeys] = useState(false);
 
   useEffect(() => {
     fetchRules()
@@ -481,7 +479,7 @@ export function App() {
         <PromptBar
           simMode={simMode}
           onRun={handleRun}
-          onOpenKeys={() => setShowKeys(true)}
+          onOpenKeys={() => setShowTweaks(true)}
         />
       </div>
 
@@ -505,7 +503,6 @@ export function App() {
           selectedRules={selectedRules}
           onToggleRule={toggleRule}
           onClose={() => setShowTweaks(false)}
-          onOpenKeys={() => setShowKeys(true)}
         />
       )}
 
@@ -575,8 +572,6 @@ export function App() {
           onClose={() => setCtx(null)}
         />
       )}
-
-      {showKeys && <ApiKeysModal onClose={() => setShowKeys(false)} />}
 
       {!simMode && hasNodes && (
         <div

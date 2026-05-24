@@ -16,7 +16,7 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta, timezone
 from typing import Any
 
-from sqlalchemy import RowMapping, delete, event, select
+from sqlalchemy import RowMapping, delete, event, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from sqlalchemy.pool import StaticPool
 
@@ -126,6 +126,33 @@ async def cleanup_stale_data(engine: AsyncEngine, max_age_hours: int = 24) -> in
     return len(stale_agent_ids)
 
 
+async def _apply_column_migrations(conn: AsyncConnection) -> None:
+    """Add columns introduced after the initial schema creation.
+
+    Uses IF NOT EXISTS / PRAGMA guards so it is safe to run on every startup
+    against both fresh and already-migrated databases.
+    """
+    dialect = conn.dialect.name
+    if dialect == "postgresql":
+        for stmt in (
+            "ALTER TABLE knowledge_files ADD COLUMN IF NOT EXISTS"
+            " created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL",
+            "ALTER TABLE agents ADD COLUMN IF NOT EXISTS"
+            " created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL",
+        ):
+            await conn.execute(text(stmt))
+    elif dialect == "sqlite":
+        for table, col in (
+            ("knowledge_files", "created_at"),
+            ("agents", "created_at"),
+        ):
+            result = await conn.execute(text(f"PRAGMA table_info({table})"))
+            if col not in {row[1] for row in result.fetchall()}:
+                await conn.execute(
+                    text(f"ALTER TABLE {table} ADD COLUMN {col} DATETIME DEFAULT (datetime('now'))")
+                )
+
+
 async def init_db() -> None:
     """Build the engine from ``DATABASE_URL`` and create all tables.
 
@@ -141,6 +168,7 @@ async def init_db() -> None:
     _engine = _build_engine(url)
     async with _engine.begin() as conn:
         await conn.run_sync(metadata.create_all)
+        await _apply_column_migrations(conn)
 
 
 async def close_db() -> None:

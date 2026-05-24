@@ -78,21 +78,31 @@ const ApiKeysContext = createContext<ApiKeysContextValue>({
 });
 
 export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
-  const [keys, setKeysState] = useState<ApiKeys>(() => {
-    if (typeof window === "undefined") return EMPTY_KEYS;
-    const raw = sessionStorage.getItem(STORAGE_KEY);
-    if (!raw) return EMPTY_KEYS;
-    try {
-      return { ...EMPTY_KEYS, ...(JSON.parse(raw) as Partial<ApiKeys>) };
-    } catch {
-      return EMPTY_KEYS;
-    }
-  });
+  // Start empty (server-consistent) and load persisted keys after mount so the
+  // first client render matches the server output — avoids hydration mismatch.
+  const [keys, setKeysState] = useState<ApiKeys>(EMPTY_KEYS);
+  const [hydrated, setHydrated] = useState(false);
 
   useEffect(() => {
+    const raw = sessionStorage.getItem(STORAGE_KEY);
+    if (raw) {
+      try {
+        setKeysState({
+          ...EMPTY_KEYS,
+          ...(JSON.parse(raw) as Partial<ApiKeys>),
+        });
+      } catch {
+        // Ignore malformed storage; fall back to EMPTY_KEYS.
+      }
+    }
+    setHydrated(true);
+  }, []);
+
+  useEffect(() => {
+    if (!hydrated) return;
     sessionStorage.setItem(STORAGE_KEY, JSON.stringify(keys));
     setLlmHeaders(apiKeyHeaders(keys));
-  }, [keys]);
+  }, [keys, hydrated]);
 
   const setKeys = useCallback((next: ApiKeys) => setKeysState(next), []);
   const clearKeys = useCallback(() => {

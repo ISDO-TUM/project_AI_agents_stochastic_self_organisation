@@ -307,5 +307,5 @@ export async function runSimulation(
 // ─── Rules ───────────────────────────────────────────────────────────────────
 
 export async function fetchRules(): Promise<Rule[]> {
-  return request<Rule[]>("GET", "/api/rules/");
+  return request<Rule[]>("GET", "/api/rules");
 }

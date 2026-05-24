@@ -62,7 +62,7 @@ _RULES: list[Rule] = [
 
 
 @rules_router.get(
-    "/",
+    "",
     response_model=list[Rule],
     summary="List available reasoning rules",
     description=(
