@@ -77,14 +77,14 @@ class BaseLLMProvider(ABC):
                 self._call_inner(prompt, model, system_prompt, tools, tool_handler),
                 timeout=self.timeout_seconds,
             )
-        except asyncio.TimeoutError:
+        except TimeoutError as err:
             logger.warning(
                 "LLM call timed out after %ds (model=%s)", self.timeout_seconds, model
             )
             raise TimeoutError(
                 f"The LLM call exceeded the maximum allowed time ({self.timeout_seconds}s). "
                 "Please try again with a shorter prompt or fewer tools."
-            )
+            ) from err
 
     async def _call_inner(
         self,

@@ -280,7 +280,9 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
     try:
         sanitize_prompt(body.prompt, field_name="prompt")
     except PromptInjectionError as exc:
-        raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)) from exc
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
 
     result = await db.execute(select(agents).where(agents.c.id == agent_id))
     row = result.mappings().first()

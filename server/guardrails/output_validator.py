@@ -1,19 +1,19 @@
-"""Output validator — scan LLM responses before returning them to callers.
+"""Output validator - scan LLM responses before returning them to callers.
 
 Checks performed
-────────────────
-1. **Injection echo** – the model repeats a verbatim injection trigger phrase,
+----------------
+1. **Injection echo** - the model repeats a verbatim injection trigger phrase,
    which is a strong signal that the injection succeeded.
-2. **Refusal / safety block** – provider safety filters returned a refusal.
+2. **Refusal / safety block** - provider safety filters returned a refusal.
    We surface this as a structured error rather than silently passing it on.
-3. **Empty / whitespace-only** – an empty response is useless and may indicate
+3. **Empty / whitespace-only** - an empty response is useless and may indicate
    a misconfiguration or a successful jailbreak that silenced the model.
 """
 
 from __future__ import annotations
 
-import re
 import logging
+import re
 
 logger = logging.getLogger(__name__)
 
