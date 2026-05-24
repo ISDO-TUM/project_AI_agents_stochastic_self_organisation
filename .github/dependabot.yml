@@ -47,7 +47,7 @@ updates:
 
   # ── Python / pip ─────────────────────────────────────────────────────────────
   - package-ecosystem: "pip"
-    directory: "/api"
+    directory: "/server"
     schedule:
       interval: "monthly"
       time: "06:00"

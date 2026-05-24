@@ -1,0 +1,30 @@
+name: Quality Checks - Client
+
+on:
+  workflow_call:
+
+jobs:
+  quality:
+    name: Lint, Typecheck & Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v6.0.5
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install
+
+      - name: Lint (ESLint)
+        run: pnpm --filter app run lint
+
+      - name: Type check
+        run: pnpm --filter app run typecheck
+
+      - name: Build
+        run: pnpm --filter app run build

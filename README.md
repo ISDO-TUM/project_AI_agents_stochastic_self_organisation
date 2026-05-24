@@ -1,3 +1,10 @@
+---
+title: "TUM Agentic Demo"
+sdk: docker
+python_version: "3.12"
+pinned: false
+---
+
 <div align="center">
 
 # 🤖 Self-Organising Agentic System
@@ -26,10 +33,10 @@ _[One-line project description to be added]_
 
 ## 🛠️ Tech stack
 
-| Layer       | Stack                                  | Location |
-| ----------- | -------------------------------------- | -------- |
-| 🖥️ Frontend | Next.js 16 · React 19 · Tailwind CSS 4 | `app/`   |
-| ⚙️ Backend  | FastAPI · Python 3.12 · AgentOps       | `api/`   |
+| Layer       | Stack                                  | Location  |
+| ----------- | -------------------------------------- | --------- |
+| 🖥️ Frontend | Next.js 16 · React 19 · Tailwind CSS 4 | `client/` |
+| ⚙️ Backend  | FastAPI · Python 3.12 · SQLAlchemy     | `server/` |
 
 ---
 
@@ -55,12 +62,26 @@ Open **[http://localhost:3000](http://localhost:3000)** — you're running. 🎉
 ## 🏃 Running locally
 
 ```bash
+docker compose up -d postgres # start the database (persists to a Docker volume)
 pnpm dev                  # UI → localhost:3000 · API → localhost:8000
-docker compose up --build # alternatively, run the full stack in Docker
+docker compose up --build # alternatively, run the full stack (incl. Postgres) in Docker
 pnpm clean                # wipe all generated artefacts and deps
 ```
 
+The API requires a PostgreSQL `DATABASE_URL`; `setup.sh` seeds the bundled-Postgres URL into `.env`, so `docker compose up -d postgres` then `pnpm dev` works out of the box. (Tests use in-memory SQLite — no database needed.)
+
 → Full guide: [docs/local-development.md](docs/local-development.md)
+
+---
+
+## ☁️ Deployment (Railway)
+
+The server and client deploy to Railway via [`.github/workflows/deploy-railway.yaml`](.github/workflows/deploy-railway.yaml). For persistent storage, the server needs a PostgreSQL database:
+
+1. In the Railway project, add a **PostgreSQL** service (attach a volume for persistence).
+2. Railway exposes a `DATABASE_URL` reference variable on that service — set the **server** service's `DATABASE_URL` to it (e.g. `${{ Postgres.DATABASE_URL }}`).
+
+The app normalises Railway's `postgresql://` URL to the asyncpg driver and creates its tables on startup, so no manual migration step is required.
 
 ---
 
@@ -68,8 +89,8 @@ pnpm clean                # wipe all generated artefacts and deps
 
 ```
 .
-├── api/                    # FastAPI backend (Python 3.12 + AgentOps)
-├── app/                    # Next.js frontend (React 19 + Tailwind CSS 4)
+├── server/                 # FastAPI backend (Python 3.12 + SQLAlchemy + asyncpg)
+├── client/                 # Next.js frontend (React 19 + Tailwind CSS 4)
 ├── docs/                   # Project documentation
 ├── scripts/setup.sh        # One-time setup — run this first
 ├── docker-compose.yaml     # Full-stack Docker configuration

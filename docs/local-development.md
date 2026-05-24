@@ -25,7 +25,17 @@ This will:
 - Install `pnpm` if missing
 - Install all Python and Node dependencies
 - Wire up the git pre-commit hooks
-- Create an empty `.env` file at the repo root
+- Create a `.env` file at the repo root, pre-seeded with `DATABASE_URL` for the bundled Postgres
+
+### 🐘 Start the database
+
+The backend uses PostgreSQL. Start the bundled instance (it persists to a Docker volume) before the dev server:
+
+```bash
+docker compose up -d postgres
+```
+
+`setup.sh` pre-seeds `.env` with the matching `DATABASE_URL` (`postgresql+asyncpg://app:app@localhost:5432/app`), so no extra config is needed. The tests do **not** need this — they run against an in-memory SQLite database automatically.
 
 ### ▶️ Start the dev server
 
@@ -44,10 +54,11 @@ Both services start concurrently with hot reload:
 
 ### 🔐 Environment variables
 
-`setup.sh` creates an empty `.env` at the repo root. Add your secrets there — it's gitignored:
+`setup.sh` creates a `.env` at the repo root pre-seeded with `DATABASE_URL`. Add your secrets there too — it's gitignored:
 
 ```bash
 # .env
+DATABASE_URL=postgresql+asyncpg://app:app@localhost:5432/app
 OPENAI_API_KEY=sk-...
 ```
 
@@ -59,7 +70,7 @@ Variables prefixed with `NEXT_PUBLIC_` are injected into the browser bundle at b
 pnpm dev                                          # start both services
 pnpm clean                                        # wipe all artefacts and deps
 
-cd api && uv run pre-commit run --all-files       # run all quality hooks manually
+cd server && uv run pre-commit run --all-files    # run all quality hooks manually
 ```
 
 ---
@@ -93,8 +104,8 @@ docker compose up --build   # build images and start everything
 docker compose up --build       # build and start
 docker compose up               # start without rebuilding
 docker compose down             # stop
-docker compose logs -f api      # tail API logs
-docker compose logs -f app      # tail frontend logs
+docker compose logs -f server   # tail API logs
+docker compose logs -f client   # tail frontend logs
 docker compose down --volumes   # stop and remove all volumes
 ```
 
@@ -102,11 +113,11 @@ docker compose down --volumes   # stop and remove all volumes
 
 ```
 docker-compose.yaml
-    api  →  api/Dockerfile        python:3.12-slim, production deps only
-    app  →  app/Dockerfile        node:22-alpine, standalone Next.js build
+    server  →  server/Dockerfile    python:3.12-slim, production deps only
+    client  →  client/Dockerfile    node:22-alpine, standalone Next.js build
 ```
 
-The `app` container reaches the API at `http://api:8000` over Docker's internal network (configured via `NEXT_PUBLIC_API_URL`). This differs from native development where both run on `localhost`.
+The `client` container reaches the API at `http://server:8000` over Docker's internal network (configured via `INTERNAL_API_URL`). This differs from native development where both run on `localhost`.
 
 In production (Vercel), API routing goes through the rewrites in `vercel.json` instead.
 
@@ -181,7 +192,52 @@ Re-run the setup script to reinstall the git hooks:
 Or install them manually:
 
 ```bash
-cd api && uv run pre-commit install
+cd server && uv run pre-commit install
+```
+
+</details>
+
+<details>
+<summary>🔴 <code>RuntimeError: DATABASE_URL is not set</code></summary>
+
+The API crashed on startup because the `.env` file doesn't exist yet. Either run the setup script (which creates it automatically):
+
+```bash
+./scripts/setup.sh
+```
+
+Or create it manually:
+
+```bash
+cp .env.example .env
+```
+
+The `.env.example` already contains the correct `DATABASE_URL` for the Docker Postgres container.
+
+</details>
+
+<details>
+<summary>🔴 <code>password authentication failed for user "app"</code></summary>
+
+The API is connecting to a locally-installed PostgreSQL instead of the Docker container. This happens when the Docker Postgres container doesn't expose its port to the host.
+
+Make sure you're using the `docker-compose.yaml` from this repo (it binds port `5432` on the host). Then restart the container:
+
+```bash
+docker compose down postgres
+docker compose up -d postgres
+```
+
+Verify it's healthy before starting the app:
+
+```bash
+docker compose ps   # postgres should show "(healthy)"
+```
+
+If you have a system PostgreSQL also running on port 5432, it will conflict. Stop it first:
+
+```bash
+sudo systemctl stop postgresql
 ```
 
 </details>
