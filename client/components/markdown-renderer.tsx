@@ -337,6 +337,11 @@ export function MarkdownRenderer({
             />
           ),
           img: ({ src, alt }) => (
+            // Markdown can reference arbitrary external image URLs; next/image
+            // would need per-domain remotePatterns (unknowable for user content)
+            // and sharp, which is disabled in this deployment. A plain <img> is
+            // the correct choice here.
+            // eslint-disable-next-line @next/next/no-img-element
             <img
               src={src}
               alt={alt ?? ""}

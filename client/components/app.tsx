@@ -315,7 +315,8 @@ export function App() {
       icon: "Trash2",
       danger: true,
       fn: () => {
-        agents.some((a) => a.id === id) ? deleteAgent(id) : deleteSource(id);
+        if (agents.some((a) => a.id === id)) deleteAgent(id);
+        else deleteSource(id);
       },
     },
   ];

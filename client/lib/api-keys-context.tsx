@@ -3,9 +3,9 @@
 import {
   createContext,
   useContext,
-  useState,
   useEffect,
   useCallback,
+  useSyncExternalStore,
 } from "react";
 import { setLlmHeaders } from "@/lib/api";
 
@@ -77,38 +77,68 @@ const ApiKeysContext = createContext<ApiKeysContextValue>({
   hasAnyKey: false,
 });
 
-export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
-  // Start empty (server-consistent) and load persisted keys after mount so the
-  // first client render matches the server output — avoids hydration mismatch.
-  const [keys, setKeysState] = useState<ApiKeys>(EMPTY_KEYS);
-  const [hydrated, setHydrated] = useState(false);
+// Custom event so the current tab is notified of key changes ("storage" only
+// fires in *other* tabs).
+const KEYS_EVENT = "apikeyschange";
 
-  useEffect(() => {
-    const raw = sessionStorage.getItem(STORAGE_KEY);
+function subscribe(callback: () => void): () => void {
+  window.addEventListener(KEYS_EVENT, callback);
+  window.addEventListener("storage", callback);
+  return () => {
+    window.removeEventListener(KEYS_EVENT, callback);
+    window.removeEventListener("storage", callback);
+  };
+}
+
+// Cache the parsed snapshot keyed on the raw string so useSyncExternalStore
+// gets a stable reference while storage is unchanged (avoids render loops).
+let cachedRaw: string | null = null;
+let cachedKeys: ApiKeys = EMPTY_KEYS;
+
+function getSnapshot(): ApiKeys {
+  const raw = sessionStorage.getItem(STORAGE_KEY);
+  if (raw !== cachedRaw) {
+    cachedRaw = raw;
     if (raw) {
       try {
-        setKeysState({
+        cachedKeys = {
           ...EMPTY_KEYS,
           ...(JSON.parse(raw) as Partial<ApiKeys>),
-        });
+        };
       } catch {
-        // Ignore malformed storage; fall back to EMPTY_KEYS.
+        cachedKeys = EMPTY_KEYS;
       }
+    } else {
+      cachedKeys = EMPTY_KEYS;
     }
-    setHydrated(true);
+  }
+  return cachedKeys;
+}
+
+function getServerSnapshot(): ApiKeys {
+  return EMPTY_KEYS;
+}
+
+export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
+  // sessionStorage is the source of truth. useSyncExternalStore renders the
+  // server snapshot first (matching SSR) then swaps to the stored value after
+  // hydration — no mismatch, and no setState-in-effect.
+  const keys = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
+
+  const setKeys = useCallback((next: ApiKeys) => {
+    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(next));
+    window.dispatchEvent(new Event(KEYS_EVENT));
   }, []);
 
-  useEffect(() => {
-    if (!hydrated) return;
-    sessionStorage.setItem(STORAGE_KEY, JSON.stringify(keys));
-    setLlmHeaders(apiKeyHeaders(keys));
-  }, [keys, hydrated]);
-
-  const setKeys = useCallback((next: ApiKeys) => setKeysState(next), []);
   const clearKeys = useCallback(() => {
-    setKeysState(EMPTY_KEYS);
     sessionStorage.removeItem(STORAGE_KEY);
+    window.dispatchEvent(new Event(KEYS_EVENT));
   }, []);
+
+  // Keep the API layer's auth headers in sync with the current keys.
+  useEffect(() => {
+    setLlmHeaders(apiKeyHeaders(keys));
+  }, [keys]);
 
   return (
     <ApiKeysContext.Provider
