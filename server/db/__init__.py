@@ -369,7 +369,10 @@ async def create_round(
         )
     )
     await conn.commit()
-    return int(result.inserted_primary_key[0])
+    pk = result.inserted_primary_key
+    if pk is None:
+        raise RuntimeError("Failed to create simulation round.")
+    return int(pk[0])
 
 
 def _col_eq(col: Any, val: Any) -> Any:
@@ -397,7 +400,10 @@ async def create_connection(
             )
         )
         await conn.commit()
-        return int(result.inserted_primary_key[0])
+        pk = result.inserted_primary_key
+        if pk is None:
+            raise RuntimeError("Failed to create simulation connection.")
+        return int(pk[0])
     except IntegrityError:
         await conn.rollback()
 
@@ -436,7 +442,10 @@ async def create_message(
         )
     )
     await conn.commit()
-    return int(result.inserted_primary_key[0])
+    pk = result.inserted_primary_key
+    if pk is None:
+        raise RuntimeError("Failed to create simulation message.")
+    return int(pk[0])
 
 
 async def record_message(
