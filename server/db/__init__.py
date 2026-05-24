@@ -137,22 +137,55 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
     dialect = conn.dialect.name
     if dialect == "postgresql":
         for stmt in (
+            # Pre-existing migrations
             "ALTER TABLE knowledge_files ADD COLUMN IF NOT EXISTS"
             " created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL",
             "ALTER TABLE agents ADD COLUMN IF NOT EXISTS"
             " created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL",
+            # trials: simulation tracking columns
+            "ALTER TABLE trials ADD COLUMN IF NOT EXISTS mode TEXT",
+            "ALTER TABLE trials ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'running'",
+            "ALTER TABLE trials ADD COLUMN IF NOT EXISTS created_at TEXT NOT NULL DEFAULT ''",
+            "ALTER TABLE trials ADD COLUMN IF NOT EXISTS completed_at TEXT",
+            # rounds: index, phase and timestamp
+            "ALTER TABLE rounds ADD COLUMN IF NOT EXISTS round_index INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE rounds ADD COLUMN IF NOT EXISTS phase TEXT NOT NULL DEFAULT 'unknown'",
+            "ALTER TABLE rounds ADD COLUMN IF NOT EXISTS created_at TEXT NOT NULL DEFAULT ''",
+            # connections: make agent ids nullable for SYSTEM messages
+            "ALTER TABLE connections ALTER COLUMN from_agent_id DROP NOT NULL",
+            "ALTER TABLE connections ALTER COLUMN to_agent_id DROP NOT NULL",
+            # messages: routing metadata and timestamp
+            "ALTER TABLE messages ADD COLUMN IF NOT EXISTS round_id INTEGER",
+            "ALTER TABLE messages ADD COLUMN IF NOT EXISTS from_agent_id TEXT",
+            "ALTER TABLE messages ADD COLUMN IF NOT EXISTS to_agent_id TEXT",
+            "ALTER TABLE messages ADD COLUMN IF NOT EXISTS"
+            " message_type TEXT NOT NULL DEFAULT 'unknown'",
+            "ALTER TABLE messages ADD COLUMN IF NOT EXISTS created_at TEXT NOT NULL DEFAULT ''",
         ):
             await conn.execute(text(stmt))
     elif dialect == "sqlite":
-        for table, col in (
-            ("knowledge_files", "created_at"),
-            ("agents", "created_at"),
+        # SQLite: fresh test databases are created with the full schema via
+        # metadata.create_all, so migrations only cover the pre-existing
+        # knowledge_files/agents columns that may be missing on older DBs.
+        for table, col, definition in (
+            ("knowledge_files", "created_at", "DATETIME DEFAULT (datetime('now'))"),
+            ("agents", "created_at", "DATETIME DEFAULT (datetime('now'))"),
+            ("trials", "mode", "TEXT"),
+            ("trials", "status", "TEXT NOT NULL DEFAULT 'running'"),
+            ("trials", "created_at", "TEXT NOT NULL DEFAULT ''"),
+            ("trials", "completed_at", "TEXT"),
+            ("rounds", "round_index", "INTEGER NOT NULL DEFAULT 0"),
+            ("rounds", "phase", "TEXT NOT NULL DEFAULT 'unknown'"),
+            ("rounds", "created_at", "TEXT NOT NULL DEFAULT ''"),
+            ("messages", "round_id", "INTEGER"),
+            ("messages", "from_agent_id", "TEXT"),
+            ("messages", "to_agent_id", "TEXT"),
+            ("messages", "message_type", "TEXT NOT NULL DEFAULT 'unknown'"),
+            ("messages", "created_at", "TEXT NOT NULL DEFAULT ''"),
         ):
             result = await conn.execute(text(f"PRAGMA table_info({table})"))
             if col not in {row[1] for row in result.fetchall()}:
-                await conn.execute(
-                    text(f"ALTER TABLE {table} ADD COLUMN {col} DATETIME DEFAULT (datetime('now'))")
-                )
+                await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {definition}"))
 
 
 async def init_db() -> None:
