@@ -12,7 +12,6 @@ concurrency:
 
 jobs:
   branch-name:
-    name: Validate branch name
     runs-on: ubuntu-latest
     steps:
       - name: Check naming convention
