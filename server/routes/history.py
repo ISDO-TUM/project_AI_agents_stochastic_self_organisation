@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -66,6 +66,22 @@ async def list_connections(round_id: int, db: DBDep) -> list[ConnectionResponse]
     ]
 
 
+_VALID_MESSAGE_TYPES: frozenset[str] = frozenset(
+    {
+        "agent_input",
+        "agent_output",
+        "tool",
+        "system",
+        "broadcast",
+        "consensus",
+        "guardrail_blocked",
+    }
+)
+
+_DEFAULT_MESSAGES_LIMIT = 500
+_MAX_MESSAGES_LIMIT = 2000
+
+
 @router.get("/messages", response_model=list[MessageTraceResponse])
 async def list_messages(
     db: DBDep,
@@ -74,7 +90,16 @@ async def list_messages(
     agent_id: str | None = None,
     message_type: str | None = None,
     after_id: int | None = None,
+    limit: int = Query(default=_DEFAULT_MESSAGES_LIMIT, ge=1, le=_MAX_MESSAGES_LIMIT),
 ) -> list[MessageTraceResponse]:
+    if message_type is not None and message_type not in _VALID_MESSAGE_TYPES:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=(
+                f"Invalid message_type '{message_type}'. "
+                f"Allowed values: {sorted(_VALID_MESSAGE_TYPES)}"
+            ),
+        )
     from_agent = agents.alias("from_agent")
     to_agent = agents.alias("to_agent")
 
@@ -116,6 +141,8 @@ async def list_messages(
         stmt = stmt.where(messages.c.message_type == message_type)
     if after_id is not None:
         stmt = stmt.where(messages.c.id > after_id)
+
+    stmt = stmt.limit(limit)
 
     result = await db.execute(stmt)
     rows = result.mappings().all()

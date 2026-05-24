@@ -2,11 +2,12 @@ import asyncio
 import json
 import logging
 import os
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
@@ -30,15 +31,15 @@ _STALE_AFTER_HOURS = 24
 
 
 async def _cleanup_loop() -> None:
-    """Background task: delete agents and files older than 24 h, then wait an hour."""
+    """Background task: wait an hour, then delete agents and files older than 24 h."""
     while True:
+        await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
         try:
             deleted = await cleanup_stale_data(get_engine(), max_age_hours=_STALE_AFTER_HOURS)
             if deleted:
                 logger.info("Periodic cleanup: removed %d stale agent(s)", deleted)
         except Exception:
             logger.exception("Periodic cleanup failed — will retry next cycle")
-        await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
 
 
 load_dotenv()
@@ -84,9 +85,33 @@ app.add_middleware(
     CORSMiddleware,
     allow_origins=_allowed_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=[
+        "Content-Type",
+        "Authorization",
+        "X-LLM-Provider",
+        "X-LLM-API-Key",
+        "X-LLM-Model",
+        "X-Request-ID",
+    ],
 )
+
+_SECURITY_HEADERS: dict[str, str] = {
+    "X-Content-Type-Options": "nosniff",
+    "X-Frame-Options": "DENY",
+    "Referrer-Policy": "strict-origin-when-cross-origin",
+    "X-XSS-Protection": "0",  # modern browsers ignore this; rely on CSP instead
+    "Permissions-Policy": "geolocation=(), microphone=(), camera=()",
+}
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next: Callable[..., Any]) -> Response:
+    """Attach security-hardening response headers to every reply."""
+    response: Response = await call_next(request)
+    for header, value in _SECURITY_HEADERS.items():
+        response.headers[header] = value
+    return response
 
 
 @app.exception_handler(MissingCredentialsError)

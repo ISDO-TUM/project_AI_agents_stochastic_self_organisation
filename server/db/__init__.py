@@ -307,10 +307,20 @@ def hint_files_in_prompt(
     system_prompt: str | None,
     file_names: list[str],
 ) -> str | None:
-    """Append an instruction to use the files tool before answering."""
+    """Append an instruction to use the files tool before answering.
+
+    File names are sanitised before interpolation: newlines, quotes and
+    angle-brackets are stripped so that a maliciously named file cannot inject
+    new instructions into the system prompt.
+    """
     if not file_names:
         return system_prompt or None
-    names = ", ".join(f'"{n}"' for n in file_names)
+    # Strip characters that could break prompt structure
+    _safe = [
+        n.replace("\n", " ").replace("\r", " ").replace('"', "'").replace("<", "").replace(">", "")
+        for n in file_names
+    ]
+    names = ", ".join(f'"{n}"' for n in _safe)
     hint = (
         f"\n\nYou have knowledge files attached: {names}. "
         "Use the 'files' tool to read relevant files before answering. "

@@ -1,6 +1,6 @@
 # Demo configurations
 
-Importable canvas configurations for the SAP demo and the team. Each JSON file
+Importable canvas configurations for demos and the team. Each JSON file
 captures a complete canvas: agents, knowledge files (with their content), and
 the edges between them.
 
@@ -44,9 +44,9 @@ too.
 
 ## Files
 
-### `approved-supplier.json` (recommended for the SAP walkthrough)
+### `approved-supplier.json` (recommended walkthrough)
 
-A procurement scenario that maps cleanly onto an SAP audience:
+A procurement scenario demonstrating conflict resolution across agents:
 
 - **Procurement Lead** has the current `2026_supplier_contract.txt` —
   master agreement names **Acme Computers** as the approved vendor.
@@ -63,8 +63,8 @@ Two of the three agents read **Acme Computers** from their files; one reads
 the outdated **BetaSystems**. Plurality voting picks `acme computers`,
 demonstrating the core message: _the system tolerates one stakeholder being
 out of date because the majority of grounded sources still agree_. This is
-the same pattern an SAP customer hits whenever procurement rules,
-compliance memos, and on-site notes drift apart between systems.
+the same pattern encountered whenever procurement rules, compliance memos,
+and on-site notes drift apart between systems.
 
 ### `president-majority.json`
 

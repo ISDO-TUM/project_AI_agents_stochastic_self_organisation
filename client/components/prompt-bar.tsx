@@ -316,8 +316,8 @@ export function PromptBar({ simMode, onRun, onOpenKeys }: PromptBarProps) {
           }}
         >
           {hasAnyKey
-            ? "This is an AI simulation and may make mistakes. Verify outputs independently."
-            : "Add an API key (Keys button, top bar) to start running simulations."}
+            ? "This AI system can make mistakes. Outputs may be incomplete or incorrect — always verify independently."
+            : "This AI system can make mistakes. Add an API key (Keys button, top bar) to start running simulations."}
         </span>
       </div>
     </div>

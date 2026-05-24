@@ -27,6 +27,9 @@ from server.db.tables import (
     rounds,
     trials,
 )
+from server.guardrails import sanitize_prompt, validate_llm_output
+from server.guardrails.input_sanitizer import PromptInjectionError
+from server.guardrails.output_validator import InjectionEchoError, LLMRefusalError
 from server.llm import call_agent
 from server.llm.credentials import MissingCredentialsError, use_credentials
 from server.schemas import (
@@ -273,6 +276,14 @@ async def delete_agent(agent_id: str, db: DBDep) -> None:
     dependencies=[Depends(use_credentials)],
 )
 async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRunResponse:
+    # ── Guardrail 1: sanitise incoming prompt ─────────────────────────────────
+    try:
+        sanitize_prompt(body.prompt, field_name="prompt")
+    except PromptInjectionError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+        ) from exc
+
     result = await db.execute(select(agents).where(agents.c.id == agent_id))
     row = result.mappings().first()
     if row is None:
@@ -295,11 +306,28 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
         )
     except MissingCredentialsError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc
+    except TimeoutError as exc:
+        raise HTTPException(status_code=status.HTTP_504_GATEWAY_TIMEOUT, detail=str(exc)) from exc
     except Exception as exc:
         logger.exception("Agent run failed for agent_id=%s", agent_id)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
             detail="LLM provider error. Check server logs for details.",
+        ) from exc
+
+    # ── Guardrail 2: validate LLM output ─────────────────────────────────────
+    try:
+        validate_llm_output(response)
+    except LLMRefusalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
+    except (InjectionEchoError, ValueError) as exc:
+        logger.warning("Output guardrail triggered for agent_id=%s: %s", agent_id, exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail=str(exc),
         ) from exc
 
     return AgentRunResponse(agent_id=agent_id, response=response, tools_used=tools_used)
