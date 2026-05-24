@@ -316,15 +316,15 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
     # ── Guardrail 2: validate LLM output ─────────────────────────────────────
     try:
         validate_llm_output(response)
+    except LLMRefusalError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            detail=str(exc),
+        ) from exc
     except (InjectionEchoError, ValueError) as exc:
         logger.warning("Output guardrail triggered for agent_id=%s: %s", agent_id, exc)
         raise HTTPException(
             status_code=status.HTTP_502_BAD_GATEWAY,
-            detail=str(exc),
-        ) from exc
-    except LLMRefusalError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail=str(exc),
         ) from exc
 
