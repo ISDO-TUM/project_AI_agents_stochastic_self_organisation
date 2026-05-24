@@ -5,11 +5,44 @@ import {
   Agent,
   ConsensusMode,
   Edge,
+  HistoryMessage,
   SimStep,
   AnimatedParticle,
 } from "@/lib/types";
 import { uuid } from "@/lib/utils";
-import { runSimulation, SimulationResult } from "@/lib/api";
+import {
+  fetchHistoryMessages,
+  fetchHistoryTrial,
+  runSimulation,
+  SimulationResult,
+} from "@/lib/api";
+
+function timeFromIso(iso: string): string {
+  return new Date(iso).toLocaleTimeString("en-GB", { hour12: false });
+}
+
+function historyMessageToStep(message: HistoryMessage): SimStep {
+  const isSelf = message.fromAgentId === message.toAgentId;
+  const isAgentToAgent = Boolean(message.fromAgentId) && !isSelf;
+  const type: SimStep["type"] =
+    message.messageType === "tool"
+      ? "tool"
+      : isAgentToAgent
+        ? "agent-to-agent"
+        : "system";
+  return {
+    id: String(message.id),
+    ts: timeFromIso(message.createdAt),
+    label: message.fromAgentName,
+    msg: message.message || "",
+    type,
+    roundIndex: message.roundIndex,
+    ...(isAgentToAgent && { target: message.toAgentName }),
+    ...(message.fromAgentId && { fromId: message.fromAgentId }),
+    ...(message.toAgentId && { toId: message.toAgentId }),
+    ...(isSelf && message.toAgentId && { nodeId: message.toAgentId }),
+  };
+}
 
 export function useSimulation(agents: Agent[], edges: Edge[]) {
   const [steps, setSteps] = useState<SimStep[]>([]);
@@ -19,11 +52,9 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
   const [activeNode, setActNode] = useState<string | null>(null);
   const [activeEdge, setActEdge] = useState<string | null>(null);
   const [particles, setParticles] = useState<AnimatedParticle[]>([]);
-  const [outcome, setOutcome] = useState<Omit<
-    SimulationResult,
-    "steps"
-  > | null>(null);
+  const [outcome, setOutcome] = useState<SimulationResult | null>(null);
   const particleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const runSeqRef = useRef(0);
 
   useEffect(() => {
     return () => {
@@ -56,7 +87,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
   const runSim = useCallback(
     async (
       prompt: string,
-      mode: ConsensusMode = "broadcast",
+      mode: ConsensusMode = "broadcast_no_consensus",
       ruleset?: string,
     ) => {
       if (agents.length === 0) return;
@@ -66,6 +97,8 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
       setSteps([]);
       setCur(0);
       setOutcome(null);
+      const runSeq = runSeqRef.current + 1;
+      runSeqRef.current = runSeq;
 
       // Animate particles along all edges during the run
       const pts: AnimatedParticle[] = edges.map((e, i) => ({
@@ -81,13 +114,31 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
 
       try {
         const result = await runSimulation(prompt, { mode, ruleset });
-        const { steps: simSteps, ...rest } = result;
-        setOutcome(rest);
-        for (let i = 0; i < simSteps.length; i++) {
-          setSteps(simSteps.slice(0, i + 1));
-          setCur(i);
-          if (i < simSteps.length - 1) {
-            await new Promise<void>((r) => setTimeout(r, 350));
+        setOutcome(result);
+        let lastMessageId = 0;
+        let complete = false;
+        while (!complete && runSeqRef.current === runSeq) {
+          const messages = await fetchHistoryMessages({
+            trialId: result.trialId,
+            afterId: lastMessageId,
+          });
+          if (messages.length) {
+            lastMessageId = Math.max(
+              ...messages.map((m) => m.id),
+              lastMessageId,
+            );
+            const newSteps = messages.map(historyMessageToStep);
+            setSteps((prev) => {
+              const next = [...prev, ...newSteps];
+              setCur(Math.max(0, next.length - 1));
+              return next;
+            });
+          }
+          const trial = await fetchHistoryTrial(result.trialId);
+          setOutcome({ trialId: trial.id, status: trial.status });
+          complete = trial.status === "completed" || trial.status === "failed";
+          if (!complete) {
+            await new Promise<void>((r) => setTimeout(r, 750));
           }
         }
       } catch (err) {
@@ -109,6 +160,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
   );
 
   const stopSim = useCallback(() => {
+    runSeqRef.current += 1;
     if (particleTimerRef.current) clearTimeout(particleTimerRef.current);
     setSim(false);
     setSteps([]);

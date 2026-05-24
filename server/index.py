@@ -15,6 +15,7 @@ from server.llm.credentials import MissingCredentialsError
 from server.routes import (
     agents_router,
     benchmark_router,
+    history_router,
     knowledge_files_router,
     models_router,
     rules_router,
@@ -97,6 +98,7 @@ async def _missing_credentials_handler(
 
 app.include_router(agents_router)
 app.include_router(knowledge_files_router)
+app.include_router(history_router)
 app.include_router(models_router)
 app.include_router(benchmark_router)
 app.include_router(rules_router)

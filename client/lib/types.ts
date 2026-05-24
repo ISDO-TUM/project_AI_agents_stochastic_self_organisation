@@ -6,7 +6,10 @@ export type SimStepType =
   | "tool"
   | "agent-to-source";
 
-export type ConsensusMode = "broadcast" | "weighted" | "voting";
+export type ConsensusMode =
+  | "broadcast_no_consensus"
+  | "weighted_opinion_pooling"
+  | "plurality_voting";
 
 export interface Position {
   x: number;
@@ -51,6 +54,7 @@ export interface SimStep {
   label: string;
   msg: string;
   type: SimStepType;
+  roundIndex?: number;
   target?: string;
   nodeId?: string;
   fromId?: string;
@@ -88,6 +92,33 @@ export interface Rule {
   label: string;
   instruction: string;
   default?: boolean;
+}
+
+export interface HistoryTrial {
+  id: string;
+  userPrompt: string;
+  description: string;
+  mode: string | null;
+  status: string;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface HistoryMessage {
+  id: number;
+  trialId: string;
+  trialDescription: string;
+  roundId: number;
+  roundIndex: number;
+  phase: string;
+  connectionId: number;
+  fromAgentId: string | null;
+  fromAgentName: string;
+  toAgentId: string | null;
+  toAgentName: string;
+  messageType: string;
+  message: string | null;
+  createdAt: string;
 }
 
 export type CanvasAction =

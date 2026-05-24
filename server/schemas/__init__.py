@@ -124,6 +124,10 @@ class TrialResponse(BaseModel):
     id: str
     user_prompt: str
     description: str
+    mode: str | None = None
+    status: str
+    created_at: str
+    completed_at: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -140,6 +144,9 @@ class RoundResponse(BaseModel):
 
     id: int
     trial_id: str
+    round_index: int
+    phase: str
+    created_at: str
 
 
 # ---------------------------------------------------------------------------
@@ -163,8 +170,8 @@ class ConnectionResponse(BaseModel):
 
     id: int
     round_id: int
-    from_agent_id: str
-    to_agent_id: str
+    from_agent_id: str | None
+    to_agent_id: str | None
 
 
 # ---------------------------------------------------------------------------
@@ -189,7 +196,31 @@ class MessageResponse(BaseModel):
 
     id: int
     connection_id: int
+    round_id: int
+    from_agent_id: str | None
+    to_agent_id: str | None
+    message_type: str
     message: str | None
+    created_at: str
+
+
+class MessageTraceResponse(BaseModel):
+    """Joined message trace row returned by history query endpoints."""
+
+    id: int
+    trial_id: str
+    trial_description: str
+    round_id: int
+    round_index: int
+    phase: str
+    connection_id: int
+    from_agent_id: str | None
+    from_agent_name: str
+    to_agent_id: str | None
+    to_agent_name: str
+    message_type: str
+    message: str | None
+    created_at: str
 
 
 # ---------------------------------------------------------------------------
@@ -410,24 +441,12 @@ class CreateDemoBenchmarkResponse(BaseModel):
 
 # ── Simulation ────────────────────────────────────────────────────────────────
 
-_SimStepType = Literal["system", "agent-to-agent", "tool", "agent-to-source"]
 
-
-class SimulationStep(BaseModel):
-    """A single event in the simulation log, mirroring the frontend SimStep type."""
-
-    id: str
-    ts: str
-    label: str
-    msg: str
-    type: _SimStepType
-    target: str | None = None
-    node_id: str | None = None
-    from_id: str | None = None
-    to_id: str | None = None
-
-
-_ConsensusMode = Literal["broadcast", "weighted", "voting"]
+_ConsensusMode = Literal[
+    "broadcast_no_consensus",
+    "weighted_opinion_pooling",
+    "plurality_voting",
+]
 
 
 class SimulationRunRequest(BaseModel):
@@ -441,11 +460,12 @@ class SimulationRunRequest(BaseModel):
         description="Discussion rounds after the initial broadcast.",
     )
     mode: _ConsensusMode = Field(
-        default="broadcast",
+        default="broadcast_no_consensus",
         description=(
-            "Consensus algorithm. 'broadcast' = current behaviour (no consensus). "
-            "'weighted' = per-agent trust vector over neighbours, weighted opinion pooling. "
-            "'voting' = global plurality voting via a coordinator function."
+            "Consensus algorithm. 'broadcast_no_consensus' = discussion without "
+            "a final consensus operator. 'weighted_opinion_pooling' = per-agent "
+            "trust vector over neighbours. 'plurality_voting' = global plurality "
+            "voting via a coordinator function."
         ),
     )
     agent_context: dict[str, str] | None = Field(
@@ -465,26 +485,8 @@ class SimulationRunRequest(BaseModel):
     )
 
 
-class SimulationRunResponse(BaseModel):
-    """Result of a topology simulation."""
+class SimulationStartResponse(BaseModel):
+    """Response returned immediately after a background simulation is scheduled."""
 
-    steps: list[SimulationStep]
-    consensus: str | None = Field(
-        default=None,
-        description="Final consensus answer when a consensus mode was used.",
-    )
-    consensus_agent_id: str | None = Field(
-        default=None,
-        description=(
-            "Agent whose answer was selected as the consensus, if applicable. "
-            "Used by benchmarks to evaluate routing/attribution correctness."
-        ),
-    )
-    converged: bool = Field(
-        default=False,
-        description="True if the consensus loop met its convergence criterion.",
-    )
-    rounds_used: int = Field(
-        default=0,
-        description="Number of discussion rounds actually executed.",
-    )
+    trial_id: str = Field(description="ID of the trial whose messages can be polled.")
+    status: str = Field(default="started", description="Background simulation status.")

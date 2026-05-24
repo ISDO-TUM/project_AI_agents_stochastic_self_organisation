@@ -166,7 +166,7 @@ async def test_simulation_propagates_key_through_gather(
     ):
         resp = await client.post(
             "/api/simulation/run",
-            json={"prompt": "hi", "rounds": 1, "mode": "voting"},
+            json={"prompt": "hi", "rounds": 1, "mode": "plurality_voting"},
             headers={"X-LLM-OpenAI-Key": "sk-sim-key"},
         )
     assert resp.status_code == 200, resp.text
