@@ -900,12 +900,13 @@ _BIDDING_MATCHING_INSTRUCTION = (
     "\n\n## GAP MATCHING\n"
     "The blackboard below lists gaps posted by OTHER agents during the "
     "bidding phase. For each gap, decide whether YOU can *contribute* to "
-    "filling it using your own tools and knowledge files.\n\n"
-    "IMPORTANT: contributing does NOT mean fully resolving the gap. "
-    "Partial, supporting, or complementary information counts. If anything "
-    "in your files or tools is even tangentially useful to the gap — set "
-    "can_contribute=true. Only set can_contribute=false if you have nothing "
-    "at all that touches the gap.\n\n"
+    "filling it. If yes, ADD the actual answering data to the gap — do not "
+    "just claim you could.\n\n"
+    "Contributing does NOT mean fully resolving the gap. Partial, "
+    "supporting, or complementary information counts. If anything in your "
+    "files or tools is even tangentially useful — set can_contribute=true "
+    "and put the relevant fact(s) under `contribution`. Only set "
+    "can_contribute=false if you have NOTHING that touches the gap.\n\n"
     "Verification rules are the same as before:\n"
     "- Cite only tools you have been granted.\n"
     "- For each file you cite, you MUST first call `files` with action='read' "
@@ -920,10 +921,18 @@ _BIDDING_MATCHING_INSTRUCTION = (
     '        "relevant_tools": [...],\n'
     '        "relevant_files": [\n'
     '          {"file_name": "...", "file_type": "...",\n'
-    '           "relevance": "what part of the gap this helps with (even partially)"}\n'
+    '           "relevance": "what part of the gap this helps with"}\n'
     "        ]\n"
     "      },\n"
-    '      "rationale": "<one sentence — partial contributions are fine>"\n'
+    '      "contribution": [\n'
+    "        {\n"
+    '          "data": "<the actual fact that helps answer this gap — '
+    'one statement per entry>",\n'
+    '          "citation": "<source: file name + date if present, '
+    "e.g. 'nexora_overview_2024 (2024-09-01)'>\"\n"
+    "        }\n"
+    "      ],\n"
+    '      "rationale": "<one sentence — why this data fills the gap>"\n'
     "    },\n"
     "    {\n"
     '      "gap_id": "<another gap_id>",\n'
@@ -931,9 +940,10 @@ _BIDDING_MATCHING_INSTRUCTION = (
     "    }\n"
     "  ]\n"
     "}\n\n"
-    "Include exactly one entry per gap on the blackboard. Set "
-    "can_contribute=false (and omit evidence) only when you have nothing "
-    "relevant — partial relevance is enough to set it true.\n\n"
+    "Include exactly one entry per gap on the blackboard. When "
+    "can_contribute=true you MUST provide a non-empty `contribution` array — "
+    "an empty contribution means you have no real data to add, so set "
+    "can_contribute=false instead.\n\n"
     "Blackboard:\n"
 )
 
@@ -1093,7 +1103,9 @@ def _validate_bid(
         "gaps": raw_bid.get("gaps") or [],
         "contribution": contribution,
     }
-    if not _has_evidence(validated):
+    # An agent that has cited evidence but produced no actionable contribution
+    # is treated as non-participating — same as if it had no evidence at all.
+    if not _has_evidence(validated) or not contribution:
         validated["gaps"] = []
         validated["contribution"] = []
         validated["yielded"] = True
@@ -1153,11 +1165,17 @@ def _validate_coverage(
         )
         rejections["tools"].extend(ev_rej["tools"])
         rejections["files"].extend(ev_rej["files"])
+        contribution = _normalise_contribution(entry.get("contribution"))
+        if not contribution:
+            # Claimed to contribute but added no actual data — downgrade.
+            valid_entries.append({"gap_id": gap_id, "can_contribute": False})
+            continue
         valid_entries.append(
             {
                 "gap_id": gap_id,
                 "can_contribute": True,
                 "evidence": valid_ev,
+                "contribution": contribution,
                 "rationale": entry.get("rationale"),
             }
         )
@@ -1208,7 +1226,7 @@ def _format_blackboard(entries: list[dict[str, Any]]) -> str:
 
 def _select_collaborators(
     bids: dict[str, dict[str, Any]],
-    coverage: dict[str, list[tuple[str, dict[str, Any]]]],
+    coverage: dict[str, list[dict[str, Any]]],
     blackboard: list[dict[str, Any]],
     agents: list[dict[str, Any]],
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
@@ -1217,7 +1235,8 @@ def _select_collaborators(
     An agent is selected iff it provided non-empty validated evidence in
     round 1 (initial bid) OR round 2 (matching). Order is the agents-table
     order for determinism. Each collaborator is returned as
-    ``{id, name, covers: [...]}``.
+    ``{id, name, covers: [...]}`` where each cover entry includes the
+    ``added_data`` the agent posted to that gap.
     """
     collaborator_ids: set[str] = set()
 
@@ -1227,26 +1246,30 @@ def _select_collaborators(
             collaborator_ids.add(agent_id)
 
     for covers in coverage.values():
-        for agent_id, ev in covers:
-            if ev and (ev.get("relevant_tools") or ev.get("relevant_files")):
-                collaborator_ids.add(agent_id)
+        for entry in covers:
+            ev = entry.get("evidence") or {}
+            if ev.get("relevant_tools") or ev.get("relevant_files"):
+                collaborator_ids.add(str(entry.get("agent_id") or ""))
 
     gap_lookup = {e["gap_id"]: e for e in blackboard}
 
     uncovered: list[dict[str, Any]] = []
     covers_by_agent: dict[str, list[dict[str, Any]]] = {}
-    for gid, covers in coverage.items():
+    for gid, entries in coverage.items():
         gap_entry = gap_lookup.get(gid)
         any_valid_cover = False
-        for agent_id, ev in covers:
+        for entry in entries:
+            ev = entry.get("evidence") or {}
             if not (ev.get("relevant_tools") or ev.get("relevant_files")):
                 continue
             any_valid_cover = True
-            covers_by_agent.setdefault(agent_id, []).append(
+            aid = str(entry.get("agent_id") or "")
+            covers_by_agent.setdefault(aid, []).append(
                 {
                     "gap_id": gid,
                     "posted_by": gap_entry["agent_name"] if gap_entry else None,
                     "gap": gap_entry["gap"] if gap_entry else None,
+                    "added_data": entry.get("contribution") or [],
                 }
             )
         if gap_entry is not None and not any_valid_cover:
@@ -1281,9 +1304,17 @@ def _select_collaborators(
 def _format_findings(
     collaborators: list[dict[str, Any]],
     bids: dict[str, dict[str, Any]],
+    coverage: dict[str, list[dict[str, Any]]] | None = None,
+    blackboard: list[dict[str, Any]] | None = None,
 ) -> str:
-    """Render every collaborator's contribution entries with their citations."""
-    lines: list[str] = []
+    """Render every collaborator's contribution entries with their citations.
+
+    When ``coverage`` and ``blackboard`` are provided, also render a "Gap
+    board" section showing each gap (posted by whom, what was expected) and
+    the data each contributing agent added to it.
+    """
+    lines: list[str] = ["### Direct findings (from bidding):"]
+    has_direct = False
     for c in collaborators:
         cid = str(c.get("id", ""))
         bid = bids.get(cid) or {}
@@ -1292,6 +1323,7 @@ def _format_findings(
         contribution = bid.get("contribution") or []
         if not isinstance(contribution, list) or not contribution:
             continue
+        has_direct = True
         name = c.get("name") or cid
         lines.append(f"- {name}:")
         for item in contribution:
@@ -1301,11 +1333,94 @@ def _format_findings(
             citation = str(item.get("citation") or "").strip()
             if not data:
                 continue
-            if citation:
-                lines.append(f"    - {data}  [source: {citation}]")
-            else:
-                lines.append(f"    - {data}  [source: unspecified]")
-    return "\n".join(lines) if lines else "(no findings declared)"
+            cite_str = citation or "unspecified"
+            lines.append(f"    - {data}  [source: {cite_str}]")
+    if not has_direct:
+        lines.append("(none declared)")
+
+    if coverage and blackboard:
+        name_by_id = {str(c.get("id")): c.get("name") or str(c.get("id")) for c in collaborators}
+        gap_lookup = {e["gap_id"]: e for e in blackboard}
+
+        lines.append("")
+        lines.append("### Gap board (data added during matching):")
+        any_filled = False
+        for gid, entries in coverage.items():
+            gap_entry = gap_lookup.get(gid)
+            if gap_entry is None:
+                continue
+            valid_items: list[tuple[str, list[dict[str, Any]]]] = []
+            for entry in entries:
+                ev = entry.get("evidence") or {}
+                if not (ev.get("relevant_tools") or ev.get("relevant_files")):
+                    continue
+                aid = str(entry.get("agent_id") or "")
+                contrib = entry.get("contribution") or []
+                if isinstance(contrib, list) and contrib:
+                    valid_items.append((name_by_id.get(aid, aid), contrib))
+            if not valid_items:
+                continue
+            any_filled = True
+            gap_dict = gap_entry["gap"] if isinstance(gap_entry["gap"], dict) else {}
+            gap_summary = str(gap_dict.get("reason") or gap_dict.get("expects") or gid)
+            lines.append(f"- Gap from {gap_entry['agent_name']} ({gap_summary}):")
+            for ag_name, contrib in valid_items:
+                for item in contrib:
+                    if not isinstance(item, dict):
+                        continue
+                    data = str(item.get("data") or "").strip()
+                    citation = str(item.get("citation") or "").strip()
+                    if not data:
+                        continue
+                    cite_str = citation or "unspecified"
+                    lines.append(f"    - {ag_name}: {data}  [source: {cite_str}]")
+        if not any_filled:
+            lines.append("(no gap-coverage data added)")
+
+        uncovered_summary = [
+            e
+            for e in blackboard
+            if e["gap_id"] not in coverage
+            or not any(
+                (c.get("evidence") or {}).get("relevant_tools")
+                or (c.get("evidence") or {}).get("relevant_files")
+                for c in coverage[e["gap_id"]]
+            )
+        ]
+        if uncovered_summary:
+            lines.append("")
+            lines.append("### Uncovered gaps (no agent supplied data):")
+            for e in uncovered_summary:
+                gap_dict = e["gap"] if isinstance(e["gap"], dict) else {}
+                summary = str(gap_dict.get("reason") or gap_dict.get("expects") or e["gap_id"])
+                lines.append(f"- from {e['agent_name']}: {summary}")
+
+    return "\n".join(lines)
+
+
+_DECISION_RE = re.compile(
+    r"^\s*(?:>\s*)?(?:[-*+]\s*|\d+[.)]\s*)?(?:\*\*)?DECISION(?:\*\*)?\s*[:\-]\s*"
+    r"(?:\*\*)?(accept|revise)\b",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def _extract_decision_and_answer(response: str) -> tuple[str, str]:
+    """Parse the ``DECISION: accept|revise`` marker.
+
+    Returns ``(decision, answer)`` where ``answer`` is the text after the
+    DECISION line (only meaningful when ``decision == "revise"``). If no
+    marker is found, treat the whole response as a revision (defensive
+    default for poorly-formatted outputs).
+    """
+    match = _DECISION_RE.search(response)
+    if not match:
+        return "revise", response.strip()
+    decision = match.group(1).strip().lower()
+    if decision == "accept":
+        return "accept", ""
+    rest = response[match.end() :].strip()
+    return "revise", rest or response.strip()
 
 
 async def _run_sequential_collaboration(
@@ -1313,28 +1428,30 @@ async def _run_sequential_collaboration(
     collaborators: list[dict[str, Any]],
     agents_by_id: dict[str, dict[str, Any]],
     bids: dict[str, dict[str, Any]],
+    coverage: dict[str, list[dict[str, Any]]],
+    blackboard: list[dict[str, Any]],
     call: _AgentCall,
     db: AsyncConnection,
     trial_id: str,
     round_index: int,
     agent_context: dict[str, str] | None,
-    passes: int = 2,
+    max_passes: int = 5,
 ) -> str | None:
-    """Sequentially produce a coherent answer across the collaborator set.
+    """Convergence-based sequential refinement.
 
-    For collaborators [A, B] and ``passes=2`` the chain is A → B → A → B.
-    Every turn is shown each collaborator's ``contribution`` and cited
-    sources from the bidding phase so agents can reconcile differences by
-    looking at provenance rather than only their own file. The first agent
-    drafts the answer; subsequent agents review the prior answer and revise
-    it where needed. The last turn's response is returned.
+    The first agent drafts an initial answer. Each subsequent agent (in
+    round-robin order across the collaborator set) either ACCEPTs the current
+    answer unchanged or REVISEs it with a full rewrite. The loop terminates
+    once every other collaborator has accepted the latest revision — i.e. the
+    consecutive-accept streak reaches ``len(collaborators) - 1`` — or once
+    ``max_passes`` full round-trips have elapsed without convergence (safety
+    cap).
     """
-    chain = [c for _ in range(max(1, passes)) for c in collaborators]
-    if not chain:
+    if not collaborators:
         return None
 
     round_id = int(await create_round(db, trial_id, round_index, "bidding_collaboration"))
-    findings_block = _format_findings(collaborators, bids)
+    findings_block = _format_findings(collaborators, bids, coverage, blackboard)
     findings_prelude = (
         "\n\n## FINDINGS COMPILED BY EACH AGENT (from the bidding phase)\n"
         "Every citation below has been independently verified by the system: "
@@ -1351,46 +1468,67 @@ async def _run_sequential_collaboration(
         "questions ('current', 'now', 'today'). Do not default to only "
         "your own file.\n"
     )
+    user_facing_note = (
+        "\n\nWRITE FOR THE END USER who asked the question, not for other "
+        "agents. Do not include meta-commentary like 'reviewing the "
+        "previous answer', 'I am verifying', 'based on what other agents "
+        "said'. Do not write disclaimers like 'I can only confirm from my "
+        "own files…' or 'I do not have access to file X'. The findings "
+        "block is the collaboration's shared, system-verified knowledge — "
+        "cite sources by name when it helps the reader, but write polished "
+        "prose suitable for the user to read directly."
+    )
 
     latest_output: str | None = None
-    latest_author_name: str | None = None
+    accept_streak = 0
+    accept_target = max(0, len(collaborators) - 1)
+    max_turns = max(1, max_passes) * len(collaborators)
+    turn_idx = 0
+    converged = False
 
-    for turn_idx, collaborator in enumerate(chain):
+    while turn_idx < max_turns:
+        if latest_output is not None and accept_streak >= accept_target:
+            converged = True
+            break
+
+        collaborator = collaborators[turn_idx % len(collaborators)]
         agent = agents_by_id.get(collaborator["id"])
         if agent is None:
+            turn_idx += 1
             continue
         agent_id = str(agent["id"])
         turn_num = turn_idx + 1
-        total_turns = len(chain)
 
         if latest_output is None:
             turn_prompt = _with_context(prompt, agent_id, agent_context) + (
-                f"\n\n## COLLABORATIVE OUTPUT (turn {turn_num} of {total_turns})\n"
-                "Your job is to generate a coherent answer to the user's "
-                "question based on these findings. Use your own tools and "
-                "knowledge files as needed to fill in any gaps.\n\n"
-                "Answer AUTHORITATIVELY — do not write disclaimers like "
-                '"I can only confirm from my own files…" or "I do not '
-                'have access to file X". The findings block lists everything '
-                "the collaboration has verified; cite sources by name, not "
-                "by which agent personally read them." + findings_prelude
+                f"\n\n## COLLABORATIVE OUTPUT (turn {turn_num})\n"
+                "Draft the answer to the user's question using the findings "
+                "below. Write polished, user-facing prose — this is the "
+                "answer the user will read." + user_facing_note + findings_prelude
             )
         else:
             turn_prompt = _with_context(prompt, agent_id, agent_context) + (
-                f"\n\n## COLLABORATIVE OUTPUT (turn {turn_num} of {total_turns})\n"
-                "Your job is to review the previous agent's answer and "
-                "revise it if needed, producing a coherent answer to the "
-                "user's question based on these findings. Use your own "
-                "tools and knowledge files as needed to fill in any gaps.\n\n"
-                f"The previous agent ({latest_author_name or 'unknown'}) "
-                f"wrote:\n\n---\n{latest_output}\n---\n\n"
-                "Output the FULL revised answer — rewrite the whole thing, "
-                "not just a diff.\n\n"
-                "Answer AUTHORITATIVELY — do not write disclaimers like "
-                '"I can only confirm from my own files…" or "I do not '
-                'have access to file X". The findings block lists everything '
-                "the collaboration has verified; cite sources by name, not "
-                "by which agent personally read them." + findings_prelude
+                f"\n\n## COLLABORATIVE OUTPUT (turn {turn_num})\n"
+                f"The current answer:\n\n"
+                f"---\n{latest_output}\n---\n\n"
+                "Your job is to VERIFY that every factual claim in the "
+                "answer is correct, supported by the findings below, and "
+                "free of fabrications. This is a fact-check, not a rewrite.\n\n"
+                "- ACCEPT if every claim is correct and supported. Do NOT "
+                "revise for style, tone, formatting, or to add detail.\n"
+                "- REVISE only if you find a factual error, an unsupported "
+                "claim, or a missing key fact that materially changes the "
+                "answer. When you revise, output the FULL corrected answer "
+                "(not a diff, not a critique).\n\n"
+                "Respond starting with ONE of these exact lines:\n\n"
+                "  DECISION: accept\n\n"
+                "OR\n\n"
+                "  DECISION: revise\n\n"
+                "If REVISE, the lines AFTER DECISION must be the corrected "
+                "answer itself, written for the end user. Do NOT include "
+                "any commentary about what you changed or why."
+                + user_facing_note
+                + findings_prelude
             )
 
         try:
@@ -1399,16 +1537,51 @@ async def _run_sequential_collaboration(
             response = f"[error: {exc}]"
             tools_used = []
 
-        await _persist_self_messages(db, round_id, agent_id, _self_messages(response, tools_used))
+        self_messages: list[SelfMessage] = [
+            ("tool", _format_tool_message(tool)) for tool in _last_tool_calls(tools_used)
+        ]
 
-        # Record the handoff to the next agent in the chain (skip self-loops).
-        if turn_idx + 1 < len(chain):
-            next_id = str(chain[turn_idx + 1]["id"])
+        if latest_output is None:
+            # First turn — seed answer; no accept/revise decision yet.
+            self_messages.append(("agent_output", response))
+            await _persist_self_messages(db, round_id, agent_id, self_messages)
+            latest_output = response
+            accept_streak = 0
+            handoff_msg = response
+        else:
+            decision, new_answer = _extract_decision_and_answer(response)
+            if decision == "accept":
+                self_messages.append(("bidding_decision", "DECISION: accept"))
+                await _persist_self_messages(db, round_id, agent_id, self_messages)
+                accept_streak += 1
+                handoff_msg = latest_output
+            else:
+                self_messages.append(("bidding_decision", "DECISION: revise"))
+                self_messages.append(("agent_output", new_answer))
+                await _persist_self_messages(db, round_id, agent_id, self_messages)
+                latest_output = new_answer
+                accept_streak = 0
+                handoff_msg = new_answer
+
+        # Will the loop terminate after this turn?
+        will_stop = latest_output is not None and accept_streak >= accept_target
+        if not will_stop and (turn_idx + 1) < max_turns:
+            next_id = str(collaborators[(turn_idx + 1) % len(collaborators)]["id"])
             if next_id != agent_id:
-                await record_message(db, round_id, agent_id, next_id, "agent_to_agent", response)
+                await record_message(db, round_id, agent_id, next_id, "agent_to_agent", handoff_msg)
 
-        latest_output = response
-        latest_author_name = collaborator.get("name") or agent_id
+        turn_idx += 1
+
+    if latest_output is not None and accept_streak >= accept_target:
+        converged = True
+
+    summary = (
+        f"Converged after {turn_idx} turn(s); all collaborators accept the current answer."
+        if converged
+        else f"Did not converge after {turn_idx} turn(s) (cap: {max_turns}). "
+        "Returning the latest revision."
+    )
+    await _persist_system_self_message(db, round_id, "bidding_convergence", summary)
 
     return latest_output
 
@@ -1518,7 +1691,7 @@ async def _run_bidding(
 
     # ── Round 2: gap matching on a per-agent blackboard ──────────────────────
     blackboard = _build_gap_blackboard(bids, agents)
-    coverage: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+    coverage: dict[str, list[dict[str, Any]]] = {}
 
     if blackboard:
         per_agent_board: dict[str, list[dict[str, Any]]] = {
@@ -1601,7 +1774,10 @@ async def _run_bidding(
                 self_messages.append(("bidding_rejection", _fenced_json(rejections)))
 
             agent_coverage = {
-                entry["gap_id"]: entry.get("evidence") or {}
+                entry["gap_id"]: {
+                    "evidence": entry.get("evidence") or {},
+                    "contribution": entry.get("contribution") or [],
+                }
                 for entry in valid_entries
                 if entry.get("can_contribute")
             }
@@ -1611,8 +1787,14 @@ async def _run_bidding(
         for agent_id, self_messages, agent_coverage in match_results:
             if self_messages:
                 await _persist_self_messages(db, matching_round_id, agent_id, self_messages)
-            for gap_id, ev in agent_coverage.items():
-                coverage.setdefault(gap_id, []).append((agent_id, ev))
+            for gap_id, payload in agent_coverage.items():
+                coverage.setdefault(gap_id, []).append(
+                    {
+                        "agent_id": agent_id,
+                        "evidence": payload["evidence"],
+                        "contribution": payload["contribution"],
+                    }
+                )
 
     # ── Selection ────────────────────────────────────────────────────────────
     collaborators, uncovered = _select_collaborators(bids, coverage, blackboard, agents)
@@ -1632,12 +1814,14 @@ async def _run_bidding(
             collaborators,
             agents_by_id,
             bids,
+            coverage,
+            blackboard,
             call,
             db,
             trial_id,
             round_index=6,
             agent_context=agent_context,
-            passes=2,
+            max_passes=5,
         )
         if final_output is not None:
             final_round_id = await _create_self_message_round(
