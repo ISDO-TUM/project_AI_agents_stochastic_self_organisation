@@ -1019,9 +1019,16 @@ async def _run_voting(
     )
     next_round_index += 1
 
-    async def _broadcast(
+    async def _collect_initial_vote(
         agent: dict[str, Any],
     ) -> tuple[str, str | None, str | None, list[SelfMessage]]:
+        """Ask one agent for its independent first-round vote.
+
+        The initial voting pass gives each agent only the original prompt plus
+        any private context. The required ``REASON:`` / ``VOTE:`` instructions
+        are appended here so the result can be parsed and tallied before later
+        topology-aware discussion rounds.
+        """
         agent_id = str(agent["id"])
         full_prompt = _with_context(prompt, agent_id, agent_context) + _VOTE_INSTRUCTION
         try:
@@ -1033,7 +1040,7 @@ async def _run_voting(
         reason = _extract_reason(response)
         return response, vote, reason, _self_messages(response, tools)
 
-    bcast = await asyncio.gather(*[_broadcast(a) for a in agents])
+    bcast = await asyncio.gather(*[_collect_initial_vote(a) for a in agents])
     for agent, (_resp, _vote, _reason, self_messages) in zip(agents, bcast, strict=True):
         agent_id = str(agent["id"])
         await _persist_self_messages(db, broadcast_output_round_id, agent_id, self_messages)
@@ -1060,10 +1067,15 @@ async def _run_voting(
     last_plurality = plurality
 
     previous_topology_round_id: int | None = None
-    for _ in range(1, rounds + 1):
+
+    # main round loop
+    for _ in range(rounds):
         round_index = next_round_index
+        # cretae a new entry in "rounds" table
         round_id = await create_round(db, trial_id, round_index, "plurality_voting")
         next_round_index += 1
+
+        # retrieve current rounds topology from "connections" table
         has_topology = await _ensure_round_topology(
             db,
             trial_id=trial_id,
@@ -1072,6 +1084,8 @@ async def _run_voting(
             agents=agents,
             previous_topology_round_id=previous_topology_round_id,
         )
+
+        # gather previous rounds tally and reasons, for discussion prompt
         tally_msg = _format_tally(plurality, counts)
         reasons_msg = _format_vote_reasons(agents, votes, reasons)
         votes, reasons, responses = await _load_latest_votes(
@@ -1091,6 +1105,8 @@ async def _run_voting(
             str | None,
             str | None,
         ]:
+            """Agents generate a new output, weighing in the incoming outouts of connected agents"""
+
             agent_id = str(agent["id"])
             delivery_type = (
                 "voting_agent_to_agent" if deliveries[0][0] is not None else "voting_tally"
@@ -1107,6 +1123,9 @@ async def _run_voting(
 
         jobs: list[tuple[dict[str, Any], list[AgentMessage], str, list[MessageDelivery]]] = []
         source_messages_by_agent: dict[str, dict[str, AgentMessage]] = {}
+
+        # 1) build the per-agent-prompts from neighbouring agents outputs
+        # 2) call _dicuss() using the full_prompt
         for agent in agents:
             agent_id = str(agent["id"])
             own_prev = responses.get(agent_id, "")
@@ -1168,13 +1187,14 @@ async def _run_voting(
             source_messages_by_agent[agent_id] = {msg.from_agent_id: msg for msg in latest_messages}
             jobs.append((agent, latest_messages, full_prompt, deliveries))
 
+        # agent-wise discussion
         results = await asyncio.gather(
             *[
                 _discuss(agent, full_prompt, deliveries)
                 for agent, _, full_prompt, deliveries in jobs
             ]
         )
-
+        # store inter-agent messages in DB
         for agent_id, deliveries, delivery_type, self_messages, _resp, _vote, _reason in results:
             await _persist_agent_deliveries(
                 db,
@@ -1183,13 +1203,17 @@ async def _run_voting(
                 delivery_type,
                 source_messages_by_agent.get(agent_id),
             )
+            # store self-addressed messages for tracking individual agent output
             await _persist_self_messages(db, round_id, agent_id, self_messages)
 
+        # retrieve votes from agent outputs
         votes, reasons, _responses = await _load_latest_votes(
             db, trial_id=trial_id, agents=agents, before_round_index=next_round_index
         )
         plurality, counts = _tally(votes)
         tally_message = _format_tally(plurality, counts)
+
+        # generate a system message including the final round tally
         await record_message(
             db,
             round_id,
