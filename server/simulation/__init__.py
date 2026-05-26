@@ -1338,9 +1338,10 @@ def _format_findings(
     if not has_direct:
         lines.append("(none declared)")
 
-    if coverage and blackboard:
+    if blackboard:
         name_by_id = {str(c.get("id")): c.get("name") or str(c.get("id")) for c in collaborators}
         gap_lookup = {e["gap_id"]: e for e in blackboard}
+        coverage = coverage or {}
 
         lines.append("")
         lines.append("### Gap board (data added during matching):")
@@ -1404,23 +1405,43 @@ _DECISION_RE = re.compile(
     re.MULTILINE | re.IGNORECASE,
 )
 
+_REVISE_REASON_RE = re.compile(
+    r"^\s*(?:>\s*)?(?:[-*+]\s*|\d+[.)]\s*)?(?:\*\*)?REASON(?:\*\*)?\s*[:\-]\s*"
+    r"(?:\*\*)?(.+?)\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
 
-def _extract_decision_and_answer(response: str) -> tuple[str, str]:
+
+def _extract_decision_and_answer(response: str) -> tuple[str, str, str]:
     """Parse the ``DECISION: accept|revise`` marker.
 
-    Returns ``(decision, answer)`` where ``answer`` is the text after the
-    DECISION line (only meaningful when ``decision == "revise"``). If no
-    marker is found, treat the whole response as a revision (defensive
-    default for poorly-formatted outputs).
+    Returns ``(decision, reason, answer)``:
+    - ``decision`` — ``"accept"`` or ``"revise"``
+    - ``reason`` — for revisions, the text from a ``REASON:`` line after the
+      DECISION line (empty if absent or on accept)
+    - ``answer`` — the corrected answer text after the DECISION (and optional
+      REASON) line; only meaningful for ``"revise"``
+
+    If no DECISION marker is found, treat the whole response as a revision
+    (defensive default for poorly-formatted outputs).
     """
     match = _DECISION_RE.search(response)
     if not match:
-        return "revise", response.strip()
+        return "revise", "", response.strip()
     decision = match.group(1).strip().lower()
     if decision == "accept":
-        return "accept", ""
-    rest = response[match.end() :].strip()
-    return "revise", rest or response.strip()
+        return "accept", "", ""
+    rest = response[match.end() :]
+    reason_match = _REVISE_REASON_RE.search(rest)
+    if reason_match:
+        reason = reason_match.group(1).strip()
+        answer = rest[reason_match.end() :].strip()
+    else:
+        reason = ""
+        answer = rest.strip()
+    if not answer:
+        answer = response.strip()
+    return "revise", reason, answer
 
 
 async def _run_sequential_collaboration(
@@ -1518,17 +1539,22 @@ async def _run_sequential_collaboration(
                 "revise for style, tone, formatting, or to add detail.\n"
                 "- REVISE only if you find a factual error, an unsupported "
                 "claim, or a missing key fact that materially changes the "
-                "answer. When you revise, output the FULL corrected answer "
-                "(not a diff, not a critique).\n\n"
-                "Respond starting with ONE of these exact lines:\n\n"
+                "answer. When you revise, output the FULL corrected answer.\n\n"
+                "Respond in ONE of these two formats:\n\n"
+                "ACCEPT format:\n"
                 "  DECISION: accept\n\n"
-                "OR\n\n"
-                "  DECISION: revise\n\n"
-                "If REVISE, the lines AFTER DECISION must be the corrected "
-                "answer itself, written for the end user. Do NOT include "
-                "any commentary about what you changed or why."
-                + user_facing_note
-                + findings_prelude
+                "REVISE format:\n"
+                "  DECISION: revise\n"
+                "  REASON: <one short sentence stating the specific factual "
+                "problem you found, e.g. 'Margaret Hollis is no longer CEO "
+                "per the 2024 source.'>\n"
+                "\n"
+                "  <the FULL corrected answer, written for the end user>\n\n"
+                "The REASON line is for the audit log. The corrected answer "
+                "that follows it must be polished user-facing prose — do "
+                "NOT repeat the reason in the answer, do NOT write phrases "
+                "like 'I revised because…', and do NOT include any "
+                "commentary about what you changed." + user_facing_note + findings_prelude
             )
 
         try:
@@ -1549,14 +1575,19 @@ async def _run_sequential_collaboration(
             accept_streak = 0
             handoff_msg = response
         else:
-            decision, new_answer = _extract_decision_and_answer(response)
+            decision, reason, new_answer = _extract_decision_and_answer(response)
             if decision == "accept":
                 self_messages.append(("bidding_decision", "DECISION: accept"))
                 await _persist_self_messages(db, round_id, agent_id, self_messages)
                 accept_streak += 1
                 handoff_msg = latest_output
             else:
-                self_messages.append(("bidding_decision", "DECISION: revise"))
+                decision_msg = (
+                    f"DECISION: revise\n\n**Reason:** {reason}"
+                    if reason
+                    else "DECISION: revise\n\n_(no reason provided)_"
+                )
+                self_messages.append(("bidding_decision", decision_msg))
                 self_messages.append(("agent_output", new_answer))
                 await _persist_self_messages(db, round_id, agent_id, self_messages)
                 latest_output = new_answer
