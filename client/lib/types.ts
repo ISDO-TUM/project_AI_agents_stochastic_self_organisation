@@ -9,7 +9,8 @@ export type SimStepType =
 export type ConsensusMode =
   | "broadcast_no_consensus"
   | "weighted_opinion_pooling"
-  | "plurality_voting";
+  | "plurality_voting"
+  | "bidding";
 
 export interface Position {
   x: number;

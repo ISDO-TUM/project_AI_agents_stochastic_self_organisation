@@ -63,6 +63,7 @@ ConsensusMode = Literal[
     "broadcast_no_consensus",
     "weighted_opinion_pooling",
     "plurality_voting",
+    "bidding",
 ]
 
 # Callable type for the bound agent-call closure passed into runner functions.
@@ -426,6 +427,9 @@ async def run_topology(
         return
     if mode == "plurality_voting":
         await _run_voting(prompt, agents, incoming, call, db, rounds, agent_context, trial_id)
+        return
+    if mode == "bidding":
+        await _run_bidding(prompt, agents, incoming, call, db, rounds, agent_context, trial_id)
         return
     await _run_broadcast_no_consensus(
         prompt, agents, incoming, call, db, rounds, agent_context, trial_id
@@ -823,3 +827,20 @@ async def _run_voting(
 
         if stable_streak >= _VOTE_STABILITY_K:
             break
+
+
+# ── mode 4: bidding ───────────────────────────────────────────────────────────
+
+
+async def _run_bidding(
+    prompt: str,
+    agents: list[dict[str, Any]],
+    incoming: dict[str, list[str]],
+    call: _AgentCall,
+    db: AsyncConnection,
+    rounds: int,
+    agent_context: dict[str, str] | None,
+    trial_id: str,
+) -> None:
+    """Bidding-based consensus. Not yet implemented."""
+    return

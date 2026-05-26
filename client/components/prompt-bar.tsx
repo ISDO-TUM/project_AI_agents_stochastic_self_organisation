@@ -26,6 +26,7 @@ const MODE_LABELS: Partial<Record<ConsensusMode, string>> = {
   broadcast_no_consensus: "Broadcast",
   weighted_opinion_pooling: "Weighted pooling",
   plurality_voting: "Plurality voting",
+  bidding: "Bidding",
 };
 
 export function PromptBar({ simMode, onRun, onOpenKeys }: PromptBarProps) {
