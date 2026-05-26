@@ -873,6 +873,14 @@ _BIDDING_INSTRUCTION = (
     '      "reason": "<what is missing for full completion>",\n'
     '      "expects": "<what input or other agent would close this gap>"\n'
     "    }\n"
+    "  ],\n"
+    '  "contribution": [\n'
+    "    {\n"
+    '      "data": "<one concrete statement your files/tools let you '
+    'contribute toward the task>",\n'
+    '      "citation": "<the source backing this statement: file name plus '
+    "the file's date if present, e.g. 'nexora_overview_2024 (2024-09-01)'>\"\n"
+    "    }\n"
     "  ]\n"
     "}\n\n"
     "Rules:\n"
@@ -880,8 +888,12 @@ _BIDDING_INSTRUCTION = (
     "be removed.\n"
     "- Cite only files you actually read this turn; the system verifies "
     "every file citation against your tool-call log.\n"
+    "- Each entry in `contribution` is ONE statement plus ONE citation. "
+    "Split multi-fact contributions across multiple entries. Other agents "
+    "will see these verbatim during collaboration — make every statement "
+    "load-bearing.\n"
     '- Use "none" for `estimated_completeness` if nothing in your evidence '
-    "applies to the task.\n"
+    "applies to the task; in that case set `contribution` to an empty array.\n"
 )
 
 _BIDDING_MATCHING_INSTRUCTION = (
@@ -1028,6 +1040,32 @@ def _has_evidence(bid: dict[str, Any]) -> bool:
     return bool(ev.get("relevant_tools") or ev.get("relevant_files"))
 
 
+def _normalise_contribution(raw: Any) -> list[dict[str, str]]:
+    """Coerce the LLM's `contribution` field to a list of ``{data, citation}``.
+
+    Accepts:
+    - a list of dicts → kept, with empty data entries dropped
+    - a single string (legacy bids) → wrapped as one entry with no citation
+    - anything else → empty list
+    """
+    if isinstance(raw, list):
+        out: list[dict[str, str]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            data = item.get("data")
+            data_str = data.strip() if isinstance(data, str) else ""
+            if not data_str:
+                continue
+            citation = item.get("citation")
+            citation_str = citation.strip() if isinstance(citation, str) else ""
+            out.append({"data": data_str, "citation": citation_str})
+        return out
+    if isinstance(raw, str) and raw.strip():
+        return [{"data": raw.strip(), "citation": ""}]
+    return []
+
+
 def _validate_bid(
     raw_bid: dict[str, Any],
     available_tools: list[str],
@@ -1048,13 +1086,16 @@ def _validate_bid(
         files_actually_read,
         tools_actually_used,
     )
+    contribution = _normalise_contribution(raw_bid.get("contribution"))
     validated = {
         "estimated_completeness": raw_bid.get("estimated_completeness"),
         "evidence": valid_evidence,
         "gaps": raw_bid.get("gaps") or [],
+        "contribution": contribution,
     }
     if not _has_evidence(validated):
         validated["gaps"] = []
+        validated["contribution"] = []
         validated["yielded"] = True
     return validated, rejections
 
@@ -1228,6 +1269,7 @@ def _select_collaborators(
         {
             "id": str(a["id"]),
             "name": str(a.get("name") or a["id"]),
+            "contribution": (bids.get(str(a["id"])) or {}).get("contribution") or [],
             "covers": covers_by_agent.get(str(a["id"]), []),
         }
         for a in agents
@@ -1236,10 +1278,41 @@ def _select_collaborators(
     return ordered, uncovered
 
 
+def _format_findings(
+    collaborators: list[dict[str, Any]],
+    bids: dict[str, dict[str, Any]],
+) -> str:
+    """Render every collaborator's contribution entries with their citations."""
+    lines: list[str] = []
+    for c in collaborators:
+        cid = str(c.get("id", ""))
+        bid = bids.get(cid) or {}
+        if bid.get("yielded"):
+            continue
+        contribution = bid.get("contribution") or []
+        if not isinstance(contribution, list) or not contribution:
+            continue
+        name = c.get("name") or cid
+        lines.append(f"- {name}:")
+        for item in contribution:
+            if not isinstance(item, dict):
+                continue
+            data = str(item.get("data") or "").strip()
+            citation = str(item.get("citation") or "").strip()
+            if not data:
+                continue
+            if citation:
+                lines.append(f"    - {data}  [source: {citation}]")
+            else:
+                lines.append(f"    - {data}  [source: unspecified]")
+    return "\n".join(lines) if lines else "(no findings declared)"
+
+
 async def _run_sequential_collaboration(
     prompt: str,
     collaborators: list[dict[str, Any]],
     agents_by_id: dict[str, dict[str, Any]],
+    bids: dict[str, dict[str, Any]],
     call: _AgentCall,
     db: AsyncConnection,
     trial_id: str,
@@ -1247,19 +1320,37 @@ async def _run_sequential_collaboration(
     agent_context: dict[str, str] | None,
     passes: int = 2,
 ) -> str | None:
-    """Sequentially refine an output across the collaborator set, *passes* times.
+    """Sequentially produce a coherent answer across the collaborator set.
 
-    For collaborators [A, B] and passes=2 the chain is A → B → A → B. Each
-    agent except the first sees the immediately-preceding output and is
-    asked to either complement (add missing pieces) or contradict (correct
-    errors), then rewrite the full answer. The very last turn's response is
-    returned and treated as the final answer.
+    For collaborators [A, B] and ``passes=2`` the chain is A → B → A → B.
+    Every turn is shown each collaborator's ``contribution`` and cited
+    sources from the bidding phase so agents can reconcile differences by
+    looking at provenance rather than only their own file. The first agent
+    drafts the answer; subsequent agents review the prior answer and revise
+    it where needed. The last turn's response is returned.
     """
     chain = [c for _ in range(max(1, passes)) for c in collaborators]
     if not chain:
         return None
 
     round_id = int(await create_round(db, trial_id, round_index, "bidding_collaboration"))
+    findings_block = _format_findings(collaborators, bids)
+    findings_prelude = (
+        "\n\n## FINDINGS COMPILED BY EACH AGENT (from the bidding phase)\n"
+        "Every citation below has been independently verified by the system: "
+        "the cited file exists, was attached to the cited agent, and was "
+        "actually read by that agent during the bidding phase. Treat each "
+        "cited finding as an ESTABLISHED FACT — you do NOT need to "
+        'disclaim "I don\'t have access to that file" or hedge with '
+        '"reportedly" / "according to other agents". The findings are part '
+        "of the shared knowledge of this collaboration; cite them the same "
+        "way you would cite a file you read yourself.\n\n"
+        f"{findings_block}\n\n"
+        "When findings disagree, reconcile by comparing the sources — "
+        "prefer the one backed by the most recent source for present-tense "
+        "questions ('current', 'now', 'today'). Do not default to only "
+        "your own file.\n"
+    )
 
     latest_output: str | None = None
     latest_author_name: str | None = None
@@ -1275,24 +1366,31 @@ async def _run_sequential_collaboration(
         if latest_output is None:
             turn_prompt = _with_context(prompt, agent_id, agent_context) + (
                 f"\n\n## COLLABORATIVE OUTPUT (turn {turn_num} of {total_turns})\n"
-                "You are the FIRST agent in a sequential refinement chain. "
-                "Produce your best answer to the task above using your tools "
-                "and knowledge files. Subsequent agents will critique or "
-                "build on it."
+                "Your job is to generate a coherent answer to the user's "
+                "question based on these findings. Use your own tools and "
+                "knowledge files as needed to fill in any gaps.\n\n"
+                "Answer AUTHORITATIVELY — do not write disclaimers like "
+                '"I can only confirm from my own files…" or "I do not '
+                'have access to file X". The findings block lists everything '
+                "the collaboration has verified; cite sources by name, not "
+                "by which agent personally read them." + findings_prelude
             )
         else:
             turn_prompt = _with_context(prompt, agent_id, agent_context) + (
                 f"\n\n## COLLABORATIVE OUTPUT (turn {turn_num} of {total_turns})\n"
-                f"The previous agent ({latest_author_name or 'unknown'}) wrote:\n\n"
-                f"---\n{latest_output}\n---\n\n"
-                "Your job is to either:\n"
-                "- COMPLEMENT it: add missing information, fix gaps, sharpen "
-                "weak parts.\n"
-                "- CONTRADICT it: identify errors, propose corrections, give "
-                "the correct answer.\n\n"
-                "Output the FULL updated answer — rewrite the whole thing "
-                "incorporating your contribution, not just a diff. Use your "
-                "tools and knowledge files as needed."
+                "Your job is to review the previous agent's answer and "
+                "revise it if needed, producing a coherent answer to the "
+                "user's question based on these findings. Use your own "
+                "tools and knowledge files as needed to fill in any gaps.\n\n"
+                f"The previous agent ({latest_author_name or 'unknown'}) "
+                f"wrote:\n\n---\n{latest_output}\n---\n\n"
+                "Output the FULL revised answer — rewrite the whole thing, "
+                "not just a diff.\n\n"
+                "Answer AUTHORITATIVELY — do not write disclaimers like "
+                '"I can only confirm from my own files…" or "I do not '
+                'have access to file X". The findings block lists everything '
+                "the collaboration has verified; cite sources by name, not "
+                "by which agent personally read them." + findings_prelude
             )
 
         try:
@@ -1533,6 +1631,7 @@ async def _run_bidding(
             prompt,
             collaborators,
             agents_by_id,
+            bids,
             call,
             db,
             trial_id,
