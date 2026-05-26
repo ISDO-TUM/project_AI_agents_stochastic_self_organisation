@@ -1236,6 +1236,85 @@ def _select_collaborators(
     return ordered, uncovered
 
 
+async def _run_sequential_collaboration(
+    prompt: str,
+    collaborators: list[dict[str, Any]],
+    agents_by_id: dict[str, dict[str, Any]],
+    call: _AgentCall,
+    db: AsyncConnection,
+    trial_id: str,
+    round_index: int,
+    agent_context: dict[str, str] | None,
+    passes: int = 2,
+) -> str | None:
+    """Sequentially refine an output across the collaborator set, *passes* times.
+
+    For collaborators [A, B] and passes=2 the chain is A → B → A → B. Each
+    agent except the first sees the immediately-preceding output and is
+    asked to either complement (add missing pieces) or contradict (correct
+    errors), then rewrite the full answer. The very last turn's response is
+    returned and treated as the final answer.
+    """
+    chain = [c for _ in range(max(1, passes)) for c in collaborators]
+    if not chain:
+        return None
+
+    round_id = int(await create_round(db, trial_id, round_index, "bidding_collaboration"))
+
+    latest_output: str | None = None
+    latest_author_name: str | None = None
+
+    for turn_idx, collaborator in enumerate(chain):
+        agent = agents_by_id.get(collaborator["id"])
+        if agent is None:
+            continue
+        agent_id = str(agent["id"])
+        turn_num = turn_idx + 1
+        total_turns = len(chain)
+
+        if latest_output is None:
+            turn_prompt = _with_context(prompt, agent_id, agent_context) + (
+                f"\n\n## COLLABORATIVE OUTPUT (turn {turn_num} of {total_turns})\n"
+                "You are the FIRST agent in a sequential refinement chain. "
+                "Produce your best answer to the task above using your tools "
+                "and knowledge files. Subsequent agents will critique or "
+                "build on it."
+            )
+        else:
+            turn_prompt = _with_context(prompt, agent_id, agent_context) + (
+                f"\n\n## COLLABORATIVE OUTPUT (turn {turn_num} of {total_turns})\n"
+                f"The previous agent ({latest_author_name or 'unknown'}) wrote:\n\n"
+                f"---\n{latest_output}\n---\n\n"
+                "Your job is to either:\n"
+                "- COMPLEMENT it: add missing information, fix gaps, sharpen "
+                "weak parts.\n"
+                "- CONTRADICT it: identify errors, propose corrections, give "
+                "the correct answer.\n\n"
+                "Output the FULL updated answer — rewrite the whole thing "
+                "incorporating your contribution, not just a diff. Use your "
+                "tools and knowledge files as needed."
+            )
+
+        try:
+            response, tools_used = await call(agent, turn_prompt)
+        except Exception as exc:
+            response = f"[error: {exc}]"
+            tools_used = []
+
+        await _persist_self_messages(db, round_id, agent_id, _self_messages(response, tools_used))
+
+        # Record the handoff to the next agent in the chain (skip self-loops).
+        if turn_idx + 1 < len(chain):
+            next_id = str(chain[turn_idx + 1]["id"])
+            if next_id != agent_id:
+                await record_message(db, round_id, agent_id, next_id, "agent_to_agent", response)
+
+        latest_output = response
+        latest_author_name = collaborator.get("name") or agent_id
+
+    return latest_output
+
+
 def _fenced_json(obj: Any) -> str:
     """Render *obj* as a fenced ```json``` code block for the markdown UI."""
     return f"```json\n{json.dumps(obj, indent=2, default=str)}\n```"
@@ -1294,10 +1373,16 @@ async def _run_bidding(
         files_actually_read = _files_read_from_tool_calls(tools_used)
         tools_actually_used = {tc.name for tc in tools_used}
         available_files = set(files_by_agent.get(agent["id"], {}).keys())
-        self_messages = _self_messages(response, tools_used)
+        # Only keep tool-call self-messages — the agent's raw JSON is shown
+        # below as a formatted `bidding_bid` (no need to duplicate it).
+        self_messages: list[SelfMessage] = [
+            ("tool", _format_tool_message(tool)) for tool in _last_tool_calls(tools_used)
+        ]
 
         raw_bid = _extract_bid_json(response)
         if raw_bid is None:
+            # Parsing failed — surface the raw response so the user can debug.
+            self_messages.append(("agent_output", response))
             self_messages.append(
                 (
                     "bidding_rejection",
@@ -1388,10 +1473,15 @@ async def _run_bidding(
             files_actually_read = _files_read_from_tool_calls(tools_used)
             tools_actually_used = {tc.name for tc in tools_used}
             available_files = set(files_by_agent.get(agent["id"], {}).keys())
-            self_messages = _self_messages(response, tools_used)
+            # Tool-call messages only — `bidding_match` carries the formatted
+            # response below, no need to duplicate the raw text.
+            self_messages: list[SelfMessage] = [
+                ("tool", _format_tool_message(tool)) for tool in _last_tool_calls(tools_used)
+            ]
 
             raw = _extract_bid_json(response)
             if raw is None:
+                self_messages.append(("agent_output", response))
                 self_messages.append(
                     (
                         "bidding_rejection",
@@ -1435,3 +1525,25 @@ async def _run_bidding(
         "bidding_collaborators",
         _fenced_json({"collaborators": collaborators, "uncovered_gaps": uncovered}),
     )
+
+    # ── Sequential refinement: collaborators take turns (two passes) ─────────
+    if collaborators:
+        agents_by_id = {str(a["id"]): a for a in agents}
+        final_output = await _run_sequential_collaboration(
+            prompt,
+            collaborators,
+            agents_by_id,
+            call,
+            db,
+            trial_id,
+            round_index=6,
+            agent_context=agent_context,
+            passes=2,
+        )
+        if final_output is not None:
+            final_round_id = await _create_self_message_round(
+                db, trial_id, 7, "bidding_final_output"
+            )
+            await _persist_system_self_message(
+                db, final_round_id, "bidding_final_output", final_output
+            )

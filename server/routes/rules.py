@@ -46,7 +46,7 @@ _RULES: list[Rule] = [
             "with mine, but if I combine it with my information Z I can conclude "
             "W, which resolves the conflict and is supported by both our sources.'"
         ),
-        default=True,
+        default=False,
     ),
     Rule(
         id="propose_partial",
@@ -56,7 +56,16 @@ _RULES: list[Rule] = [
             "question, you can propose a partial answer so other agents can "
             "build on it."
         ),
-        default=True,
+        default=False,
+    ),
+    Rule(
+        id="concise_answers",
+        label="Provide Concise Answers",
+        instruction=(
+            "When responding to questions, aim to be as concise as possible while still "
+            "providing all necessary information."
+        ),
+        default=False,
     ),
 ]
 
