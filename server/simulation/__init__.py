@@ -35,6 +35,7 @@ other agents remain aware of the failure.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import uuid
 from collections.abc import Awaitable, Callable
@@ -429,7 +430,17 @@ async def run_topology(
         await _run_voting(prompt, agents, incoming, call, db, rounds, agent_context, trial_id)
         return
     if mode == "bidding":
-        await _run_bidding(prompt, agents, incoming, call, db, rounds, agent_context, trial_id)
+        await _run_bidding(
+            prompt,
+            agents,
+            incoming,
+            call,
+            db,
+            rounds,
+            agent_context,
+            trial_id,
+            files_by_agent,
+        )
         return
     await _run_broadcast_no_consensus(
         prompt, agents, incoming, call, db, rounds, agent_context, trial_id
@@ -831,6 +842,416 @@ async def _run_voting(
 
 # ── mode 4: bidding ───────────────────────────────────────────────────────────
 
+_BIDDING_INSTRUCTION = (
+    "\n\n## BIDDING TASK\n"
+    "You are participating in a bidding consensus. Before any work begins, "
+    "you must produce *verifiable* evidence that you can contribute to the "
+    "task above.\n\n"
+    "REQUIRED steps:\n"
+    "1. If you have a `files` tool, call it with action='list' to see your "
+    "attached knowledge files.\n"
+    "2. For EVERY file you intend to cite under `relevant_files`, you MUST "
+    "first call `files` with action='read' to inspect its contents. "
+    "Citations to files you have not actually read this turn will be "
+    "REJECTED and stripped by the system.\n"
+    "3. Respond with ONLY a single JSON object (no prose, no markdown "
+    "fences) matching this schema exactly:\n\n"
+    "{\n"
+    '  "estimated_completeness": "full" | "partial" | "none",\n'
+    '  "evidence": {\n'
+    '    "relevant_tools": [<names of YOUR available tools that help>],\n'
+    '    "relevant_files": [\n'
+    "      {\n"
+    '        "file_name": "<exact name of a file you actually read>",\n'
+    '        "file_type": "<e.g. csv, md, txt>",\n'
+    '        "relevance": "<one sentence: what in the file supports the task>"\n'
+    "      }\n"
+    "    ]\n"
+    "  },\n"
+    '  "gaps": [\n'
+    "    {\n"
+    '      "reason": "<what is missing for full completion>",\n'
+    '      "expects": "<what input or other agent would close this gap>"\n'
+    "    }\n"
+    "  ]\n"
+    "}\n\n"
+    "Rules:\n"
+    "- Cite only tools you have been granted; fabricated tool names will "
+    "be removed.\n"
+    "- Cite only files you actually read this turn; the system verifies "
+    "every file citation against your tool-call log.\n"
+    '- Use "none" for `estimated_completeness` if nothing in your evidence '
+    "applies to the task.\n"
+)
+
+_BIDDING_MATCHING_INSTRUCTION = (
+    "\n\n## GAP MATCHING\n"
+    "The blackboard below lists gaps posted by OTHER agents during the "
+    "bidding phase. For each gap, decide whether YOU can *contribute* to "
+    "filling it using your own tools and knowledge files.\n\n"
+    "IMPORTANT: contributing does NOT mean fully resolving the gap. "
+    "Partial, supporting, or complementary information counts. If anything "
+    "in your files or tools is even tangentially useful to the gap — set "
+    "can_contribute=true. Only set can_contribute=false if you have nothing "
+    "at all that touches the gap.\n\n"
+    "Verification rules are the same as before:\n"
+    "- Cite only tools you have been granted.\n"
+    "- For each file you cite, you MUST first call `files` with action='read' "
+    "to inspect its contents this turn — un-read citations are rejected.\n\n"
+    "Respond with ONLY a single JSON object (no prose, no markdown fences):\n\n"
+    "{\n"
+    '  "gap_coverage": [\n'
+    "    {\n"
+    '      "gap_id": "<exact gap_id from the blackboard>",\n'
+    '      "can_contribute": true,\n'
+    '      "evidence": {\n'
+    '        "relevant_tools": [...],\n'
+    '        "relevant_files": [\n'
+    '          {"file_name": "...", "file_type": "...",\n'
+    '           "relevance": "what part of the gap this helps with (even partially)"}\n'
+    "        ]\n"
+    "      },\n"
+    '      "rationale": "<one sentence — partial contributions are fine>"\n'
+    "    },\n"
+    "    {\n"
+    '      "gap_id": "<another gap_id>",\n'
+    '      "can_contribute": false\n'
+    "    }\n"
+    "  ]\n"
+    "}\n\n"
+    "Include exactly one entry per gap on the blackboard. Set "
+    "can_contribute=false (and omit evidence) only when you have nothing "
+    "relevant — partial relevance is enough to set it true.\n\n"
+    "Blackboard:\n"
+)
+
+
+def _extract_bid_json(text: str) -> dict[str, Any] | None:
+    """Parse the agent's bidding response into a dict. Tolerates ``` fences."""
+    s = text.strip()
+    fence_match = re.match(r"^```(?:json|JSON)?\s*\n?(.*?)\n?```\s*$", s, re.DOTALL)
+    if fence_match:
+        s = fence_match.group(1).strip()
+    try:
+        parsed = json.loads(s)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        pass
+    # Fallback: find the first balanced {...} object in the text
+    depth = 0
+    start = -1
+    for i, c in enumerate(s):
+        if c == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif c == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                try:
+                    obj = json.loads(s[start : i + 1])
+                    return obj if isinstance(obj, dict) else None
+                except json.JSONDecodeError:
+                    start = -1
+    return None
+
+
+def _validate_evidence_block(
+    raw_evidence: Any,
+    available_tools: set[str],
+    available_files: set[str],
+    files_actually_read: set[str],
+    tools_actually_used: set[str],
+) -> tuple[dict[str, Any], dict[str, list[Any]]]:
+    """Strip fabricated tool/file citations from a single evidence block.
+
+    Two unfakeable checks:
+    - A cited tool is accepted only when it was granted to the agent AND was
+      actually invoked during this turn (proven by the tool-call log). The
+      LLM cannot fabricate a tool-call record.
+    - A cited file is accepted only when it is attached to the agent AND the
+      agent invoked ``files.read`` on it this turn — so the bid is grounded
+      in the file's real contents, not in a name the LLM saw in the prompt.
+    """
+    rejections: dict[str, list[Any]] = {"tools": [], "files": []}
+    evidence = raw_evidence if isinstance(raw_evidence, dict) else {}
+
+    raw_tools = evidence.get("relevant_tools") or []
+    valid_tools: list[str] = []
+    if isinstance(raw_tools, list):
+        for t in raw_tools:
+            if not isinstance(t, str):
+                rejections["tools"].append({"tool": t, "reason": "not a string"})
+                continue
+            # Strip provider-side display prefixes (e.g. Gemini's "functions.")
+            # so the model can echo back whichever form it saw in its schema.
+            normalised = t.split(".", 1)[1] if t.startswith("functions.") else t
+            if normalised not in available_tools:
+                rejections["tools"].append({"tool": t, "reason": "tool not granted to agent"})
+                continue
+            if normalised not in tools_actually_used:
+                rejections["tools"].append({"tool": t, "reason": "tool was not invoked this turn"})
+                continue
+            valid_tools.append(normalised)
+
+    raw_files = evidence.get("relevant_files") or []
+    valid_files: list[dict[str, Any]] = []
+    if isinstance(raw_files, list):
+        for f in raw_files:
+            if not isinstance(f, dict):
+                rejections["files"].append({"value": f, "reason": "not an object"})
+                continue
+            name = f.get("file_name")
+            if not isinstance(name, str) or not name:
+                rejections["files"].append({"file_name": name, "reason": "missing file_name"})
+                continue
+            if name not in available_files:
+                rejections["files"].append(
+                    {"file_name": name, "reason": "file not attached to agent"}
+                )
+                continue
+            if name not in files_actually_read:
+                rejections["files"].append(
+                    {"file_name": name, "reason": "file was not read via files.read this turn"}
+                )
+                continue
+            valid_files.append(f)
+
+    return {"relevant_tools": valid_tools, "relevant_files": valid_files}, rejections
+
+
+def _has_evidence(bid: dict[str, Any]) -> bool:
+    """True iff the (validated) bid contains any tool or file evidence."""
+    ev = bid.get("evidence")
+    if not isinstance(ev, dict):
+        return False
+    return bool(ev.get("relevant_tools") or ev.get("relevant_files"))
+
+
+def _validate_bid(
+    raw_bid: dict[str, Any],
+    available_tools: list[str],
+    available_files: set[str],
+    files_actually_read: set[str],
+    tools_actually_used: set[str],
+) -> tuple[dict[str, Any], dict[str, list[Any]]]:
+    """Strip fabricated citations and return (validated_bid, rejections).
+
+    Without any validated evidence the agent cannot contribute, so its gaps
+    are dropped — it cannot post unmet needs to the blackboard if it has
+    nothing to offer in return.
+    """
+    valid_evidence, rejections = _validate_evidence_block(
+        raw_bid.get("evidence"),
+        set(available_tools or []),
+        available_files,
+        files_actually_read,
+        tools_actually_used,
+    )
+    validated = {
+        "estimated_completeness": raw_bid.get("estimated_completeness"),
+        "evidence": valid_evidence,
+        "gaps": raw_bid.get("gaps") or [],
+    }
+    if not _has_evidence(validated):
+        validated["gaps"] = []
+        validated["yielded"] = True
+    return validated, rejections
+
+
+def _validate_coverage(
+    raw_response: dict[str, Any],
+    available_tools: list[str],
+    available_files: set[str],
+    files_actually_read: set[str],
+    tools_actually_used: set[str],
+    known_gap_ids: set[str],
+) -> tuple[list[dict[str, Any]], dict[str, list[Any]]]:
+    """Validate an agent's round-2 ``gap_coverage`` claims.
+
+    Same unfakeable evidence checks as :func:`_validate_bid`, plus a gap-id
+    existence check against the blackboard the agent was actually shown.
+    """
+    tools_set = set(available_tools or [])
+    rejections: dict[str, list[Any]] = {
+        "unknown_gap_ids": [],
+        "tools": [],
+        "files": [],
+    }
+    valid_entries: list[dict[str, Any]] = []
+
+    raw_entries = raw_response.get("gap_coverage")
+    if not isinstance(raw_entries, list):
+        return [], rejections
+
+    seen_gap_ids: set[str] = set()
+    for entry in raw_entries:
+        if not isinstance(entry, dict):
+            continue
+        gap_id = entry.get("gap_id")
+        if not isinstance(gap_id, str) or gap_id not in known_gap_ids:
+            rejections["unknown_gap_ids"].append(gap_id)
+            continue
+        if gap_id in seen_gap_ids:
+            continue
+        seen_gap_ids.add(gap_id)
+
+        # Accept `can_contribute` (current) or `can_cover` (legacy) as the
+        # affirmative flag.
+        can_contribute = bool(entry.get("can_contribute", entry.get("can_cover")))
+        if not can_contribute:
+            valid_entries.append({"gap_id": gap_id, "can_contribute": False})
+            continue
+
+        valid_ev, ev_rej = _validate_evidence_block(
+            entry.get("evidence"),
+            tools_set,
+            available_files,
+            files_actually_read,
+            tools_actually_used,
+        )
+        rejections["tools"].extend(ev_rej["tools"])
+        rejections["files"].extend(ev_rej["files"])
+        valid_entries.append(
+            {
+                "gap_id": gap_id,
+                "can_contribute": True,
+                "evidence": valid_ev,
+                "rationale": entry.get("rationale"),
+            }
+        )
+    return valid_entries, rejections
+
+
+def _build_gap_blackboard(
+    bids: dict[str, dict[str, Any]],
+    agents: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Flatten validated bids into a blackboard list with stable gap ids."""
+    name_by_id = {str(a["id"]): a.get("name") or str(a["id"]) for a in agents}
+    blackboard: list[dict[str, Any]] = []
+    for agent_id, bid in bids.items():
+        gaps = bid.get("gaps") or []
+        if not isinstance(gaps, list):
+            continue
+        for idx, gap in enumerate(gaps):
+            blackboard.append(
+                {
+                    "gap_id": f"{agent_id}/g{idx}",
+                    "agent_id": agent_id,
+                    "agent_name": name_by_id.get(agent_id, agent_id),
+                    "gap": gap,
+                }
+            )
+    return blackboard
+
+
+def _format_blackboard(entries: list[dict[str, Any]]) -> str:
+    """Render blackboard entries as text for an agent prompt."""
+    if not entries:
+        return "(no gaps to match)"
+    lines: list[str] = []
+    for e in entries:
+        gap = e.get("gap") or {}
+        if isinstance(gap, dict):
+            lines.append(
+                f"- gap_id: {e['gap_id']}\n"
+                f"  posted_by: {e['agent_name']}\n"
+                f"  reason: {gap.get('reason', '')}\n"
+                f"  expects: {gap.get('expects', '')}"
+            )
+        else:
+            lines.append(f"- gap_id: {e['gap_id']}\n  posted_by: {e['agent_name']}\n  gap: {gap}")
+    return "\n".join(lines)
+
+
+def _select_collaborators(
+    bids: dict[str, dict[str, Any]],
+    coverage: dict[str, list[tuple[str, dict[str, Any]]]],
+    blackboard: list[dict[str, Any]],
+    agents: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Pick the collaboration set and list any uncovered gaps.
+
+    An agent is selected iff it provided non-empty validated evidence in
+    round 1 (initial bid) OR round 2 (matching). Order is the agents-table
+    order for determinism. Each collaborator is returned as
+    ``{id, name, covers: [...]}``.
+    """
+    collaborator_ids: set[str] = set()
+
+    for agent_id, bid in bids.items():
+        ev = bid.get("evidence") if isinstance(bid.get("evidence"), dict) else {}
+        if ev and (ev.get("relevant_tools") or ev.get("relevant_files")):
+            collaborator_ids.add(agent_id)
+
+    for covers in coverage.values():
+        for agent_id, ev in covers:
+            if ev and (ev.get("relevant_tools") or ev.get("relevant_files")):
+                collaborator_ids.add(agent_id)
+
+    gap_lookup = {e["gap_id"]: e for e in blackboard}
+
+    uncovered: list[dict[str, Any]] = []
+    covers_by_agent: dict[str, list[dict[str, Any]]] = {}
+    for gid, covers in coverage.items():
+        gap_entry = gap_lookup.get(gid)
+        any_valid_cover = False
+        for agent_id, ev in covers:
+            if not (ev.get("relevant_tools") or ev.get("relevant_files")):
+                continue
+            any_valid_cover = True
+            covers_by_agent.setdefault(agent_id, []).append(
+                {
+                    "gap_id": gid,
+                    "posted_by": gap_entry["agent_name"] if gap_entry else None,
+                    "gap": gap_entry["gap"] if gap_entry else None,
+                }
+            )
+        if gap_entry is not None and not any_valid_cover:
+            uncovered.append(
+                {
+                    "gap_id": gid,
+                    "posted_by": gap_entry["agent_name"],
+                    "gap": gap_entry["gap"],
+                }
+            )
+
+    # Gaps that had no coverage attempts at all are also uncovered.
+    for entry in blackboard:
+        gid = entry["gap_id"]
+        if gid in coverage:
+            continue
+        uncovered.append({"gap_id": gid, "posted_by": entry["agent_name"], "gap": entry["gap"]})
+
+    ordered = [
+        {
+            "id": str(a["id"]),
+            "name": str(a.get("name") or a["id"]),
+            "covers": covers_by_agent.get(str(a["id"]), []),
+        }
+        for a in agents
+        if str(a["id"]) in collaborator_ids
+    ]
+    return ordered, uncovered
+
+
+def _fenced_json(obj: Any) -> str:
+    """Render *obj* as a fenced ```json``` code block for the markdown UI."""
+    return f"```json\n{json.dumps(obj, indent=2, default=str)}\n```"
+
+
+def _files_read_from_tool_calls(tools_used: list[ToolCall]) -> set[str]:
+    """Return the set of file names the agent actually read via files.read."""
+    read: set[str] = set()
+    for tc in tools_used:
+        if tc.name != "files" or tc.input.get("action") != "read":
+            continue
+        name = tc.input.get("file_name")
+        if isinstance(name, str) and name:
+            read.add(name)
+    return read
+
 
 async def _run_bidding(
     prompt: str,
@@ -841,6 +1262,176 @@ async def _run_bidding(
     rounds: int,
     agent_context: dict[str, str] | None,
     trial_id: str,
+    files_by_agent: dict[str, dict[str, str]] | None = None,
 ) -> None:
-    """Bidding-based consensus. Not yet implemented."""
-    return
+    """Two-round bidding consensus producing a verified collaboration set.
+
+    Round 1 — each agent submits a *proof bid* declaring which of its tools and
+    knowledge files support the task, plus the gaps it cannot fill alone.
+    Round 2 — each agent reads the other agents' gaps from a blackboard and
+    declares which it can cover, again with verifiable evidence.
+    Selection — agents with non-empty validated evidence in either round form
+    the collaboration set. Uncovered gaps are reported.
+
+    Every citation in either round is cross-checked against the agent's actual
+    tool grants and tool-call log, so the proof cannot be faked.
+    """
+    files_by_agent = files_by_agent or {}
+    await _persist_system_broadcast(db, trial_id, agents, prompt, "bidding_broadcast")
+    bids_round_id = await _create_self_message_round(db, trial_id, 2, "bidding_bids")
+
+    async def _bid(
+        agent: dict[str, Any],
+    ) -> tuple[str, list[SelfMessage], dict[str, Any] | None]:
+        agent_id = str(agent["id"])
+        full_prompt = _with_context(prompt, agent_id, agent_context) + _BIDDING_INSTRUCTION
+        try:
+            response, tools_used = await call(agent, full_prompt)
+        except Exception as exc:
+            err = f"[error: {exc}]"
+            return agent_id, [("agent_error", err)], None
+
+        files_actually_read = _files_read_from_tool_calls(tools_used)
+        tools_actually_used = {tc.name for tc in tools_used}
+        available_files = set(files_by_agent.get(agent["id"], {}).keys())
+        self_messages = _self_messages(response, tools_used)
+
+        raw_bid = _extract_bid_json(response)
+        if raw_bid is None:
+            self_messages.append(
+                (
+                    "bidding_rejection",
+                    "Bid rejected: response did not contain a valid JSON object.",
+                )
+            )
+            return agent_id, self_messages, None
+
+        validated, rejections = _validate_bid(
+            raw_bid,
+            agent.get("tools") or [],
+            available_files,
+            files_actually_read,
+            tools_actually_used,
+        )
+        self_messages.append(("bidding_bid", _fenced_json(validated)))
+        if rejections["tools"] or rejections["files"]:
+            self_messages.append(("bidding_rejection", _fenced_json(rejections)))
+        if validated.get("yielded"):
+            self_messages.append(
+                (
+                    "bidding_yield",
+                    "Agent has no validated evidence — yielding (no gaps posted, "
+                    "excluded from gap matching).",
+                )
+            )
+        return agent_id, self_messages, validated
+
+    bid_results = await asyncio.gather(*[_bid(a) for a in agents])
+    bids: dict[str, dict[str, Any]] = {}
+    for agent_id, self_messages, validated_bid in bid_results:
+        await _persist_self_messages(db, bids_round_id, agent_id, self_messages)
+        if validated_bid is not None:
+            bids[agent_id] = validated_bid
+
+    # ── Round 2: gap matching on a per-agent blackboard ──────────────────────
+    blackboard = _build_gap_blackboard(bids, agents)
+    coverage: dict[str, list[tuple[str, dict[str, Any]]]] = {}
+
+    if blackboard:
+        per_agent_board: dict[str, list[dict[str, Any]]] = {
+            str(a["id"]): [e for e in blackboard if e["agent_id"] != str(a["id"])] for a in agents
+        }
+        blackboard_round_id = int(await create_round(db, trial_id, 3, "bidding_blackboard"))
+        for agent in agents:
+            agent_id = str(agent["id"])
+            agent_bid = bids.get(agent_id)
+            if agent_bid is None or agent_bid.get("yielded"):
+                continue
+            others = per_agent_board[agent_id]
+            if not others:
+                continue
+            await record_message(
+                db,
+                blackboard_round_id,
+                None,
+                agent_id,
+                "system_blackboard",
+                _format_blackboard(others),
+            )
+
+        matching_round_id = await _create_self_message_round(db, trial_id, 4, "bidding_matching")
+
+        async def _match(
+            agent: dict[str, Any],
+        ) -> tuple[str, list[SelfMessage], dict[str, dict[str, Any]]]:
+            agent_id = str(agent["id"])
+            # Yielders (no validated evidence in round 1) are excluded from matching.
+            agent_bid = bids.get(agent_id)
+            if agent_bid is None or agent_bid.get("yielded"):
+                return agent_id, [], {}
+            others = per_agent_board[agent_id]
+            if not others:
+                return agent_id, [], {}
+
+            known_ids = {e["gap_id"] for e in others}
+            match_prompt = (
+                _with_context(prompt, agent_id, agent_context)
+                + _BIDDING_MATCHING_INSTRUCTION
+                + _format_blackboard(others)
+            )
+            try:
+                response, tools_used = await call(agent, match_prompt)
+            except Exception as exc:
+                err = f"[error: {exc}]"
+                return agent_id, [("agent_error", err)], {}
+
+            files_actually_read = _files_read_from_tool_calls(tools_used)
+            tools_actually_used = {tc.name for tc in tools_used}
+            available_files = set(files_by_agent.get(agent["id"], {}).keys())
+            self_messages = _self_messages(response, tools_used)
+
+            raw = _extract_bid_json(response)
+            if raw is None:
+                self_messages.append(
+                    (
+                        "bidding_rejection",
+                        "Matching rejected: response did not contain a valid JSON object.",
+                    )
+                )
+                return agent_id, self_messages, {}
+
+            valid_entries, rejections = _validate_coverage(
+                raw,
+                agent.get("tools") or [],
+                available_files,
+                files_actually_read,
+                tools_actually_used,
+                known_ids,
+            )
+            self_messages.append(("bidding_match", _fenced_json({"gap_coverage": valid_entries})))
+            if rejections["unknown_gap_ids"] or rejections["tools"] or rejections["files"]:
+                self_messages.append(("bidding_rejection", _fenced_json(rejections)))
+
+            agent_coverage = {
+                entry["gap_id"]: entry.get("evidence") or {}
+                for entry in valid_entries
+                if entry.get("can_contribute")
+            }
+            return agent_id, self_messages, agent_coverage
+
+        match_results = await asyncio.gather(*[_match(a) for a in agents])
+        for agent_id, self_messages, agent_coverage in match_results:
+            if self_messages:
+                await _persist_self_messages(db, matching_round_id, agent_id, self_messages)
+            for gap_id, ev in agent_coverage.items():
+                coverage.setdefault(gap_id, []).append((agent_id, ev))
+
+    # ── Selection ────────────────────────────────────────────────────────────
+    collaborators, uncovered = _select_collaborators(bids, coverage, blackboard, agents)
+    selection_round_id = await _create_self_message_round(db, trial_id, 5, "bidding_selection")
+    await _persist_system_self_message(
+        db,
+        selection_round_id,
+        "bidding_collaborators",
+        _fenced_json({"collaborators": collaborators, "uncovered_gaps": uncovered}),
+    )
