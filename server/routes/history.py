@@ -10,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.db import (
     deserialise_connection_row,
+    deserialise_message_row,
     deserialise_round_row,
     deserialise_trial_row,
     get_db,
@@ -69,12 +70,20 @@ async def list_connections(round_id: int, db: DBDep) -> list[ConnectionResponse]
 _VALID_MESSAGE_TYPES: frozenset[str] = frozenset(
     {
         "agent_input",
+        "agent_error",
         "agent_output",
+        "agent_to_agent",
         "tool",
         "system",
+        "system_broadcast",
         "broadcast",
         "consensus",
         "guardrail_blocked",
+        "trust_update",
+        "vote_tally",
+        "voting_agent_to_agent",
+        "voting_tally",
+        "weighted_agent_to_agent",
     }
 )
 
@@ -118,6 +127,7 @@ async def list_messages(
             to_agent.c.name.label("to_agent_name"),
             messages.c.message_type,
             messages.c.message,
+            messages.c.meta,
             messages.c.created_at,
         )
         .select_from(
@@ -149,7 +159,7 @@ async def list_messages(
     return [
         MessageTraceResponse(
             **{
-                **dict(row),
+                **deserialise_message_row(row),
                 "from_agent_name": row["from_agent_name"] or "SYSTEM",
                 "to_agent_name": row["to_agent_name"] or "SYSTEM",
             }

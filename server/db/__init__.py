@@ -160,6 +160,7 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             "ALTER TABLE messages ADD COLUMN IF NOT EXISTS to_agent_id TEXT",
             "ALTER TABLE messages ADD COLUMN IF NOT EXISTS"
             " message_type TEXT NOT NULL DEFAULT 'unknown'",
+            "ALTER TABLE messages ADD COLUMN IF NOT EXISTS meta TEXT NOT NULL DEFAULT '{}'",
             "ALTER TABLE messages ADD COLUMN IF NOT EXISTS created_at TEXT NOT NULL DEFAULT ''",
         ):
             await conn.execute(text(stmt))
@@ -181,6 +182,7 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             ("messages", "from_agent_id", "TEXT"),
             ("messages", "to_agent_id", "TEXT"),
             ("messages", "message_type", "TEXT NOT NULL DEFAULT 'unknown'"),
+            ("messages", "meta", "TEXT NOT NULL DEFAULT '{}'"),
             ("messages", "created_at", "TEXT NOT NULL DEFAULT ''"),
         ):
             result = await conn.execute(text(f"PRAGMA table_info({table})"))
@@ -354,6 +356,11 @@ def deserialise_connection_row(row: RowMapping) -> dict[str, Any]:
 
 def deserialise_message_row(row: RowMapping) -> dict[str, Any]:
     data = dict(row)
+    if isinstance(data.get("meta"), str):
+        try:
+            data["meta"] = json.loads(data["meta"] or "{}")
+        except json.JSONDecodeError:
+            data["meta"] = {}
     if isinstance(data.get("created_at"), datetime):
         data["created_at"] = data["created_at"].isoformat(timespec="seconds")
     return data
@@ -482,6 +489,7 @@ async def create_message(
     to_agent_id: str | None,
     message_type: str,
     message: str | None,
+    meta: dict[str, Any] | None = None,
 ) -> int:
     """Create a message row with duplicated routing metadata for easy queries."""
     result = await conn.execute(
@@ -492,6 +500,7 @@ async def create_message(
             to_agent_id=to_agent_id,
             message_type=message_type,
             message=message,
+            meta=json.dumps(meta or {}),
             created_at=_now_iso(),
         )
     )
@@ -509,6 +518,7 @@ async def record_message(
     to_agent_id: str | None,
     message_type: str,
     message: str | None,
+    meta: dict[str, Any] | None = None,
 ) -> int:
     """Create the directed connection if needed, then store a message on it."""
     connection_id = await create_connection(conn, round_id, from_agent_id, to_agent_id)
@@ -520,4 +530,5 @@ async def record_message(
         to_agent_id,
         message_type,
         message,
+        meta,
     )

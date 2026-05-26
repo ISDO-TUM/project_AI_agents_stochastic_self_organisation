@@ -108,5 +108,6 @@ messages = Table(
     Column("to_agent_id", Text, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True),
     Column("message_type", Text, nullable=False),
     Column("message", Text),
+    Column("meta", Text, nullable=False, server_default=text("'{}'")),
     Column("created_at", Text, nullable=False),
 )

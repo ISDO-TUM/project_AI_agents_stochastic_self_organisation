@@ -21,6 +21,17 @@ PROVIDERS: dict[str, Callable[..., Coroutine[Any, Any, str]]] = {
 }
 
 
+def _format_tool_results_for_final_answer(tools_used: list[ToolCall]) -> str:
+    blocks = []
+    for idx, tool in enumerate(tools_used, start=1):
+        input_summary = ", ".join(f"{key}={value!r}" for key, value in tool.input.items())
+        blocks.append(
+            f"Tool result {idx}: {tool.name}({input_summary})\n"
+            f"{tool.output.strip() or '[empty result]'}"
+        )
+    return "\n\n".join(blocks)
+
+
 async def call_agent(
     prompt: str,
     provider: str,
@@ -48,5 +59,22 @@ async def call_agent(
         tools=tools,
         tool_handler=tool_handler,
     )
+
+    if not response.strip() and used_tools:
+        final_prompt = (
+            f"{prompt}\n\n"
+            "You already used tools and received the following results:\n\n"
+            f"{_format_tool_results_for_final_answer(used_tools)}\n\n"
+            "Now provide your final answer using the tool results above. "
+            "Do not call any tools. If the task requires a structured answer format, "
+            "follow that format exactly."
+        )
+        response = await caller(
+            final_prompt,
+            model=model,
+            system_prompt=system_prompt,
+            tools=None,
+            tool_handler=None,
+        )
 
     return response, used_tools

@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
 from unittest.mock import patch
 
+import pytest
 from httpx import AsyncClient
+
+import server.llm as llm_module
+from server.llm import call_agent
+from server.schemas import ToolCall
 
 
 async def test_openai_success(client: AsyncClient) -> None:
@@ -71,3 +78,46 @@ async def test_error_detail_does_not_leak_internal_message(client: AsyncClient) 
         response = await client.post("/api/test/openai", json={"prompt": "Hello"})
     assert response.status_code == 502
     assert internal_message not in response.json()["detail"]
+
+
+async def test_call_agent_retries_blank_tool_response_without_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, object]] = []
+
+    async def fake_provider(
+        prompt: str,
+        **kwargs: object,
+    ) -> str:
+        calls.append({"prompt": prompt, **kwargs})
+        if kwargs["tools"]:
+            used_tools = cast(
+                Callable[[str, dict[str, Any]], Awaitable[str]],
+                kwargs["tool_handler"],
+            )
+            result = await used_tools("files", {"action": "read", "file_name": "org.txt"})
+            assert "Clara Jensen" in result
+            return ""
+        assert "Clara Jensen" in prompt
+        return "REASON: File says Clara Jensen has code Z.\nVOTE: Clara Jensen"
+
+    monkeypatch.setitem(llm_module.PROVIDERS, "openai", fake_provider)
+
+    response, tools_used = await call_agent(
+        "Who has code Z?",
+        provider="openai",
+        model="fake",
+        tool_names=["files"],
+        tool_context={"files": {"org.txt": "Clara Jensen has code Z."}},
+    )
+
+    assert response.endswith("VOTE: Clara Jensen")
+    assert tools_used == [
+        ToolCall(
+            name="files",
+            input={"action": "read", "file_name": "org.txt"},
+            output="Clara Jensen has code Z.",
+        )
+    ]
+    assert len(calls) == 2
+    assert calls[1]["tools"] is None

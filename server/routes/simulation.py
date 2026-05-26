@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
@@ -17,6 +18,11 @@ from server.simulation import ConsensusMode, run_topology
 router = APIRouter(prefix="/api/simulation", tags=["Simulation"])
 
 DBDep = Annotated[AsyncConnection, Depends(get_db)]
+
+
+def _simulation_trial_description(mode: ConsensusMode) -> str:
+    timestamp = datetime.now(UTC).isoformat(timespec="seconds")
+    return f"{mode} run - {timestamp}"
 
 
 async def _run_simulation_background(
@@ -67,7 +73,12 @@ async def run_simulation(
             detail="No agents found. Add at least one agent before running a simulation.",
         )
 
-    trial_id = await create_trial(db, body.prompt, f"{body.mode} run", body.mode)
+    trial_id = await create_trial(
+        db,
+        body.prompt,
+        _simulation_trial_description(body.mode),
+        body.mode,
+    )
     background_tasks.add_task(
         _run_simulation_background,
         body.prompt,

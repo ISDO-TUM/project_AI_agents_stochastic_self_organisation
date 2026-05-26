@@ -283,6 +283,7 @@ class MessageResponse(BaseModel):
     to_agent_id: str | None
     message_type: str
     message: str | None
+    meta: dict[str, Any] = Field(default_factory=dict)
     created_at: str
 
 
@@ -302,6 +303,7 @@ class MessageTraceResponse(BaseModel):
     to_agent_name: str
     message_type: str
     message: str | None
+    meta: dict[str, Any] = Field(default_factory=dict)
     created_at: str
 
 
@@ -557,7 +559,7 @@ class CreateDemoBenchmarkResponse(BaseModel):
     needles: list[DemoNeedleRecord]
 
 
-# ── Simulation ────────────────────────────────────────────────────────────────
+# Simulation
 
 
 _ConsensusMode = Literal[

@@ -3,6 +3,8 @@ from sqlalchemy import insert
 
 from server.db import create_connection, create_round, create_trial, get_engine
 from server.db.tables import agents
+from server.routes.history import _VALID_MESSAGE_TYPES
+from server.routes.simulation import _simulation_trial_description
 from server.simulation import _extract_reason, _extract_vote, _tally
 
 
@@ -76,6 +78,14 @@ def test_extract_reason_accepts_markdown_list_formatting() -> None:
     assert reason == "The file says code Z belongs to Dylan."
 
 
+def test_simulation_trial_description_includes_timestamp() -> None:
+    description = _simulation_trial_description("plurality_voting")
+
+    assert description.startswith("plurality_voting run - ")
+    assert "T" in description
+    assert description.endswith("+00:00")
+
+
 async def test_create_connection_reuses_system_connection(client: AsyncClient) -> None:
     async with get_engine().connect() as conn:
         await conn.execute(
@@ -99,3 +109,24 @@ async def test_create_connection_reuses_system_connection(client: AsyncClient) -
         second_id = await create_connection(conn, round_id, None, "agent_a")
 
     assert second_id == first_id
+
+
+async def test_history_accepts_simulation_message_type_filters(client: AsyncClient) -> None:
+    expected_types = {
+        "agent_error",
+        "agent_output",
+        "agent_to_agent",
+        "system_broadcast",
+        "tool",
+        "trust_update",
+        "vote_tally",
+        "voting_agent_to_agent",
+        "voting_tally",
+        "weighted_agent_to_agent",
+    }
+
+    assert expected_types <= _VALID_MESSAGE_TYPES
+
+    for message_type in expected_types:
+        response = await client.get(f"/api/history/messages?message_type={message_type}")
+        assert response.status_code == 200
