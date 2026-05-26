@@ -1,0 +1,19 @@
+name: Deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# Prevent concurrent deploys. Unlike PR runs, we do NOT cancel in-progress
+# deploys — interrupting a deploy mid-flight risks leaving services in a
+# broken state. New pushes queue behind the running deploy instead.
+concurrency:
+  group: deploy-main
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to Railway
+    uses: ./.github/workflows/_deploy.yml
+    secrets: inherit

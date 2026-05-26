@@ -1,0 +1,41 @@
+name: Deploy - Railway
+
+on:
+  workflow_call:
+    secrets:
+      RAILWAY_TOKEN:
+        required: true
+      RAILWAY_PROJECT_ID:
+        required: true
+
+jobs:
+  deploy-server:
+    name: Deploy server
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy server service
+        working-directory: server
+        run: railway up --service server --detach
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
+
+  deploy-client:
+    name: Deploy client
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Install Railway CLI
+        run: npm install -g @railway/cli
+
+      - name: Deploy client service
+        run: railway up --service client --detach
+        env:
+          RAILWAY_TOKEN: ${{ secrets.RAILWAY_TOKEN }}
+          RAILWAY_PROJECT_ID: ${{ secrets.RAILWAY_PROJECT_ID }}
