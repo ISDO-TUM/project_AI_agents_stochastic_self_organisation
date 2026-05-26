@@ -146,6 +146,46 @@ def _centroid_response(responses: dict[str, str]) -> tuple[str | None, str | Non
     return best_text, best_id
 
 
+def _aggregate_trust(trust: dict[str, dict[str, float]]) -> dict[str, float]:
+    """Sum incoming trust per agent — how much the group trusts each agent.
+
+    For each target agent `t`, returns `sum over sources s of trust[s][t]`.
+    Used by the weighted-pool consensus selector to weight agents' replies
+    by how trustworthy the rest of the pool found them to be.
+    """
+    agg: dict[str, float] = {}
+    for src_trust in trust.values():
+        for target, w in src_trust.items():
+            agg[target] = agg.get(target, 0.0) + w
+    return agg
+
+
+def _weighted_consensus(
+    responses: dict[str, str],
+    aggregate_trust: dict[str, float],
+) -> tuple[str | None, str | None]:
+    """Pick the reply from the agent the group trusts most.
+
+    Falls back to ``_centroid_response`` when every agent has zero aggregate
+    trust (e.g. a disconnected graph), so we still return a sensible answer
+    instead of None.
+
+    Ties are broken by reply length (longer = more informative) for
+    determinism — without this two agents with identical aggregate trust
+    would resolve to whichever the dict iteration happened to visit first.
+    """
+    if not responses:
+        return None, None
+    candidates = {aid: aggregate_trust.get(aid, 0.0) for aid in responses}
+    if all(w <= 0.0 for w in candidates.values()):
+        return _centroid_response(responses)
+    best_id = max(
+        responses.keys(),
+        key=lambda aid: (candidates[aid], len(responses[aid])),
+    )
+    return responses[best_id], best_id
+
+
 _REASON_RE = re.compile(r"^\s*REASON:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
 _VOTE_RE = re.compile(r"^\s*VOTE:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
 _ZERO_SCORE_VOTES = frozenset({"unknown"})
@@ -441,7 +481,24 @@ async def _run_broadcast(
 
 
 _WEIGHT_BLEND = 0.5  # how much old trust to retain each round (EMA factor)
-_WEIGHT_EPSILON = 0.05  # max trust change to declare convergence
+_WEIGHT_EPSILON = 0.05  # max per-edge trust change tolerated as "stable"
+_WEIGHT_STABILITY_K = 2  # consecutive stable rounds needed for convergence
+_SIM_FLOOR = 0.01  # floor on Jaccard similarity — prevents trust collapsing
+# onto a single neighbour when most similarities are zero.
+
+
+def _normalise_trust(weights: dict[str, float]) -> dict[str, float]:
+    """Renormalise a per-neighbour weight dict to sum to 1.0.
+
+    The EMA blend keeps weights summing to 1 in theory (convex combination
+    of two probability distributions), but floating-point drift accumulates
+    over many rounds. Renormalising defensively keeps the invariant exact.
+    """
+    total = sum(weights.values())
+    if total <= 0.0:
+        n = len(weights)
+        return dict.fromkeys(weights, 1.0 / n) if n else {}
+    return {k: v / total for k, v in weights.items()}
 
 
 async def _run_weighted_pool(
@@ -490,6 +547,7 @@ async def _run_weighted_pool(
 
     rounds_used = 0
     converged = False
+    stable_streak = 0
 
     for round_num in range(1, rounds + 1):
         if not any(incoming.values()):
@@ -556,7 +614,9 @@ async def _run_weighted_pool(
                 steps.extend(new_steps)
 
         # Trust update: increase weight on neighbours whose latest reply
-        # agrees most (Jaccard) with the agent's own latest reply.
+        # agrees most (Jaccard) with the agent's own latest reply.  A floor
+        # on each similarity keeps any single noisy round from collapsing
+        # all of an agent's trust onto one neighbour.
         max_trust_change = 0.0
         for a in agents:
             aid = a["id"]
@@ -567,18 +627,15 @@ async def _run_weighted_pool(
             sims: dict[str, float] = {}
             for n in nbrs:
                 nbr_text = new_responses.get(n, prev_responses.get(n, ""))
-                sims[n] = _jaccard(my_new, nbr_text)
+                sims[n] = max(_jaccard(my_new, nbr_text), _SIM_FLOOR)
             total = sum(sims.values())
-            target = (
-                {n: s / total for n, s in sims.items()}
-                if total > 0
-                else {n: 1.0 / len(nbrs) for n in nbrs}
-            )
+            target = {n: s / total for n, s in sims.items()}
             old = trust[aid]
-            updated = {
+            blended = {
                 n: _WEIGHT_BLEND * old.get(n, 1.0 / len(nbrs)) + (1 - _WEIGHT_BLEND) * target[n]
                 for n in nbrs
             }
+            updated = _normalise_trust(blended)
             for n in nbrs:
                 max_trust_change = max(
                     max_trust_change, abs(updated[n] - old.get(n, 1.0 / len(nbrs)))
@@ -587,35 +644,72 @@ async def _run_weighted_pool(
 
         responses.update(new_responses)
 
+        # Observability: surface aggregate trust + max delta each round so
+        # operators can see who the group is converging on.
+        agg = _aggregate_trust(trust)
+        if agg:
+            ranked = sorted(agg.items(), key=lambda kv: -kv[1])[:5]
+            top_str = ", ".join(
+                f"{agent_by_id[a]['name']}={w:.2f}" for a, w in ranked if a in agent_by_id
+            )
+            steps.append(
+                _step(
+                    label="TRUST",
+                    msg=(f"Aggregate trust (top): {top_str}  |  Δmax = {max_trust_change:.3f}"),
+                    type="system",
+                )
+            )
+
+        # Stability-based convergence: require K consecutive rounds of small
+        # delta before declaring convergence. A single quiet round was prone
+        # to spurious early stops on noisy first iterations.
         if max_trust_change < _WEIGHT_EPSILON:
+            stable_streak += 1
+        else:
+            stable_streak = 0
+
+        if stable_streak >= _WEIGHT_STABILITY_K:
             steps.append(
                 _step(
                     label="SYSTEM",
-                    msg=f"Converged after {round_num} round(s) — Δtrust={max_trust_change:.3f}.",
+                    msg=(
+                        f"Converged after {round_num} round(s) — Δtrust stable for "
+                        f"{stable_streak} consecutive round(s)."
+                    ),
                     type="system",
                 )
             )
             converged = True
             break
 
-    consensus, _centroid_aid = _centroid_response(responses)
+    # Final selection: weight every reply by how much the rest of the pool
+    # trusts its author. This makes the "weighted" in weighted pooling load-
+    # bearing — the chosen consensus is the reply from the most-trusted
+    # agent, not just the textual centroid.
+    agg_trust = _aggregate_trust(trust)
+    consensus, consensus_aid = _weighted_consensus(responses, agg_trust)
 
-    # Provenance attribution: trace the consensus back to whichever agent's
-    # *broadcast* (round-0) reply most resembled the final consensus string.
-    # That points to the original information source rather than whichever
-    # agent's final reply happened to be the most central in the cluster.
-    consensus_aid: str | None = None
-    if consensus is not None and broadcast_responses:
-        consensus_aid = max(
-            broadcast_responses.items(),
-            key=lambda kv: _jaccard(kv[1], consensus),
-        )[0]
+    # Provenance attribution: when the engine can't fall back to aggregate
+    # trust (disconnected graph → all weights zero, centroid used), trace
+    # the consensus to whichever broadcast reply best matches the text.
+    if consensus is not None and not any(agg_trust.get(aid, 0.0) > 0 for aid in responses):
+        if broadcast_responses:
+            consensus_aid = max(
+                broadcast_responses.items(),
+                key=lambda kv: _jaccard(kv[1], consensus),
+            )[0]
 
     if consensus is not None:
+        winner_trust = agg_trust.get(consensus_aid or "", 0.0)
+        attribution = (
+            f" (aggregate trust = {winner_trust:.2f})"
+            if winner_trust > 0
+            else " (no edges — textual centroid)"
+        )
         steps.append(
             _step(
                 label="SYSTEM",
-                msg=f"Selected consensus answer (centroid of replies):\n{consensus}",
+                msg=f"Selected consensus answer{attribution}:\n{consensus}",
                 type="system",
                 node_id=consensus_aid,
             )
