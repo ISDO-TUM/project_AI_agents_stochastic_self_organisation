@@ -982,6 +982,22 @@ async def _run_weighted_opinion_pool(
             own_answer = own_prev["answer"] or "no previous answer"
             own_source = own_prev["source"] or "none"
 
+            # Detect if the agent changed its answer from the broadcast.
+            bcast_parsed = _extract_structured_response(broadcast_responses.get(agent_id, ""))
+            bcast_answer = bcast_parsed["answer"]
+            changed = (
+                bcast_answer
+                and own_answer != "no previous answer"
+                and bcast_answer.lower() != own_answer.lower()
+            )
+            change_note = (
+                f"\nYou originally answered '{bcast_answer}' but changed to "
+                f"'{own_answer}' based on stronger evidence. "
+                "Do NOT revert to your original answer."
+                if changed
+                else ""
+            )
+
             context_lines: list[str] = []
             for n in nbrs:
                 parsed = _extract_structured_response(responses[n])
@@ -995,7 +1011,7 @@ async def _run_weighted_opinion_pool(
             discussion_prompt = (
                 f"Original question: {prompt}\n\n"
                 f"Your previous answer: {own_answer} "
-                f"[source: {own_source}]\n\n"
+                f"[source: {own_source}]{change_note}\n\n"
                 "Other agents responded (weighted by your trust in them):\n"
                 + "\n".join(context_lines)
                 + "\n\nGiving more weight to higher-trust voices, "
