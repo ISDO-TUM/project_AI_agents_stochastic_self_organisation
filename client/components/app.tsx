@@ -67,6 +67,7 @@ export function App() {
     setLogExp,
     activeNode,
     activeEdge,
+    activeEdgeReversed,
     particles,
     runSim,
     stopSim,
@@ -463,6 +464,7 @@ export function App() {
           simMode={simMode}
           activeNodeId={activeNode}
           activeEdgeId={activeEdge}
+          activeEdgeReversed={activeEdgeReversed}
           animatedParticles={particles}
           tweaks={tweaks}
           onCanvasClick={onCanvasClick}

@@ -35,6 +35,7 @@ other agents remain aware of the failure.
 from __future__ import annotations
 
 import asyncio
+import json
 import re
 import uuid
 from collections.abc import Awaitable, Callable
@@ -57,6 +58,7 @@ from server.db.tables import agents as agents_table
 from server.guardrails import build_guarded_system_prompt, sanitize_prompt
 from server.guardrails.input_sanitizer import PromptInjectionError
 from server.llm import call_agent
+from server.llm.embeddings import cosine_similarity, embed_texts
 from server.schemas import ToolCall
 
 ConsensusMode = Literal[
@@ -171,6 +173,189 @@ def _jaccard(a: str, b: str) -> float:
     return len(sa & sb) / len(sa | sb)
 
 
+_COMMON_SENTENCE_STARTERS = frozenset(
+    {
+        "a",
+        "about",
+        "after",
+        "all",
+        "also",
+        "always",
+        "an",
+        "and",
+        "any",
+        "are",
+        "as",
+        "at",
+        "based",
+        "be",
+        "because",
+        "been",
+        "before",
+        "being",
+        "both",
+        "but",
+        "by",
+        "can",
+        "could",
+        "currently",
+        "do",
+        "does",
+        "during",
+        "each",
+        "even",
+        "every",
+        "first",
+        "for",
+        "from",
+        "get",
+        "given",
+        "had",
+        "has",
+        "have",
+        "he",
+        "her",
+        "here",
+        "his",
+        "how",
+        "however",
+        "i",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "just",
+        "last",
+        "let",
+        "like",
+        "make",
+        "many",
+        "may",
+        "me",
+        "might",
+        "more",
+        "most",
+        "much",
+        "must",
+        "my",
+        "never",
+        "new",
+        "next",
+        "no",
+        "none",
+        "not",
+        "now",
+        "of",
+        "on",
+        "once",
+        "only",
+        "or",
+        "other",
+        "our",
+        "out",
+        "over",
+        "per",
+        "please",
+        "recent",
+        "regarding",
+        "run",
+        "scope",
+        "shall",
+        "she",
+        "should",
+        "since",
+        "so",
+        "some",
+        "still",
+        "such",
+        "than",
+        "that",
+        "the",
+        "their",
+        "them",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "those",
+        "through",
+        "to",
+        "under",
+        "until",
+        "up",
+        "upon",
+        "use",
+        "using",
+        "very",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "while",
+        "who",
+        "will",
+        "with",
+        "would",
+        "yes",
+        "yet",
+        "you",
+        "your",
+    }
+)
+
+_ALPHANUMERIC_CODE_RE = re.compile(r"^[A-Za-z]+-\d+[\w-]*$")
+_CAMELCASE_RE = re.compile(r"[a-z][A-Z]")
+
+
+def _extract_entities(text: str) -> set[str]:
+    """Extract entity-like tokens: proper nouns, codes, abbreviations."""
+    entities: set[str] = set()
+    tokens = text.split()
+    for i, raw in enumerate(tokens):
+        cleaned = raw.strip(".,;:!?\"'()[]{}")
+        if len(cleaned) < 2:
+            continue
+        if _ALPHANUMERIC_CODE_RE.match(cleaned):
+            entities.add(cleaned.lower())
+            continue
+        if cleaned.isupper() and cleaned.isalpha():
+            entities.add(cleaned.lower())
+            continue
+        if _CAMELCASE_RE.search(cleaned):
+            entities.add(cleaned.lower())
+            continue
+        if cleaned[0].isupper() and not cleaned.isupper():
+            at_sentence_start = i == 0 or tokens[i - 1][-1] in ".!?"
+            if at_sentence_start and cleaned.lower() in _COMMON_SENTENCE_STARTERS:
+                continue
+            entities.add(cleaned.lower())
+    return entities
+
+
+_ENTITY_WEIGHT = 0.7
+_TEXT_WEIGHT = 0.3
+
+
+def _entity_aware_similarity(a: str, b: str) -> float:
+    """Blended similarity: entity-set Jaccard (0.7) + full-text Jaccard (0.3).
+
+    Falls back to text-only Jaccard when either text has no extractable entities.
+    """
+    text_sim = _jaccard(a, b)
+    a_ents = _extract_entities(a)
+    b_ents = _extract_entities(b)
+    if not a_ents or not b_ents:
+        return text_sim
+    entity_sim = len(a_ents & b_ents) / len(a_ents | b_ents)
+    return _ENTITY_WEIGHT * entity_sim + _TEXT_WEIGHT * text_sim
+
+
 def _centroid_response(responses: dict[str, str]) -> tuple[str | None, str | None]:
     """The reply most similar to all others (highest summed Jaccard).
 
@@ -259,6 +444,74 @@ _VOTE_INSTRUCTION = (
     "        VOTE: none\n"
     "  BAD: none\n"
 )
+
+_WEIGHTED_POOL_INSTRUCTION = (
+    "\n\nIMPORTANT: Reply with ONLY these three lines. "
+    "No preamble, no extra text, no repetition.\n"
+    "ANSWER: <a concrete answer — you MUST commit to one>\n"
+    "SOURCE: <document name and key quote, or 'none'>\n"
+    "REASONING: <one sentence why>\n\n"
+    "Rules:\n"
+    "- You must always give a definitive answer. Never answer "
+    "'unknown', 'uncertain', or 'N/A'.\n"
+    "- Either defend your own source or adopt a peer's answer "
+    "if their source is more recent or authoritative.\n"
+    "- Once you change your answer based on better evidence, "
+    "do not revert to your previous answer.\n\n"
+    "GOOD example (entire response):\n"
+    "ANSWER: Acme Computers\n"
+    "SOURCE: 2026_master_agreement.txt — 'Vendor: Acme Computers'\n"
+    "REASONING: The master agreement names Acme as the sole supplier.\n\n"
+    "BAD example — do NOT do this:\n"
+    "Based on my analysis, I believe... ANSWER: Acme Computers ...\n"
+)
+
+_ANSWER_RE = re.compile(
+    r"^\s*(?:>\s*)?(?:[-*+]\s*|\d+[.)]\s*)?(?:\*\*)?ANSWER(?:\*\*)?\s*[:\-]\s*(?:\*\*)?(.+?)\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+_SOURCE_RE = re.compile(
+    r"^\s*(?:>\s*)?(?:[-*+]\s*|\d+[.)]\s*)?(?:\*\*)?SOURCE(?:\*\*)?\s*[:\-]\s*(?:\*\*)?(.+?)\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+_REASONING_RE = re.compile(
+    r"^\s*(?:>\s*)?(?:[-*+]\s*|\d+[.)]\s*)?(?:\*\*)?REASONING(?:\*\*)?\s*[:\-]\s*(?:\*\*)?(.+?)\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def _extract_answer(text: str) -> str | None:
+    """Pull the last ANSWER: ... line from a response."""
+    matches = _ANSWER_RE.findall(text)
+    if not matches:
+        return None
+    return matches[-1].strip() or None
+
+
+def _extract_source(text: str) -> str | None:
+    """Pull the last SOURCE: ... line from a response."""
+    matches = _SOURCE_RE.findall(text)
+    if not matches:
+        return None
+    return matches[-1].strip() or None
+
+
+def _extract_reasoning(text: str) -> str | None:
+    """Pull the last REASONING: ... line from a response."""
+    matches = _REASONING_RE.findall(text)
+    if not matches:
+        return None
+    return matches[-1].strip() or None
+
+
+def _extract_structured_response(text: str) -> dict[str, str | None]:
+    """Extract all structured fields from a weighted-pool response."""
+    return {
+        "answer": _extract_answer(text),
+        "source": _extract_source(text),
+        "reasoning": _extract_reasoning(text),
+    }
+
 
 # Strip stop-words and common framing prefixes so semantically equivalent
 # replies (\"Trump\" vs \"the president of america is trump\") tally together.
@@ -575,11 +828,10 @@ async def _run_broadcast_no_consensus(
 # ── mode 2: weighted opinion pooling (Option A) ───────────────────────────────
 
 
-_WEIGHT_BLEND = 0.5  # how much old trust to retain each round (EMA factor)
+_WEIGHT_BLEND = 0.3  # how much old trust to retain each round (EMA factor)
 _WEIGHT_EPSILON = 0.05  # max per-edge trust change tolerated as "stable"
-_WEIGHT_STABILITY_K = 2  # consecutive stable rounds needed for convergence
-_SIM_FLOOR = 0.01  # floor on Jaccard similarity — prevents trust collapsing
-# onto a single neighbour when most similarities are zero.
+_WEIGHT_STABILITY_K = 1  # consecutive stable rounds needed for convergence
+_SIM_FLOOR = 0.001  # floor on similarity — prevents division-by-zero
 
 
 def _normalise_trust(weights: dict[str, float]) -> dict[str, float]:
@@ -628,8 +880,9 @@ async def _run_weighted_opinion_pool(
         agent: dict[str, Any],
     ) -> tuple[str, list[SelfMessage]]:
         agent_id = str(agent["id"])
+        full_prompt = _with_context(prompt, agent_id, agent_context) + _WEIGHTED_POOL_INSTRUCTION
         try:
-            response, tools = await call(agent, _with_context(prompt, agent_id, agent_context))
+            response, tools = await call(agent, full_prompt)
         except Exception as exc:
             err = f"[error: {exc}]"
             return err, [("agent_error", err)]
@@ -645,6 +898,72 @@ async def _run_weighted_opinion_pool(
     broadcast_responses: dict[str, str] = dict(responses)
     stable_streak = 0
 
+    # Seed trust from broadcast responses so the initial disagreement is
+    # captured before agents have a chance to flip during discussion.
+    bcast_ids = [aid for aid in broadcast_responses if incoming[aid]]
+    bcast_answers = [
+        _extract_answer(broadcast_responses[aid]) or broadcast_responses[aid] for aid in bcast_ids
+    ]
+    bcast_embeddings_list = await embed_texts(bcast_answers)
+    bcast_embeddings: dict[str, list[float]] | None = None
+    if bcast_embeddings_list is not None:
+        bcast_embeddings = dict(zip(bcast_ids, bcast_embeddings_list, strict=True))
+
+    for a in agents:
+        aid = a["id"]
+        nbrs = incoming[aid]
+        if not nbrs or aid not in broadcast_responses:
+            continue
+        bcast_sims: dict[str, float] = {}
+        for n in nbrs:
+            nbr_text = broadcast_responses.get(n, "")
+            if bcast_embeddings is not None and aid in bcast_embeddings and n in bcast_embeddings:
+                sim = cosine_similarity(bcast_embeddings[aid], bcast_embeddings[n])
+                bcast_sims[n] = max(sim, _SIM_FLOOR)
+            else:
+                my_answer = _extract_answer(broadcast_responses[aid]) or broadcast_responses[aid]
+                nbr_answer = _extract_answer(nbr_text) or nbr_text
+                bcast_sims[n] = max(_entity_aware_similarity(my_answer, nbr_answer), _SIM_FLOOR)
+        total = sum(bcast_sims.values())
+        if total > 0:
+            trust[aid] = _normalise_trust({n: s / total for n, s in bcast_sims.items()})
+
+    # Persist broadcast trust seeding so the UI shows scores after round 1.
+    agg_seed = _aggregate_trust(trust)
+    if agg_seed:
+        ranked = sorted(agg_seed.items(), key=lambda kv: -kv[1])[:5]
+        top_str = ", ".join(
+            f"{agent_by_id[a]['name']}={w:.2f}" for a, w in ranked if a in agent_by_id
+        )
+        await _persist_system_self_message(
+            db,
+            broadcast_output_round_id,
+            "trust_update",
+            f"Broadcast trust seed: {top_str}",
+        )
+        for a in agents:
+            aid = a["id"]
+            if not trust[aid]:
+                continue
+            trust_data = json.dumps(
+                {
+                    "agent_id": aid,
+                    "agent_name": agent_by_id[aid]["name"],
+                    "round": 0,
+                    "trust_vector": {
+                        agent_by_id[n]["name"]: round(w, 4)
+                        for n, w in trust[aid].items()
+                        if n in agent_by_id
+                    },
+                }
+            )
+            await _persist_system_self_message(
+                db,
+                broadcast_output_round_id,
+                "trust_evolution",
+                trust_data,
+            )
+
     for round_num in range(1, rounds + 1):
         if not any(incoming.values()):
             break
@@ -657,19 +976,32 @@ async def _run_weighted_opinion_pool(
             if not nbrs:
                 return None
 
-            weights = trust[agent["id"]]
-            context_lines = [
-                f"- {agent_by_id[n]['name']} (trust {weights.get(n, 0.0):.2f}): {responses[n]}"
-                for n in nbrs
-            ]
+            agent_id = str(agent["id"])
+            weights = trust[agent_id]
+            own_prev = _extract_structured_response(responses.get(agent_id, ""))
+            own_answer = own_prev["answer"] or "no previous answer"
+            own_source = own_prev["source"] or "none"
+
+            context_lines: list[str] = []
+            for n in nbrs:
+                parsed = _extract_structured_response(responses[n])
+                answer_text = parsed["answer"] or responses[n]
+                source_text = f" [source: {parsed['source']}]" if parsed["source"] else ""
+                context_lines.append(
+                    f"- {agent_by_id[n]['name']} "
+                    f"(trust {weights.get(n, 0.0):.2f}): "
+                    f"{answer_text}{source_text}"
+                )
             discussion_prompt = (
                 f"Original question: {prompt}\n\n"
+                f"Your previous answer: {own_answer} "
+                f"[source: {own_source}]\n\n"
                 "Other agents responded (weighted by your trust in them):\n"
                 + "\n".join(context_lines)
-                + "\n\nGiving more weight to higher-trust voices, what is your updated answer?"
+                + "\n\nGiving more weight to higher-trust voices, "
+                "what is your updated answer?" + _WEIGHTED_POOL_INSTRUCTION
             )
 
-            agent_id = str(agent["id"])
             deliveries: list[MessageDelivery] = [(n, agent_id, responses[n]) for n in nbrs]
 
             try:
@@ -682,20 +1014,33 @@ async def _run_weighted_opinion_pool(
 
         results = await asyncio.gather(*[_discuss(a) for a in agents])
 
+        # Persist in logical order: all deliveries → all self-messages
+        # so the activity log reads: incoming → tools → output → trust.
+        parsed_results: list[tuple[str, list[MessageDelivery], list[SelfMessage], str]] = []
+        for result in results:
+            if result is not None:
+                parsed_results.append(result)
+
+        for _, deliveries, _, _ in parsed_results:
+            await _persist_agent_deliveries(db, round_id, deliveries, "weighted_agent_to_agent")
+
         prev_responses = dict(responses)
         new_responses: dict[str, str] = {}
-        for result in results:
-            if result is None:
-                continue
-            agent_id, deliveries, self_messages, new_resp = result
-            await _persist_agent_deliveries(db, round_id, deliveries, "weighted_agent_to_agent")
+        for agent_id, _, self_messages, new_resp in parsed_results:
             await _persist_self_messages(db, round_id, agent_id, self_messages)
             new_responses[agent_id] = new_resp
 
-        # Trust update: increase weight on neighbours whose latest reply
-        # agrees most (Jaccard) with the agent's own latest reply.  A floor
-        # on each similarity keeps any single noisy round from collapsing
-        # all of an agent's trust onto one neighbour.
+        # Trust update: embed extracted answers and use cosine similarity.
+        # Falls back to entity-aware Jaccard if the embedding call fails.
+        responding_ids = [aid for aid in new_responses if incoming[aid]]
+        responding_answers = [
+            _extract_answer(new_responses[aid]) or new_responses[aid] for aid in responding_ids
+        ]
+        embeddings_list = await embed_texts(responding_answers)
+        embeddings: dict[str, list[float]] | None = None
+        if embeddings_list is not None:
+            embeddings = dict(zip(responding_ids, embeddings_list, strict=True))
+
         max_trust_change = 0.0
         for a in agents:
             aid = a["id"]
@@ -706,7 +1051,12 @@ async def _run_weighted_opinion_pool(
             sims: dict[str, float] = {}
             for n in nbrs:
                 nbr_text = new_responses.get(n, prev_responses.get(n, ""))
-                sims[n] = max(_jaccard(my_new, nbr_text), _SIM_FLOOR)
+                if embeddings is not None and aid in embeddings and n in embeddings:
+                    sims[n] = max(cosine_similarity(embeddings[aid], embeddings[n]), _SIM_FLOOR)
+                else:
+                    my_answer = _extract_answer(my_new) or my_new
+                    nbr_answer = _extract_answer(nbr_text) or nbr_text
+                    sims[n] = max(_entity_aware_similarity(my_answer, nbr_answer), _SIM_FLOOR)
             total = sum(sims.values())
             target = {n: s / total for n, s in sims.items()}
             old = trust[aid]
@@ -736,6 +1086,24 @@ async def _run_weighted_opinion_pool(
                 f"Aggregate trust (top): {top_str}  |  Δmax = {max_trust_change:.3f}",
             )
 
+            for a in agents:
+                aid = a["id"]
+                if not trust[aid]:
+                    continue
+                trust_data = json.dumps(
+                    {
+                        "agent_id": aid,
+                        "agent_name": agent_by_id[aid]["name"],
+                        "round": round_num,
+                        "trust_vector": {
+                            agent_by_id[n]["name"]: round(w, 4)
+                            for n, w in trust[aid].items()
+                            if n in agent_by_id
+                        },
+                    }
+                )
+                await _persist_system_self_message(db, round_id, "trust_evolution", trust_data)
+
         # Stability-based convergence: require K consecutive rounds of small
         # delta before declaring convergence. A single quiet round was prone
         # to spurious early stops on noisy first iterations.
@@ -749,8 +1117,7 @@ async def _run_weighted_opinion_pool(
                 db,
                 round_id,
                 "convergence",
-                f"Converged after {round_num} round(s) — Δtrust stable for "
-                f"{stable_streak} consecutive round(s).",
+                f"Converged after {round_num} round(s) (Δmax < {_WEIGHT_EPSILON}).",
             )
             break
 

@@ -24,6 +24,7 @@ interface CanvasProps {
   simMode: boolean;
   activeNodeId: string | null;
   activeEdgeId: string | null;
+  activeEdgeReversed: boolean;
   animatedParticles: AnimatedParticle[];
   tweaks: Tweaks;
   onCanvasClick: () => void;
@@ -59,6 +60,7 @@ export function Canvas({
   simMode,
   activeNodeId,
   activeEdgeId,
+  activeEdgeReversed,
   animatedParticles,
   tweaks,
   onCanvasClick,
@@ -302,6 +304,7 @@ export function Canvas({
           onSelectEdge={onSelectEdge}
           onDeleteEdge={onDeleteEdge}
           activeEdgeId={activeEdgeId}
+          activeEdgeReversed={activeEdgeReversed}
           animatedParticles={animatedParticles}
           tweaks={tweaks}
         />
