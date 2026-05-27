@@ -51,6 +51,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
   const [logExp, setLogExp] = useState(false);
   const [activeNode, setActNode] = useState<string | null>(null);
   const [activeEdge, setActEdge] = useState<string | null>(null);
+  const [activeEdgeReversed, setActEdgeReversed] = useState(false);
   const [particles, setParticles] = useState<AnimatedParticle[]>([]);
   const [outcome, setOutcome] = useState<SimulationResult | null>(null);
   const particleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -70,6 +71,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setActNode(s.nodeId);
       setActEdge(null);
+      setActEdgeReversed(false);
     } else if (s.fromId && s.toId) {
       const e = edges.find(
         (e) =>
@@ -77,10 +79,12 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
           (e.from === s.toId && e.to === s.fromId),
       );
       setActEdge(e ? e.id : null);
+      setActEdgeReversed(e ? e.from === s.toId && e.to === s.fromId : false);
       setActNode(s.fromId ?? null);
     } else {
       setActNode(null);
       setActEdge(null);
+      setActEdgeReversed(false);
     }
   }, [cur, simMode, steps, edges]);
 
@@ -167,6 +171,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     setCur(0);
     setActNode(null);
     setActEdge(null);
+    setActEdgeReversed(false);
     setParticles([]);
     setOutcome(null);
   }, []);
@@ -180,6 +185,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     setLogExp,
     activeNode,
     activeEdge,
+    activeEdgeReversed,
     particles,
     runSim,
     stopSim,

@@ -12,6 +12,7 @@ interface EdgeLayerProps {
   onSelectEdge: (id: string) => void;
   onDeleteEdge: (id: string) => void;
   activeEdgeId: string | null;
+  activeEdgeReversed: boolean;
   animatedParticles: AnimatedParticle[];
   tweaks: Tweaks;
 }
@@ -51,6 +52,7 @@ export function EdgeLayer({
   onSelectEdge,
   onDeleteEdge,
   activeEdgeId,
+  activeEdgeReversed,
   animatedParticles,
   tweaks,
 }: EdgeLayerProps) {
@@ -113,10 +115,13 @@ export function EdgeLayer({
         const from = posMap.get(edge.from) ?? null;
         const to = posMap.get(edge.to) ?? null;
         if (!from || !to) return null;
-        const path = bezierPath(from, to);
-        const mid = midpoint(from, to);
         const isSelected = selectedEdge === edge.id;
         const isActive = activeEdgeId === edge.id;
+        const reversed = isActive && activeEdgeReversed;
+        const pathFrom = reversed ? to : from;
+        const pathTo = reversed ? from : to;
+        const path = bezierPath(pathFrom, pathTo);
+        const mid = midpoint(from, to);
 
         return (
           <g key={edge.id}>

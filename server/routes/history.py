@@ -74,7 +74,11 @@ _VALID_MESSAGE_TYPES: frozenset[str] = frozenset(
         "system",
         "broadcast",
         "consensus",
+        "convergence",
         "guardrail_blocked",
+        "trust_evolution",
+        "trust_update",
+        "vote_tally",
     }
 )
 
