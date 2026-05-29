@@ -8,6 +8,7 @@ import {
   HistoryMessage,
   SimStep,
   AnimatedParticle,
+  TopologyMode,
 } from "@/lib/types";
 import { uuid } from "@/lib/utils";
 import {
@@ -93,6 +94,8 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
       prompt: string,
       mode: ConsensusMode = "broadcast_no_consensus",
       ruleset?: string,
+      topology: TopologyMode = "static",
+      fanout: number = 3,
     ) => {
       if (agents.length === 0) return;
 
@@ -117,7 +120,12 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
       particleTimerRef.current = setTimeout(() => setParticles([]), 3500);
 
       try {
-        const result = await runSimulation(prompt, { mode, ruleset });
+        const result = await runSimulation(prompt, {
+          mode,
+          ruleset,
+          topology,
+          fanout,
+        });
         setOutcome(result);
         let lastMessageId = 0;
         let complete = false;
@@ -176,6 +184,27 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     setOutcome(null);
   }, []);
 
+  // Edges formed at runtime: agent-to-agent steps played back so far whose
+  // (from,to) pair is NOT one of the static seed edges. Deduped by from->to.
+  const dynamicEdges: Edge[] = (() => {
+    const seedKeys = new Set<string>();
+    for (const e of edges) {
+      seedKeys.add(`${e.from}->${e.to}`);
+      seedKeys.add(`${e.to}->${e.from}`);
+    }
+    const seen = new Set<string>();
+    const out: Edge[] = [];
+    for (let i = 0; i <= cur && i < steps.length; i++) {
+      const s = steps[i];
+      if (s.type !== "agent-to-agent" || !s.fromId || !s.toId) continue;
+      const key = `${s.fromId}->${s.toId}`;
+      if (seedKeys.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ id: `dyn-${key}`, from: s.fromId, to: s.toId });
+    }
+    return out;
+  })();
+
   return {
     steps,
     cur,
@@ -190,5 +219,6 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     runSim,
     stopSim,
     outcome,
+    dynamicEdges,
   };
 }

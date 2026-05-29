@@ -1,7 +1,7 @@
 "use client";
 
 import { useState, useRef, useEffect } from "react";
-import { Rule } from "@/lib/types";
+import { ConsensusMode, Rule, TopologyMode } from "@/lib/types";
 import { BURG, BURG_DIM, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { LIcon } from "@/lib/icons";
@@ -16,10 +16,98 @@ const PROVIDERS = [
   { key: "proxyKey", label: "Custom Proxy" },
 ] as const;
 
+const CONSENSUS_LABELS: [ConsensusMode, string][] = [
+  ["broadcast_no_consensus", "Broadcast"],
+  ["weighted_opinion_pooling", "Weighted"],
+  ["plurality_voting", "Plurality"],
+];
+
+type Theme = ReturnType<typeof getTheme>;
+
+function FieldLabel({ text, t }: { text: string; t: Theme }) {
+  return (
+    <div
+      style={{
+        fontSize: 10,
+        fontWeight: 600,
+        letterSpacing: 0.3,
+        color: t.textSub,
+        fontFamily: "'JetBrains Mono', monospace",
+        textTransform: "uppercase",
+        marginBottom: 7,
+      }}
+    >
+      {text}
+    </div>
+  );
+}
+
+function Segmented<T extends string>({
+  options,
+  value,
+  onChange,
+  disabled,
+  t,
+}: {
+  options: [T, string][];
+  value: T;
+  onChange: (v: T) => void;
+  disabled: boolean;
+  t: Theme;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        gap: 6,
+        background: t.inputBg,
+        border: `1px solid ${t.border}`,
+        borderRadius: 10,
+        padding: 4,
+      }}
+    >
+      {options.map(([val, label]) => {
+        const active = val === value;
+        return (
+          <button
+            key={val}
+            type="button"
+            disabled={disabled}
+            onClick={() => onChange(val)}
+            style={{
+              flex: 1,
+              background: active ? BURG : "transparent",
+              border: "none",
+              borderRadius: 7,
+              color: active ? "#fff" : t.textSub,
+              fontSize: 12,
+              fontWeight: active ? 700 : 500,
+              padding: "7px 8px",
+              cursor: disabled ? "not-allowed" : "pointer",
+              opacity: disabled ? 0.5 : 1,
+              transition: "all 0.15s",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 interface TweaksPanelProps {
   rules: Rule[];
   selectedRules: Set<string>;
   onToggleRule: (id: string) => void;
+  consensusMode: ConsensusMode;
+  onConsensusModeChange: (mode: ConsensusMode) => void;
+  topology: TopologyMode;
+  onTopologyChange: (topology: TopologyMode) => void;
+  fanout: number;
+  onFanoutChange: (fanout: number) => void;
+  simRunning: boolean;
   onClose: () => void;
 }
 
@@ -27,11 +115,18 @@ export function TweaksPanel({
   rules,
   selectedRules,
   onToggleRule,
+  consensusMode,
+  onConsensusModeChange,
+  topology,
+  onTopologyChange,
+  fanout,
+  onFanoutChange,
+  simRunning,
   onClose,
 }: TweaksPanelProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
-  const [activeTab, setActiveTab] = useState<"keys" | "rules">("keys");
+  const [activeTab, setActiveTab] = useState<"sim" | "keys" | "rules">("sim");
 
   const { keys, setKeys, clearKeys } = useApiKeys();
   const [draft, setDraft] = useState<ApiKeys>(keys);
@@ -145,6 +240,7 @@ export function TweaksPanel({
       >
         {(
           [
+            { id: "sim", label: "Simulation", icon: "Settings2" },
             { id: "keys", label: "API Keys", icon: "KeyRound" },
             { id: "rules", label: "Rulesets", icon: "ScrollText" },
           ] as const
@@ -186,6 +282,134 @@ export function TweaksPanel({
           overflowY: "auto",
         }}
       >
+        {activeTab === "sim" && (
+          <div>
+            <p
+              style={{
+                fontSize: 11,
+                color: t.textDim,
+                lineHeight: 1.5,
+                margin: "0 0 14px",
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              How agents agree and who they may talk to. Applied to the next
+              run.
+            </p>
+
+            {/* Consensus mode */}
+            <FieldLabel text="Consensus mode" t={t} />
+            <Segmented
+              options={CONSENSUS_LABELS}
+              value={consensusMode}
+              onChange={onConsensusModeChange}
+              disabled={simRunning}
+              t={t}
+            />
+
+            {/* Topology */}
+            <div style={{ height: 14 }} />
+            <FieldLabel text="Topology" t={t} />
+            <Segmented
+              options={[
+                ["static", "Static"],
+                ["dynamic", "Dynamic"],
+              ]}
+              value={topology}
+              onChange={onTopologyChange}
+              disabled={simRunning}
+              t={t}
+            />
+            <p
+              style={{
+                fontSize: 10.5,
+                color: t.textDim,
+                lineHeight: 1.5,
+                margin: "7px 0 0",
+              }}
+            >
+              {topology === "dynamic"
+                ? "Agents discover peers via the registry tool and rewire the graph each round."
+                : "The connections drawn on the canvas stay fixed for the whole run."}
+            </p>
+
+            {/* Fan-out — only meaningful in dynamic mode. 0 == unlimited. */}
+            {topology === "dynamic" && (
+              <>
+                <div style={{ height: 14 }} />
+                <FieldLabel text="Fan-out" t={t} />
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    marginBottom: 8,
+                  }}
+                >
+                  {fanout !== 0 && (
+                    <input
+                      type="number"
+                      min={1}
+                      max={10}
+                      value={fanout}
+                      disabled={simRunning}
+                      onChange={(e) =>
+                        onFanoutChange(
+                          Math.max(
+                            1,
+                            Math.min(10, Number(e.target.value) || 1),
+                          ),
+                        )
+                      }
+                      style={{
+                        width: 64,
+                        background: t.inputBg,
+                        border: `1px solid ${t.border}`,
+                        borderRadius: 8,
+                        color: t.text,
+                        fontSize: 13,
+                        fontWeight: 600,
+                        padding: "8px 10px",
+                        textAlign: "center",
+                        outline: "none",
+                      }}
+                    />
+                  )}
+                  <label
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 7,
+                      cursor: simRunning ? "not-allowed" : "pointer",
+                      opacity: simRunning ? 0.5 : 1,
+                    }}
+                  >
+                    <Checkbox
+                      checked={fanout === 0}
+                      onChange={() => onFanoutChange(fanout === 0 ? 3 : 0)}
+                    />
+                    <span style={{ fontSize: 12, color: t.text }}>
+                      Unlimited
+                    </span>
+                  </label>
+                </div>
+                <p
+                  style={{
+                    fontSize: 10.5,
+                    color: t.textDim,
+                    lineHeight: 1.5,
+                    margin: 0,
+                  }}
+                >
+                  {fanout === 0
+                    ? "Unlimited: every agent may connect to all relevant peers it finds. Fine for small groups, but cost grows as O(n²) and the graph can get noisy with many agents."
+                    : "A cap keeps each round at O(n·k) instead of O(n²): agents hear only their top matches, so token cost and noise stay bounded as the team grows. Lower it for large teams."}
+                </p>
+              </>
+            )}
+          </div>
+        )}
+
         {activeTab === "keys" && (
           <div>
             <p

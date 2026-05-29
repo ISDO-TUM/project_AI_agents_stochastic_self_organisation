@@ -11,6 +11,8 @@ export type ConsensusMode =
   | "weighted_opinion_pooling"
   | "plurality_voting";
 
+export type TopologyMode = "static" | "dynamic";
+
 export interface Position {
   x: number;
   y: number;

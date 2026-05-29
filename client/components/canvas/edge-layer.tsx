@@ -6,6 +6,7 @@ import { useTheme } from "@/lib/theme-context";
 
 interface EdgeLayerProps {
   edges: Edge[];
+  dynamicEdges: Edge[];
   agents: Agent[];
   sources: Source[];
   selectedEdge: string | null;
@@ -46,6 +47,7 @@ function midpoint(
 
 export function EdgeLayer({
   edges,
+  dynamicEdges,
   agents,
   sources,
   selectedEdge,
@@ -191,6 +193,27 @@ export function EdgeLayer({
               </g>
             )}
           </g>
+        );
+      })}
+
+      {/* Edges formed at runtime in dynamic topology — rendered dashed so they
+          read as "freshly rewired" and distinct from the static seed graph. */}
+      {dynamicEdges.map((edge) => {
+        const from = posMap.get(edge.from) ?? null;
+        const to = posMap.get(edge.to) ?? null;
+        if (!from || !to) return null;
+        return (
+          <path
+            key={edge.id}
+            d={bezierPath(from, to)}
+            stroke={accent}
+            strokeWidth={ew * 1.4}
+            strokeDasharray="6 5"
+            fill="none"
+            opacity={0.8}
+            markerEnd="url(#arr-a)"
+            style={{ transition: "opacity 0.2s" }}
+          />
         );
       })}
 

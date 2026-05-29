@@ -14,6 +14,7 @@ interface CanvasProps {
   agents: Agent[];
   sources: Source[];
   edges: Edge[];
+  dynamicEdges: Edge[];
   selectedNode: string | null;
   selectedEdge: string | null;
   onSelectNode: (id: string, e: React.MouseEvent) => void;
@@ -50,6 +51,7 @@ export function Canvas({
   agents,
   sources,
   edges,
+  dynamicEdges,
   selectedNode,
   selectedEdge,
   onSelectNode,
@@ -298,6 +300,7 @@ export function Canvas({
       >
         <EdgeLayer
           edges={edges}
+          dynamicEdges={dynamicEdges}
           agents={agents}
           sources={sources}
           selectedEdge={selectedEdge}

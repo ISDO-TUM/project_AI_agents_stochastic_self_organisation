@@ -60,6 +60,7 @@ from server.guardrails.input_sanitizer import PromptInjectionError
 from server.llm import call_agent
 from server.llm.embeddings import cosine_similarity, embed_texts
 from server.schemas import ToolCall
+from server.tools.builtin.registry import RegistryIndex
 
 ConsensusMode = Literal[
     "broadcast_no_consensus",
@@ -77,7 +78,11 @@ SelfMessage = tuple[str, str]
 
 
 async def _call_agent(
-    agent: dict[str, Any], prompt: str, files: dict[str, str], ruleset: str | None = None
+    agent: dict[str, Any],
+    prompt: str,
+    files: dict[str, str],
+    ruleset: str | None = None,
+    registry: RegistryIndex | None = None,
 ) -> tuple[str, list[ToolCall]]:
     """Invoke an agent and return (response_text, tools_used).
 
@@ -86,6 +91,11 @@ async def _call_agent(
 
     The prompt is sanitised for injection attempts before being forwarded to the
     LLM.  The system prompt is wrapped with anti-hallucination guardrails.
+
+    When a `registry` index is provided (dynamic topology), the `registry`
+    discovery tool is offered to the agent and the index is passed in context so
+    the agent can semantically search for peers before declaring its CONNECT
+    line. The index is always placed in the tool context (it may be ``None``).
     """
     # Sanitise the incoming prompt (raises PromptInjectionError on attack)
     try:
@@ -110,13 +120,17 @@ async def _call_agent(
         f"## CURRENT DATE\n{date.today().isoformat()}\n\n{guarded_system_prompt}"
     )
 
+    tool_names = list(agent["tools"] or [])
+    if registry is not None and "registry" not in tool_names:
+        tool_names.append("registry")
+
     response, tools_used = await call_agent(
         prompt,
         provider=agent["provider"],
         model=agent["model"],
         system_prompt=guarded_system_prompt,
-        tool_names=agent["tools"] or None,
-        tool_context={"files": files},
+        tool_names=tool_names or None,
+        tool_context={"files": files, "registry": registry, "agent_id": agent["id"]},
     )
     return str(response), tools_used
 
@@ -730,7 +744,8 @@ def _apply_selection(
     """Resolve one agent's incoming neighbours for the next round.
 
     Drops invalid/self ids; if nothing valid remains, falls back to the previous
-    round's neighbours (the floor); ranks by reputation; caps at k.
+    round's neighbours (the floor); ranks by reputation; caps at k. A non-positive
+    k means *unlimited* fan-out — every validly-declared peer is kept.
     """
 
     def _clean(ids: list[str]) -> list[str]:
@@ -744,7 +759,7 @@ def _apply_selection(
 
     candidates = _clean(declared) or _clean(prior)
     candidates.sort(key=lambda i: reputation.get(i, 0.5), reverse=True)
-    return candidates[:k]
+    return candidates if k <= 0 else candidates[:k]
 
 
 def _grounded(text: str) -> bool:
@@ -879,12 +894,20 @@ async def run_topology(
     agent_context: dict[str, str] | None = None,
     trial_id: str | None = None,
     ruleset: str | None = None,
+    topology: str = "static",
+    fanout: int = 3,
 ) -> None:
     """Run a topology simulation under the chosen consensus mode.
 
     All database reads happen here, up front and sequentially. Each agent's
     knowledge files are pre-loaded so the concurrent LLM phase never touches the
     connection (a single async connection cannot serve concurrent queries).
+
+    ``topology`` selects how the communication graph evolves: ``static``
+    (default) keeps the UI/seed graph fixed for the whole run, while ``dynamic``
+    lets agents rebuild it each round by discovering peers through the registry
+    tool and emitting CONNECT lines. ``fanout`` caps how many neighbours an agent
+    may pick per round in dynamic mode.
     """
     result = await db.execute(select(agents_table))
     agents: list[dict[str, Any]] = [deserialise_agent_row(row) for row in result.mappings().all()]
@@ -894,22 +917,28 @@ async def run_topology(
 
     files_by_agent = await load_files_by_agent(db)
     incoming = _build_incoming(agents)
+    controller = TopologyController.create(topology, fanout, agents, incoming)
+    # The semantic index is only built when discovery is actually enabled; static
+    # runs pay no embedding cost and offer no registry tool (registry is None).
+    registry = await RegistryIndex.build(agents, files_by_agent) if topology == "dynamic" else None
     if trial_id is None:
         trial_id = await create_trial(db, prompt, _trial_description(mode), mode)
 
     async def call(agent: dict[str, Any], prompt: str) -> tuple[str, list[ToolCall]]:
-        return await _call_agent(agent, prompt, files_by_agent.get(agent["id"], {}), ruleset)
+        return await _call_agent(
+            agent, prompt, files_by_agent.get(agent["id"], {}), ruleset, registry=registry
+        )
 
     if mode == "weighted_opinion_pooling":
         await _run_weighted_opinion_pool(
-            prompt, agents, incoming, call, db, rounds, agent_context, trial_id
+            prompt, agents, controller, call, db, rounds, agent_context, trial_id
         )
         return
     if mode == "plurality_voting":
-        await _run_voting(prompt, agents, incoming, call, db, rounds, agent_context, trial_id)
+        await _run_voting(prompt, agents, controller, call, db, rounds, agent_context, trial_id)
         return
     await _run_broadcast_no_consensus(
-        prompt, agents, incoming, call, db, rounds, agent_context, trial_id
+        prompt, agents, controller, call, db, rounds, agent_context, trial_id
     )
 
 
@@ -919,7 +948,7 @@ async def run_topology(
 async def _run_broadcast_no_consensus(
     prompt: str,
     agents: list[dict[str, Any]],
-    incoming: dict[str, list[str]],
+    controller: TopologyController,
     call: _AgentCall,
     db: AsyncConnection,
     rounds: int,
@@ -927,6 +956,7 @@ async def _run_broadcast_no_consensus(
     trial_id: str,
 ) -> None:
     agent_by_id = {a["id"]: a for a in agents}
+    incoming = controller.incoming
     await _persist_system_broadcast(db, trial_id, agents, prompt, "broadcast_no_consensus")
     broadcast_output_round_id = await _create_self_message_round(
         db, trial_id, 2, "broadcast_no_consensus_outputs"
@@ -951,24 +981,40 @@ async def _run_broadcast_no_consensus(
         responses[agent_id] = response
 
     for round_num in range(1, rounds + 1):
-        if not any(incoming.values()):
+        # Static: an empty graph means nothing more can happen, so stop. Dynamic:
+        # keep going even with no edges so agents can self-organise from scratch
+        # (a fully-wireless start); convergence/round-limit still bound the loop.
+        if controller.mode != "dynamic" and not any(incoming.values()):
             break
         round_id = await create_round(db, trial_id, round_num + 2, "discussion")
 
         async def _discuss(
             agent: dict[str, Any],
+            incoming: dict[str, list[str]] = incoming,
         ) -> tuple[str, list[MessageDelivery], list[SelfMessage], str] | None:
             senders = [sid for sid in incoming[agent["id"]] if sid in responses]
-            if not senders:
+            suffix = controller.prompt_suffix(agent)
+            # Static: isolated agents stay silent. Dynamic: an agent with no
+            # incoming edges still gets a turn so it can discover peers via the
+            # registry and emit a CONNECT line — enabling a seedless start.
+            if not senders and not suffix:
                 return None
 
-            context_lines = [f"- {agent_by_id[sid]['name']}: {responses[sid]}" for sid in senders]
-            discussion_prompt = (
-                f"Original question: {prompt}\n\n"
-                "Other agents responded:\n"
-                + "\n".join(context_lines)
-                + "\n\nConsidering these perspectives, what is your updated view?"
-            )
+            if senders:
+                context_lines = [
+                    f"- {agent_by_id[sid]['name']}: {responses[sid]}" for sid in senders
+                ]
+                peer_block = (
+                    "Other agents responded:\n"
+                    + "\n".join(context_lines)
+                    + "\n\nConsidering these perspectives, what is your updated view?"
+                )
+            else:
+                peer_block = (
+                    "You have no incoming connections yet. Use the registry to find peers "
+                    "whose input would improve your answer next round."
+                )
+            discussion_prompt = f"Original question: {prompt}\n\n" + peer_block + suffix
 
             agent_id = str(agent["id"])
             deliveries: list[MessageDelivery] = [(sid, agent_id, responses[sid]) for sid in senders]
@@ -992,6 +1038,17 @@ async def _run_broadcast_no_consensus(
             await _persist_self_messages(db, round_id, agent_id, self_messages)
             new_responses[agent_id] = new_resp
         responses.update(new_responses)
+
+        # Dynamic topology: rebuild the graph from this round's CONNECT lines.
+        # Reassigning `incoming` means the next round's `_discuss` (redefined each
+        # iteration) closes over the rewired graph. In static mode this returns
+        # the same dict and `converged` stays False, so behaviour is unchanged.
+        incoming = controller.rewire(responses)
+        if controller.converged:
+            await _persist_system_self_message(
+                db, round_id, "topology_converged", "Topology stabilised — stopping."
+            )
+            break
 
 
 # ── mode 2: weighted opinion pooling (Option A) ───────────────────────────────
@@ -1020,7 +1077,7 @@ def _normalise_trust(weights: dict[str, float]) -> dict[str, float]:
 async def _run_weighted_opinion_pool(
     prompt: str,
     agents: list[dict[str, Any]],
-    incoming: dict[str, list[str]],
+    controller: TopologyController,
     call: _AgentCall,
     db: AsyncConnection,
     rounds: int,
@@ -1028,6 +1085,7 @@ async def _run_weighted_opinion_pool(
     trial_id: str,
 ) -> None:
     agent_by_id = {a["id"]: a for a in agents}
+    incoming = controller.incoming
     await _persist_system_broadcast(
         db,
         trial_id,
@@ -1134,15 +1192,21 @@ async def _run_weighted_opinion_pool(
             )
 
     for round_num in range(1, rounds + 1):
-        if not any(incoming.values()):
+        # Static stops on an empty graph; dynamic keeps going so a seedless graph
+        # can self-organise (bounded by convergence + the round limit).
+        if controller.mode != "dynamic" and not any(incoming.values()):
             break
         round_id = await create_round(db, trial_id, round_num + 2, "weighted_opinion_pooling")
 
         async def _discuss(
             agent: dict[str, Any],
+            incoming: dict[str, list[str]] = incoming,
         ) -> tuple[str, list[MessageDelivery], list[SelfMessage], str] | None:
             nbrs = [n for n in incoming[agent["id"]] if n in responses]
-            if not nbrs:
+            suffix = controller.prompt_suffix(agent)
+            # Static: silent when isolated. Dynamic: still answer + discover so a
+            # seedless graph can bootstrap from scratch.
+            if not nbrs and not suffix:
                 return None
 
             agent_id = str(agent["id"])
@@ -1177,14 +1241,25 @@ async def _run_weighted_opinion_pool(
                     f"(trust {weights.get(n, 0.0):.2f}): "
                     f"{answer_text}{source_text}"
                 )
+            if nbrs:
+                peer_block = (
+                    "Other agents responded (weighted by your trust in them):\n"
+                    + "\n".join(context_lines)
+                    + "\n\nGiving more weight to higher-trust voices, "
+                    "what is your updated answer?"
+                )
+            else:
+                peer_block = (
+                    "You have no incoming connections yet. Use the registry to find peers "
+                    "whose input would improve your answer next round."
+                )
             discussion_prompt = (
                 f"Original question: {prompt}\n\n"
                 f"Your previous answer: {own_answer} "
                 f"[source: {own_source}]{change_note}\n\n"
-                "Other agents responded (weighted by your trust in them):\n"
-                + "\n".join(context_lines)
-                + "\n\nGiving more weight to higher-trust voices, "
-                "what is your updated answer?" + _WEIGHTED_POOL_INSTRUCTION
+                + peer_block
+                + _WEIGHTED_POOL_INSTRUCTION
+                + suffix
             )
 
             deliveries: list[MessageDelivery] = [(n, agent_id, responses[n]) for n in nbrs]
@@ -1306,6 +1381,26 @@ async def _run_weighted_opinion_pool(
             )
             break
 
+        # Dynamic topology: rewire after the trust-convergence check (so weight
+        # convergence wins first), then reconcile each trust vector to the new
+        # neighbour set — new neighbours get the uniform prior, dropped ones are
+        # removed and the vector is renormalised. Static mode is a no-op: rewire
+        # returns the same graph and the reconciliation is an identity op.
+        incoming = controller.rewire(responses)
+        for a in agents:
+            aid = a["id"]
+            nbrs = incoming[aid]
+            vec = trust.get(aid, {})
+            uniform = 1.0 / len(nbrs) if nbrs else 0.0
+            vec = {n: vec.get(n, uniform) for n in nbrs}  # add new, drop missing
+            total = sum(vec.values())
+            trust[aid] = {n: w / total for n, w in vec.items()} if total > 0 else vec
+        if controller.converged:
+            await _persist_system_self_message(
+                db, round_id, "topology_converged", "Topology stabilised — stopping."
+            )
+            break
+
     agg_trust = _aggregate_trust(trust)
     consensus, consensus_aid = _weighted_consensus(responses, agg_trust)
 
@@ -1343,7 +1438,7 @@ _VOTE_STABILITY_K = 2  # consecutive rounds the plurality must hold to converge
 async def _run_voting(
     prompt: str,
     agents: list[dict[str, Any]],
-    incoming: dict[str, list[str]],
+    controller: TopologyController,
     call: _AgentCall,
     db: AsyncConnection,
     rounds: int,
@@ -1351,6 +1446,7 @@ async def _run_voting(
     trial_id: str,
 ) -> None:
     agent_by_id = {a["id"]: a for a in agents}
+    incoming = controller.incoming
     next_round_index = 1
     await _persist_system_broadcast(
         db,
@@ -1411,6 +1507,7 @@ async def _run_voting(
             agent: dict[str, Any],
             tally_msg: str = tally_msg,
             reasons_msg: str = reasons_msg,
+            incoming: dict[str, list[str]] = incoming,
         ) -> tuple[
             str,
             list[MessageDelivery],
@@ -1459,6 +1556,7 @@ async def _run_voting(
                     "files/sources when available."
                     + unknown_nudge
                     + source_nudge
+                    + controller.prompt_suffix(agent)
                     + _VOTE_INSTRUCTION
                 )
             else:
@@ -1475,6 +1573,7 @@ async def _run_voting(
                     "Keep your REASON grounded in quotes and files/sources when available."
                     + unknown_nudge
                     + source_nudge
+                    + controller.prompt_suffix(agent)
                     + _VOTE_INSTRUCTION
                 )
 
@@ -1507,4 +1606,13 @@ async def _run_voting(
         last_plurality = plurality
 
         if stable_streak >= _VOTE_STABILITY_K:
+            break
+
+        # Dynamic topology: rewire after the consensus-stability check so vote
+        # convergence still wins if it triggers first. Static mode is a no-op.
+        incoming = controller.rewire(responses)
+        if controller.converged:
+            await _persist_system_self_message(
+                db, round_id, "topology_converged", "Topology stabilised — stopping."
+            )
             break

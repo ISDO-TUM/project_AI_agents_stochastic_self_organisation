@@ -566,6 +566,8 @@ _ConsensusMode = Literal[
     "plurality_voting",
 ]
 
+_TopologyMode = Literal["static", "dynamic"]
+
 
 class SimulationRunRequest(BaseModel):
     """Request body for running a topology simulation."""
@@ -626,6 +628,23 @@ class SimulationRunRequest(BaseModel):
         description=(
             "Optional global ruleset prepended to every agent's system prompt. "
             "Use this to define shared rules that all agents must abide by."
+        ),
+    )
+    topology: _TopologyMode = Field(
+        default="static",
+        description=(
+            "Graph mode. 'static' = connections fixed at run start (current behaviour). "
+            "'dynamic' = agents discover peers via the registry tool and choose who to "
+            "hear from each round via a CONNECT: line."
+        ),
+    )
+    fanout: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        description=(
+            "Max neighbours an agent may connect to per round in dynamic mode. "
+            "0 means unlimited (no cap) — every relevant peer an agent finds is kept."
         ),
     )
 

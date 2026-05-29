@@ -1,5 +1,6 @@
 from typing import Any
 
+import pytest
 from httpx import AsyncClient
 from sqlalchemy import insert
 
@@ -393,6 +394,19 @@ def test_apply_selection_ranks_by_reputation_then_caps() -> None:
     assert out == ["a3", "a4"]
 
 
+def test_apply_selection_unlimited_fanout_keeps_all() -> None:
+    # k <= 0 means unlimited: every validly-declared peer is kept (no cap).
+    out = _apply_selection(
+        declared=["a2", "a3", "a4"],
+        prior=[],
+        valid_ids={"a2", "a3", "a4"},
+        reputation={},
+        k=0,
+        self_id="a1",
+    )
+    assert set(out) == {"a2", "a3", "a4"}
+
+
 # ── dynamic topology: reputation tally + consensus proxy ────────────────────
 
 
@@ -461,3 +475,375 @@ def test_controller_dynamic_converges_when_graph_stable() -> None:
     ctrl = TopologyController.create("dynamic", 3, _topo_agents(), seed)
     ctrl.rewire({"a1": "CONNECT: a2", "a2": "CONNECT: a1", "a3": "CONNECT: a1"})
     assert ctrl.converged is True
+
+
+# ── dynamic topology: _call_agent offers the registry tool ──────────────────
+
+
+def _bare_agent() -> dict[str, Any]:
+    return {
+        "id": "a1",
+        "name": "A1",
+        "description": "one",
+        "provider": "openai",
+        "model": "m",
+        "system_prompt": "",
+        "tools": [],
+    }
+
+
+@pytest.mark.asyncio
+async def test_call_agent_offers_registry_tool_when_index_present(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.simulation as sim
+    from server.tools.builtin.registry import RegistryIndex
+
+    captured: dict[str, Any] = {}
+
+    async def fake_call_agent(
+        prompt: str,
+        *,
+        provider: str,
+        model: str,
+        system_prompt: str | None,
+        tool_names: list[str] | None,
+        tool_context: dict[str, Any] | None,
+    ) -> tuple[str, list[Any]]:
+        captured["tool_names"] = tool_names
+        captured["tool_context"] = tool_context
+        return "ok", []
+
+    monkeypatch.setattr(sim, "call_agent", fake_call_agent)
+
+    sentinel = RegistryIndex(agents=[], texts={}, file_names={}, vectors={})
+    await sim._call_agent(_bare_agent(), "hi", files={}, ruleset=None, registry=sentinel)
+
+    assert captured["tool_names"] is not None and "registry" in captured["tool_names"]
+    assert captured["tool_context"]["registry"] is sentinel
+    assert captured["tool_context"]["agent_id"] == "a1"
+
+
+@pytest.mark.asyncio
+async def test_call_agent_omits_registry_when_index_absent(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import server.simulation as sim
+
+    captured: dict[str, Any] = {}
+
+    async def fake_call_agent(
+        prompt: str,
+        *,
+        provider: str,
+        model: str,
+        system_prompt: str | None,
+        tool_names: list[str] | None,
+        tool_context: dict[str, Any] | None,
+    ) -> tuple[str, list[Any]]:
+        captured["tool_names"] = tool_names
+        return "ok", []
+
+    monkeypatch.setattr(sim, "call_agent", fake_call_agent)
+
+    await sim._call_agent(_bare_agent(), "hi", files={}, ruleset=None, registry=None)
+
+    assert captured["tool_names"] is None  # static: no tools added
+
+
+def test_run_topology_exposes_topology_and_fanout_params() -> None:
+    import inspect
+
+    from server.simulation import run_topology
+
+    params = inspect.signature(run_topology).parameters
+    assert params["topology"].default == "static"
+    assert params["fanout"].default == 3
+
+
+# ── dynamic topology: engine rewires the persisted graph ────────────────────
+
+
+@pytest.mark.asyncio
+async def test_dynamic_broadcast_rewires_persisted_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy import select as _sa_select
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import StaticPool
+
+    import server.simulation as sim
+    from server.db.tables import agents as agents_table
+    from server.db.tables import messages, metadata
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(metadata.create_all)
+
+    async def fake_call_agent(
+        agent: dict[str, Any],
+        prompt: str,
+        files: dict[str, str],
+        ruleset: str | None = None,
+        registry: Any = None,
+    ) -> tuple[str, list[Any]]:
+        # Everyone asks to hear from a3 -> a3 becomes a sender in round 2.
+        return "my answer\nCONNECT: a3", []
+
+    monkeypatch.setattr(sim, "_call_agent", fake_call_agent)
+    monkeypatch.setattr(sim, "load_files_by_agent", AsyncMock(return_value={}))
+    monkeypatch.setattr(sim.RegistryIndex, "build", AsyncMock(return_value=object()))
+
+    async with engine.connect() as conn:
+        for i, conns in (("a1", '["a2"]'), ("a2", '["a1"]'), ("a3", "[]")):
+            await conn.execute(
+                agents_table.insert().values(
+                    id=i,
+                    name=i.upper(),
+                    description="x",
+                    system_prompt="",
+                    provider="openai",
+                    model="m",
+                    tools="[]",
+                    connections=conns,
+                )
+            )
+        await conn.commit()
+
+        await sim.run_topology(
+            "q", conn, rounds=2, mode="broadcast_no_consensus", topology="dynamic", fanout=3
+        )
+
+        rows = (
+            (
+                await conn.execute(
+                    _sa_select(messages).where(messages.c.message_type == "agent_to_agent")
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+    # a3 is never a sender under the static seed; if it sent anything, the graph rewired.
+    assert any(r["from_agent_id"] == "a3" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_dynamic_broadcast_bootstraps_from_empty_seed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Fully-wireless start: no seed edges at all, yet the graph self-organises."""
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy import select as _sa_select
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import StaticPool
+
+    import server.simulation as sim
+    from server.db.tables import agents as agents_table
+    from server.db.tables import messages, metadata
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(metadata.create_all)
+
+    async def fake_call_agent(
+        agent: dict[str, Any],
+        prompt: str,
+        files: dict[str, str],
+        ruleset: str | None = None,
+        registry: Any = None,
+    ) -> tuple[str, list[Any]]:
+        return "my answer\nCONNECT: a3", []
+
+    monkeypatch.setattr(sim, "_call_agent", fake_call_agent)
+    monkeypatch.setattr(sim, "load_files_by_agent", AsyncMock(return_value={}))
+    monkeypatch.setattr(sim.RegistryIndex, "build", AsyncMock(return_value=object()))
+
+    async with engine.connect() as conn:
+        # Every agent starts ISOLATED — no connections drawn at all.
+        for i in ("a1", "a2", "a3"):
+            await conn.execute(
+                agents_table.insert().values(
+                    id=i,
+                    name=i.upper(),
+                    description="x",
+                    system_prompt="",
+                    provider="openai",
+                    model="m",
+                    tools="[]",
+                    connections="[]",
+                )
+            )
+        await conn.commit()
+
+        await sim.run_topology(
+            "q", conn, rounds=2, mode="broadcast_no_consensus", topology="dynamic", fanout=3
+        )
+        rows = (
+            (
+                await conn.execute(
+                    _sa_select(messages).where(messages.c.message_type == "agent_to_agent")
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+    # With a static empty seed there would be zero agent-to-agent edges ever.
+    # Under dynamic mode the agents discover a3 and edges appear from nothing.
+    assert any(r["from_agent_id"] == "a3" for r in rows)
+
+
+async def _seed_three_agents(conn: Any) -> None:
+    from server.db.tables import agents as agents_table
+
+    for i, conns in (("a1", '["a2"]'), ("a2", '["a1"]'), ("a3", "[]")):
+        await conn.execute(
+            agents_table.insert().values(
+                id=i,
+                name=i.upper(),
+                description="x",
+                system_prompt="",
+                provider="openai",
+                model="m",
+                tools="[]",
+                connections=conns,
+            )
+        )
+    await conn.commit()
+
+
+@pytest.mark.asyncio
+async def test_dynamic_voting_rewires_persisted_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy import select as _sa_select
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import StaticPool
+
+    import server.simulation as sim
+    from server.db.tables import messages, metadata
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(metadata.create_all)
+
+    async def fake_call_agent(
+        agent: dict[str, Any],
+        prompt: str,
+        files: dict[str, str],
+        ruleset: str | None = None,
+        registry: Any = None,
+    ) -> tuple[str, list[Any]]:
+        # No stable plurality (no VOTE line) so voting never short-circuits before
+        # the graph has a chance to rewire toward a3.
+        return "REASON: because\nCONNECT: a3", []
+
+    monkeypatch.setattr(sim, "_call_agent", fake_call_agent)
+    monkeypatch.setattr(sim, "load_files_by_agent", AsyncMock(return_value={}))
+    monkeypatch.setattr(sim.RegistryIndex, "build", AsyncMock(return_value=object()))
+
+    async with engine.connect() as conn:
+        await _seed_three_agents(conn)
+        await sim.run_topology(
+            "q", conn, rounds=2, mode="plurality_voting", topology="dynamic", fanout=3
+        )
+        rows = (
+            (
+                await conn.execute(
+                    _sa_select(messages).where(messages.c.message_type == "voting_agent_to_agent")
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+    assert any(r["from_agent_id"] == "a3" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_dynamic_weighted_runs_end_to_end(monkeypatch: pytest.MonkeyPatch) -> None:
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy import func as _sa_func
+    from sqlalchemy import select as _sa_select
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import StaticPool
+
+    import server.simulation as sim
+    from server.db.tables import messages, metadata
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(metadata.create_all)
+
+    async def fake_call_agent(
+        agent: dict[str, Any],
+        prompt: str,
+        files: dict[str, str],
+        ruleset: str | None = None,
+        registry: Any = None,
+    ) -> tuple[str, list[Any]]:
+        return f"ANSWER: {agent['id']}\nSOURCE: none\nREASONING: x\nCONNECT: a3", []
+
+    monkeypatch.setattr(sim, "_call_agent", fake_call_agent)
+    monkeypatch.setattr(sim, "load_files_by_agent", AsyncMock(return_value={}))
+    monkeypatch.setattr(sim.RegistryIndex, "build", AsyncMock(return_value=object()))
+
+    async with engine.connect() as conn:
+        await _seed_three_agents(conn)
+        # Dynamic weighted mode must run to completion without raising — this
+        # exercises the dynamic discussion prompt, the registry wiring, and the
+        # trust-reconciliation path against the rewired graph.
+        await sim.run_topology(
+            "q", conn, rounds=3, mode="weighted_opinion_pooling", topology="dynamic", fanout=3
+        )
+        total = (
+            await conn.execute(_sa_select(_sa_func.count()).select_from(messages))
+        ).scalar_one()
+
+    assert total > 0  # the run persisted its broadcast + discussion messages
+
+
+# ── API: topology/fanout request schema + route ─────────────────────────────
+
+
+def test_simulation_request_defaults_topology_static() -> None:
+    from server.schemas import SimulationRunRequest
+
+    req = SimulationRunRequest(prompt="hi")
+    assert req.topology == "static"
+    assert req.fanout == 3
+
+    dyn = SimulationRunRequest(prompt="hi", topology="dynamic", fanout=5)
+    assert dyn.topology == "dynamic" and dyn.fanout == 5
+
+    unlimited = SimulationRunRequest(prompt="hi", topology="dynamic", fanout=0)
+    assert unlimited.fanout == 0  # 0 == unlimited fan-out
+
+
+@pytest.mark.asyncio
+async def test_run_route_accepts_topology_and_rejects_no_agents(client: AsyncClient) -> None:
+    resp = await client.post(
+        "/api/simulation/run",
+        json={"prompt": "hi", "topology": "dynamic", "fanout": 4, "mode": "plurality_voting"},
+    )
+    assert resp.status_code == 422
+    assert "No agents" in resp.json()["detail"]
