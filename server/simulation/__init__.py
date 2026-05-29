@@ -784,6 +784,90 @@ class Reputation:
             self.score[aid] = (1 - _REP_ALPHA) * old + _REP_ALPHA * signal
 
 
+_CONNECT_INSTRUCTION = (
+    "\n\nYou may choose who you hear from next round. Use the `registry` tool to "
+    "discover relevant peers: action='search' with a short query describing the "
+    "expertise you need, action='list' for the full roster, or action='get' to "
+    "read one peer. Then end your response with a single line naming the agent "
+    "ids you want to hear from next round (most useful first):\n"
+    "CONNECT: <id>, <id>\n"
+)
+
+
+def _same_adjacency(a: dict[str, list[str]], b: dict[str, list[str]]) -> bool:
+    if a.keys() != b.keys():
+        return False
+    return all(set(a[k]) == set(b[k]) for k in a)
+
+
+@dataclass
+class TopologyController:
+    """Owns the per-round graph: static keeps it fixed, dynamic rewires it.
+
+    The runners loop over a single ``incoming`` adjacency map and persist each
+    round's deliveries from it. In ``static`` mode this controller is a no-op
+    wrapper around the seed graph (byte-for-byte identical behaviour to before).
+    In ``dynamic`` mode, ``prompt_suffix`` nudges each agent to use the registry
+    tool and emit a ``CONNECT:`` line, and ``rewire`` rebuilds the directed graph
+    from those declarations between rounds.
+    """
+
+    mode: str
+    fanout: int
+    agents: list[dict[str, Any]]
+    incoming: dict[str, list[str]]
+    reputation: Reputation
+    converged: bool = False
+
+    @classmethod
+    def create(
+        cls,
+        mode: str,
+        fanout: int,
+        agents: list[dict[str, Any]],
+        seed_incoming: dict[str, list[str]],
+    ) -> TopologyController:
+        return cls(
+            mode=mode,
+            fanout=fanout,
+            agents=agents,
+            incoming={k: list(v) for k, v in seed_incoming.items()},
+            reputation=Reputation(),
+        )
+
+    def prompt_suffix(self, agent: dict[str, Any]) -> str:
+        """Pull-model: tell the agent to use the registry tool + emit CONNECT.
+
+        No peer directory is pushed — the agent fetches peers on demand. Returns
+        an empty string in static mode so prompts are unchanged.
+        """
+        if self.mode != "dynamic":
+            return ""
+        return _CONNECT_INSTRUCTION
+
+    def rewire(self, responses: dict[str, str]) -> dict[str, list[str]]:
+        """Return the next round's incoming map. No-op (returns current) in static."""
+        if self.mode != "dynamic":
+            return self.incoming
+        self.reputation.update(responses, _centroid_text(responses))
+        valid_ids = {a["id"] for a in self.agents}
+        new_incoming: dict[str, list[str]] = {}
+        for a in self.agents:
+            aid = a["id"]
+            declared = _parse_connect(responses.get(aid, ""))
+            new_incoming[aid] = _apply_selection(
+                declared,
+                self.incoming.get(aid, []),
+                valid_ids,
+                self.reputation.score,
+                self.fanout,
+                aid,
+            )
+        self.converged = _same_adjacency(self.incoming, new_incoming)
+        self.incoming = new_incoming
+        return self.incoming
+
+
 # ── public interface ──────────────────────────────────────────────────────────
 
 

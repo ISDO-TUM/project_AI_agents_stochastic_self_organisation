@@ -1,3 +1,5 @@
+from typing import Any
+
 from httpx import AsyncClient
 from sqlalchemy import insert
 
@@ -5,6 +7,7 @@ from server.db import create_connection, create_round, create_trial, get_engine
 from server.db.tables import agents
 from server.simulation import (
     Reputation,
+    TopologyController,
     _aggregate_trust,
     _apply_selection,
     _centroid_response,
@@ -409,3 +412,52 @@ def test_reputation_rewards_grounding_and_agreement() -> None:
 
     assert rep.score["grounded"] > rep.score["ungrounded"]
     assert 0.0 <= rep.score["ungrounded"] <= 1.0
+
+
+# ── dynamic topology: TopologyController ────────────────────────────────────
+
+
+def _topo_agents() -> list[dict[str, Any]]:
+    return [
+        {"id": "a1", "name": "A1", "description": "one"},
+        {"id": "a2", "name": "A2", "description": "two"},
+        {"id": "a3", "name": "A3", "description": "three"},
+    ]
+
+
+def test_controller_static_is_noop() -> None:
+    seed = {"a1": ["a2"], "a2": ["a1"], "a3": []}
+    ctrl = TopologyController.create("static", 3, _topo_agents(), seed)
+    returned = ctrl.rewire({"a1": "CONNECT: a3", "a2": "", "a3": ""})
+
+    assert returned == seed
+    assert ctrl.incoming == seed
+    assert ctrl.converged is False
+    assert ctrl.prompt_suffix(_topo_agents()[0]) == ""
+
+
+def test_controller_dynamic_suffix_is_pull_model() -> None:
+    seed = {"a1": ["a2"], "a2": ["a1"], "a3": []}
+    ctrl = TopologyController.create("dynamic", 3, _topo_agents(), seed)
+    suffix = ctrl.prompt_suffix(_topo_agents()[0])
+    assert "registry" in suffix.lower()
+    assert "CONNECT:" in suffix
+    assert "a2" not in suffix and "a3" not in suffix  # no peer ids pushed
+
+
+def test_controller_dynamic_rewires_from_connect_lines() -> None:
+    seed = {"a1": ["a2"], "a2": ["a1"], "a3": []}
+    ctrl = TopologyController.create("dynamic", 3, _topo_agents(), seed)
+    new = ctrl.rewire({"a1": "CONNECT: a3", "a2": "CONNECT: a3", "a3": "CONNECT: a1"})
+
+    assert new["a1"] == ["a3"]
+    assert new["a2"] == ["a3"]
+    assert new["a3"] == ["a1"]
+    assert ctrl.incoming == new
+
+
+def test_controller_dynamic_converges_when_graph_stable() -> None:
+    seed = {"a1": ["a2"], "a2": ["a1"], "a3": ["a1"]}
+    ctrl = TopologyController.create("dynamic", 3, _topo_agents(), seed)
+    ctrl.rewire({"a1": "CONNECT: a2", "a2": "CONNECT: a1", "a3": "CONNECT: a1"})
+    assert ctrl.converged is True
