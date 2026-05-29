@@ -4,6 +4,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import insert
 
+import server.simulation as sim
 from server.db import create_connection, create_round, create_trial, get_engine
 from server.db.tables import agents
 from server.simulation import (
@@ -496,7 +497,7 @@ def _bare_agent() -> dict[str, Any]:
 async def test_call_agent_offers_registry_tool_when_index_present(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import server.simulation as sim
+
     from server.tools.builtin.registry import RegistryIndex
 
     captured: dict[str, Any] = {}
@@ -528,7 +529,6 @@ async def test_call_agent_offers_registry_tool_when_index_present(
 async def test_call_agent_omits_registry_when_index_absent(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    import server.simulation as sim
 
     captured: dict[str, Any] = {}
 
@@ -572,7 +572,6 @@ async def test_dynamic_broadcast_rewires_persisted_graph(monkeypatch: pytest.Mon
     from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy.pool import StaticPool
 
-    import server.simulation as sim
     from server.db.tables import agents as agents_table
     from server.db.tables import messages, metadata
 
@@ -643,7 +642,6 @@ async def test_dynamic_broadcast_bootstraps_from_empty_seed(
     from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy.pool import StaticPool
 
-    import server.simulation as sim
     from server.db.tables import agents as agents_table
     from server.db.tables import messages, metadata
 
@@ -730,7 +728,6 @@ async def test_dynamic_voting_rewires_persisted_graph(monkeypatch: pytest.Monkey
     from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy.pool import StaticPool
 
-    import server.simulation as sim
     from server.db.tables import messages, metadata
 
     engine = create_async_engine(
@@ -783,7 +780,6 @@ async def test_dynamic_weighted_runs_end_to_end(monkeypatch: pytest.MonkeyPatch)
     from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy.pool import StaticPool
 
-    import server.simulation as sim
     from server.db.tables import messages, metadata
 
     engine = create_async_engine(
@@ -841,7 +837,6 @@ async def test_dynamic_voting_rewires_even_when_consensus_stable(
     from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy.pool import StaticPool
 
-    import server.simulation as sim
     from server.db.tables import messages, metadata
 
     engine = create_async_engine(
@@ -899,7 +894,6 @@ async def test_dynamic_voting_isolated_agent_uses_registry_not_global_tally(
     from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy.pool import StaticPool
 
-    import server.simulation as sim
     from server.db.tables import messages, metadata
 
     engine = create_async_engine(
@@ -962,7 +956,6 @@ async def test_dynamic_weighted_rewires_even_when_trust_stable(
     from sqlalchemy.ext.asyncio import create_async_engine
     from sqlalchemy.pool import StaticPool
 
-    import server.simulation as sim
     from server.db.tables import messages, metadata
 
     engine = create_async_engine(

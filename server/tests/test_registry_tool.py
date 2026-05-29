@@ -3,7 +3,6 @@ from typing import Any
 import pytest
 
 import server.tools.builtin.registry as reg
-from server.tools.builtin.registry import RegistryIndex, RegistryTool, _agent_text
 
 
 def _agents() -> list[dict[str, Any]]:
@@ -14,11 +13,11 @@ def _agents() -> list[dict[str, Any]]:
     ]
 
 
-# ── _agent_text + RegistryIndex.build ───────────────────────────────────────
+# ── _agent_text + reg.RegistryIndex.build ───────────────────────────────────────
 
 
 def test_agent_text_includes_metadata_and_file_excerpts() -> None:
-    text = _agent_text(
+    text = reg._agent_text(
         {"id": "a2", "name": "Legal", "description": "Reviews contracts"},
         {"nda.txt": "This non-disclosure agreement governs..."},
     )
@@ -37,7 +36,7 @@ async def test_build_embeds_each_agent(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(reg, "embed_texts", fake_embed)
 
-    index = await RegistryIndex.build(_agents(), files_by_agent={})
+    index = await reg.RegistryIndex.build(_agents(), files_by_agent={})
     assert set(index.vectors) == {"a1", "a2", "a3"}
     assert all(len(v) == 2 for v in index.vectors.values())
 
@@ -51,7 +50,7 @@ async def test_build_falls_back_to_lexical_when_embedding_fails(
 
     monkeypatch.setattr(reg, "embed_texts", boom)
 
-    index = await RegistryIndex.build(_agents(), files_by_agent={})
+    index = await reg.RegistryIndex.build(_agents(), files_by_agent={})
     assert index.vectors == {}
     assert set(index.texts) == {"a1", "a2", "a3"}
 
@@ -65,12 +64,12 @@ async def test_build_falls_back_to_lexical_when_embedding_returns_none(
 
     monkeypatch.setattr(reg, "embed_texts", none_embed)
 
-    index = await RegistryIndex.build(_agents(), files_by_agent={})
+    index = await reg.RegistryIndex.build(_agents(), files_by_agent={})
     assert index.vectors == {}
     assert set(index.texts) == {"a1", "a2", "a3"}
 
 
-# ── RegistryIndex.search ranking ────────────────────────────────────────────
+# ── reg.RegistryIndex.search ranking ────────────────────────────────────────────
 
 
 @pytest.mark.asyncio
@@ -84,7 +83,7 @@ async def test_search_ranks_by_cosine_and_caps(monkeypatch: pytest.MonkeyPatch) 
 
     monkeypatch.setattr(reg, "embed_texts", fake_embed)
 
-    index = RegistryIndex(
+    index = reg.RegistryIndex(
         agents=_agents(),
         texts={"a1": "x", "a2": "y", "a3": "z"},
         file_names={"a1": [], "a2": [], "a3": []},
@@ -96,7 +95,7 @@ async def test_search_ranks_by_cosine_and_caps(monkeypatch: pytest.MonkeyPatch) 
 
 @pytest.mark.asyncio
 async def test_search_excludes_self_and_uses_lexical_without_vectors() -> None:
-    index = RegistryIndex(
+    index = reg.RegistryIndex(
         agents=_agents(),
         texts={
             "a1": "sells things",
@@ -112,32 +111,32 @@ async def test_search_excludes_self_and_uses_lexical_without_vectors() -> None:
     assert ids[0] == "a2"
 
 
-# ── RegistryTool (list / search / get) ──────────────────────────────────────
+# ── reg.RegistryTool (list / search / get) ──────────────────────────────────────
 
 
-def _ctx(index: RegistryIndex, agent_id: str) -> dict[str, Any]:
+def _ctx(index: reg.RegistryIndex, agent_id: str) -> dict[str, Any]:
     return {"registry": index, "agent_id": agent_id}
 
 
 @pytest.mark.asyncio
 async def test_tool_list_excludes_self() -> None:
-    index = RegistryIndex(
+    index = reg.RegistryIndex(
         agents=_agents(), texts={}, file_names={"a1": [], "a2": [], "a3": []}, vectors={}
     )
-    out = await RegistryTool().safe_execute({"action": "list"}, _ctx(index, "a1"))
+    out = await reg.RegistryTool().safe_execute({"action": "list"}, _ctx(index, "a1"))
     assert "a2" in out and "a3" in out
     assert "a1" not in out
 
 
 @pytest.mark.asyncio
 async def test_tool_search_returns_ranked_ids() -> None:
-    index = RegistryIndex(
+    index = reg.RegistryIndex(
         agents=_agents(),
         texts={"a1": "sells", "a2": "legal contracts", "a3": "logistics"},
         file_names={"a1": [], "a2": [], "a3": []},
         vectors={},
     )
-    out = await RegistryTool().safe_execute(
+    out = await reg.RegistryTool().safe_execute(
         {"action": "search", "query": "contract review", "limit": 2}, _ctx(index, "a1")
     )
     assert "a2" in out
@@ -145,13 +144,15 @@ async def test_tool_search_returns_ranked_ids() -> None:
 
 @pytest.mark.asyncio
 async def test_tool_get_returns_profile_with_files() -> None:
-    index = RegistryIndex(
+    index = reg.RegistryIndex(
         agents=_agents(),
         texts={"a1": "", "a2": "", "a3": ""},
         file_names={"a1": [], "a2": ["nda.txt"], "a3": []},
         vectors={},
     )
-    out = await RegistryTool().safe_execute({"action": "get", "agent_id": "a2"}, _ctx(index, "a1"))
+    out = await reg.RegistryTool().safe_execute(
+        {"action": "get", "agent_id": "a2"}, _ctx(index, "a1")
+    )
     assert "Legal" in out and "Reviews contracts" in out and "nda.txt" in out
 
 
@@ -159,12 +160,12 @@ async def test_tool_get_returns_profile_with_files() -> None:
 async def test_tool_handles_missing_index_and_bad_args() -> None:
     assert (
         "not available"
-        in (await RegistryTool().safe_execute({"action": "list"}, {"agent_id": "a1"})).lower()
+        in (await reg.RegistryTool().safe_execute({"action": "list"}, {"agent_id": "a1"})).lower()
     )
-    index = RegistryIndex(agents=_agents(), texts={}, file_names={}, vectors={})
-    miss = await RegistryTool().safe_execute(
+    index = reg.RegistryIndex(agents=_agents(), texts={}, file_names={}, vectors={})
+    miss = await reg.RegistryTool().safe_execute(
         {"action": "get", "agent_id": "ghost"}, _ctx(index, "a1")
     )
     assert "not found" in miss.lower()
-    no_q = await RegistryTool().safe_execute({"action": "search"}, _ctx(index, "a1"))
+    no_q = await reg.RegistryTool().safe_execute({"action": "search"}, _ctx(index, "a1"))
     assert "query" in no_q.lower()
