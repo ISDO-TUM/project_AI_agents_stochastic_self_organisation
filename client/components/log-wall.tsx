@@ -251,7 +251,11 @@ export function LogWall({
                 style={{ display: "flex", alignItems: "flex-start", gap: 10 }}
               >
                 <span style={{ marginTop: 2, flexShrink: 0 }}>
-                  <LIcon name={typeIcon(step.type)} size={11} color={color} />
+                  <LIcon
+                    name={step.icon ?? typeIcon(step.type)}
+                    size={11}
+                    color={color}
+                  />
                 </span>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div
@@ -287,6 +291,32 @@ export function LogWall({
                           {step.target}
                         </span>
                       </>
+                    )}
+                    {step.dynamic && (
+                      <span
+                        title="Connection discovered at runtime via the phone registry (dynamic topology)"
+                        style={{
+                          display: "inline-flex",
+                          alignItems: "center",
+                          gap: 3,
+                          fontSize: 8.5,
+                          fontWeight: 700,
+                          letterSpacing: 0.5,
+                          textTransform: "uppercase",
+                          color: dark ? "#C98A35" : "#9A5B05",
+                          border: `1px solid ${
+                            dark
+                              ? "rgba(201,138,53,0.4)"
+                              : "rgba(154,91,5,0.35)"
+                          }`,
+                          borderRadius: 4,
+                          padding: "0px 5px",
+                          fontFamily: "'JetBrains Mono', monospace",
+                        }}
+                      >
+                        <LIcon name="Phone" size={8} color="currentColor" />
+                        phone-book
+                      </span>
                     )}
                     <span
                       style={{

@@ -61,6 +61,11 @@ export interface SimStep {
   nodeId?: string;
   fromId?: string;
   toId?: string;
+  /** lucide-react icon name overriding the type-derived default. */
+  icon?: string;
+  /** True for a connection formed at runtime (dynamic "phone-book") rather than
+   *  one present in the static seed graph. */
+  dynamic?: boolean;
 }
 
 export interface AnimatedParticle {

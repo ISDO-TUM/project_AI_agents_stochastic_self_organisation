@@ -1372,20 +1372,27 @@ async def _run_weighted_opinion_pool(
         else:
             stable_streak = 0
 
-        if stable_streak >= _WEIGHT_STABILITY_K:
-            await _persist_system_self_message(
-                db,
-                round_id,
-                "convergence",
-                f"Converged after {round_num} round(s) (Δmax < {_WEIGHT_EPSILON}).",
-            )
-            break
+        weights_stable = stable_streak >= _WEIGHT_STABILITY_K
 
-        # Dynamic topology: rewire after the trust-convergence check (so weight
-        # convergence wins first), then reconcile each trust vector to the new
-        # neighbour set — new neighbours get the uniform prior, dropped ones are
-        # removed and the vector is renormalised. Static mode is a no-op: rewire
-        # returns the same graph and the reconciliation is an identity op.
+        # Static: trust stability alone stops the run (unchanged behaviour).
+        if controller.mode != "dynamic":
+            if weights_stable:
+                await _persist_system_self_message(
+                    db,
+                    round_id,
+                    "convergence",
+                    f"Converged after {round_num} round(s) (Δmax < {_WEIGHT_EPSILON}).",
+                )
+                break
+            continue
+
+        # Dynamic: rewire EVERY round from the agents' CONNECT lines BEFORE deciding
+        # to stop, then reconcile each trust vector to the new neighbour set — new
+        # neighbours get the uniform prior, dropped ones are removed and the vector
+        # is renormalised. The previous order (break-then-rewire) meant trust
+        # convergence — which can fire after a single round (K == 1) — short-
+        # circuited the run before the graph ever evolved, so isolated agents could
+        # never join. We keep exploring until the *graph* also settles.
         incoming = controller.rewire(responses)
         for a in agents:
             aid = a["id"]
@@ -1396,9 +1403,12 @@ async def _run_weighted_opinion_pool(
             total = sum(vec.values())
             trust[aid] = {n: w / total for n, w in vec.items()} if total > 0 else vec
         if controller.converged:
-            await _persist_system_self_message(
-                db, round_id, "topology_converged", "Topology stabilised — stopping."
+            note = (
+                f"Answer and topology both stabilised after {round_num} round(s)."
+                if weights_stable
+                else "Topology stabilised — stopping."
             )
+            await _persist_system_self_message(db, round_id, "topology_converged", note)
             break
 
     agg_trust = _aggregate_trust(trust)
@@ -1559,8 +1569,29 @@ async def _run_voting(
                     + controller.prompt_suffix(agent)
                     + _VOTE_INSTRUCTION
                 )
+            elif controller.mode == "dynamic":
+                # Dynamic (phone-book): a truly isolated agent is NOT spoon-fed the
+                # global tally. It must use the registry to find peers and CONNECT,
+                # so next round's rewire wires it and real agent-to-agent messages
+                # flow. No delivery is recorded — its registry tool calls are what
+                # the activity log shows for this turn.
+                agent_id = str(agent["id"])
+                deliveries = []
+                delivery_type = "voting_agent_to_agent"  # unused: no deliveries
+                full_prompt = (
+                    f"Original question: {prompt}\n\n"
+                    f"Your previous answer:\n{own_prev}\n\n"
+                    "You have no incoming connections yet, so you cannot see other "
+                    "agents' answers. Use the registry tool to find the peers whose "
+                    "expertise would most improve your answer, then CONNECT to them so "
+                    "you hear from them next round."
+                    + unknown_nudge
+                    + source_nudge
+                    + controller.prompt_suffix(agent)
+                    + _VOTE_INSTRUCTION
+                )
             else:
-                # Isolated agent: fall back to global tally so it isn't blind.
+                # Static: fall back to global tally so an isolated agent isn't blind.
                 agent_id = str(agent["id"])
                 deliveries = [(None, agent_id, f"{tally_msg}\n\n{reasons_msg}")]
                 delivery_type = "voting_tally"
@@ -1573,7 +1604,6 @@ async def _run_voting(
                     "Keep your REASON grounded in quotes and files/sources when available."
                     + unknown_nudge
                     + source_nudge
-                    + controller.prompt_suffix(agent)
                     + _VOTE_INSTRUCTION
                 )
 
@@ -1605,14 +1635,26 @@ async def _run_voting(
             stable_streak = 1
         last_plurality = plurality
 
-        if stable_streak >= _VOTE_STABILITY_K:
-            break
+        consensus_stable = stable_streak >= _VOTE_STABILITY_K
 
-        # Dynamic topology: rewire after the consensus-stability check so vote
-        # convergence still wins if it triggers first. Static mode is a no-op.
+        # Static: a stable plurality alone stops the run (unchanged behaviour).
+        if controller.mode != "dynamic":
+            if consensus_stable:
+                break
+            continue
+
+        # Dynamic: rewire EVERY round from the agents' CONNECT lines BEFORE deciding
+        # to stop, so an isolated agent's phone-registry picks are always honoured.
+        # The previous order (break-then-rewire) meant a stable plurality — the
+        # common case — short-circuited the run before the graph ever evolved, so
+        # isolated agents could never join. We keep exploring until the *graph*
+        # also settles (or the round limit is hit), not on consensus alone.
         incoming = controller.rewire(responses)
         if controller.converged:
-            await _persist_system_self_message(
-                db, round_id, "topology_converged", "Topology stabilised — stopping."
+            note = (
+                "Answer and topology both stabilised — stopping."
+                if consensus_stable
+                else "Topology stabilised — stopping."
             )
+            await _persist_system_self_message(db, round_id, "topology_converged", note)
             break

@@ -822,6 +822,193 @@ async def test_dynamic_weighted_runs_end_to_end(monkeypatch: pytest.MonkeyPatch)
     assert total > 0  # the run persisted its broadcast + discussion messages
 
 
+@pytest.mark.asyncio
+async def test_dynamic_voting_rewires_even_when_consensus_stable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug regression: the phone-book graph must rewire from CONNECT lines even
+    when the plurality is already stable.
+
+    Previously the consensus-stability ``break`` fired *before* ``rewire()``, so a
+    stable answer (the common case) meant the dynamic topology never evolved and
+    an isolated agent could never join. Here every agent emits a stable VOTE *and*
+    a ``CONNECT: a3``; a3 starts isolated in the seed graph, so if it ever becomes
+    a *sender* the graph must have rewired toward it.
+    """
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy import select as _sa_select
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import StaticPool
+
+    import server.simulation as sim
+    from server.db.tables import messages, metadata
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(metadata.create_all)
+
+    async def fake_call_agent(
+        agent: dict[str, Any],
+        prompt: str,
+        files: dict[str, str],
+        ruleset: str | None = None,
+        registry: Any = None,
+    ) -> tuple[str, list[Any]]:
+        # Stable plurality across all rounds (everyone votes "x") yet everyone
+        # also asks to hear from a3 next round.
+        return "REASON: because\nVOTE: x\nCONNECT: a3", []
+
+    monkeypatch.setattr(sim, "_call_agent", fake_call_agent)
+    monkeypatch.setattr(sim, "load_files_by_agent", AsyncMock(return_value={}))
+    monkeypatch.setattr(sim.RegistryIndex, "build", AsyncMock(return_value=object()))
+
+    async with engine.connect() as conn:
+        await _seed_three_agents(conn)
+        await sim.run_topology(
+            "q", conn, rounds=2, mode="plurality_voting", topology="dynamic", fanout=3
+        )
+        rows = (
+            (
+                await conn.execute(
+                    _sa_select(messages).where(messages.c.message_type == "voting_agent_to_agent")
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+    # a3 is never a sender under the static seed; if it sent anything, the graph
+    # rewired *despite* the stable plurality.
+    assert any(r["from_agent_id"] == "a3" for r in rows)
+
+
+@pytest.mark.asyncio
+async def test_dynamic_voting_isolated_agent_uses_registry_not_global_tally(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """In dynamic mode a truly isolated agent must be pushed to the registry, not
+    spoon-fed the global vote tally (the static fallback)."""
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy import select as _sa_select
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import StaticPool
+
+    import server.simulation as sim
+    from server.db.tables import messages, metadata
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(metadata.create_all)
+
+    seen_prompts: list[tuple[str, str]] = []
+
+    async def fake_call_agent(
+        agent: dict[str, Any],
+        prompt: str,
+        files: dict[str, str],
+        ruleset: str | None = None,
+        registry: Any = None,
+    ) -> tuple[str, list[Any]]:
+        seen_prompts.append((agent["id"], prompt))
+        return "REASON: because\nVOTE: x", []
+
+    monkeypatch.setattr(sim, "_call_agent", fake_call_agent)
+    monkeypatch.setattr(sim, "load_files_by_agent", AsyncMock(return_value={}))
+    monkeypatch.setattr(sim.RegistryIndex, "build", AsyncMock(return_value=object()))
+
+    async with engine.connect() as conn:
+        await _seed_three_agents(conn)
+        await sim.run_topology(
+            "q", conn, rounds=2, mode="plurality_voting", topology="dynamic", fanout=3
+        )
+        tally_rows = (
+            (
+                await conn.execute(
+                    _sa_select(messages).where(messages.c.message_type == "voting_tally")
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+    a3_prompts = [p for aid, p in seen_prompts if aid == "a3"]
+    # The isolated agent is nudged toward the registry...
+    assert any("registry" in p.lower() for p in a3_prompts)
+    # ...and is NOT handed the global tally fallback.
+    assert all("current vote tally" not in p.lower() for p in a3_prompts)
+    assert tally_rows == []
+
+
+@pytest.mark.asyncio
+async def test_dynamic_weighted_rewires_even_when_trust_stable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Bug regression (weighted pool): the graph must rewire from CONNECT lines
+    even when trust has already stabilised (``_WEIGHT_STABILITY_K == 1`` makes
+    this fire after a single round)."""
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy import select as _sa_select
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import StaticPool
+
+    import server.simulation as sim
+    from server.db.tables import messages, metadata
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(metadata.create_all)
+
+    async def fake_call_agent(
+        agent: dict[str, Any],
+        prompt: str,
+        files: dict[str, str],
+        ruleset: str | None = None,
+        registry: Any = None,
+    ) -> tuple[str, list[Any]]:
+        # Identical answer everywhere → trust stabilises immediately, yet all
+        # agents request a3 as their next-round source.
+        return "ANSWER: same\nSOURCE: none\nREASONING: x\nCONNECT: a3", []
+
+    monkeypatch.setattr(sim, "_call_agent", fake_call_agent)
+    monkeypatch.setattr(sim, "load_files_by_agent", AsyncMock(return_value={}))
+    monkeypatch.setattr(sim.RegistryIndex, "build", AsyncMock(return_value=object()))
+    # Force the entity-aware (non-embedding) similarity path so the test is
+    # deterministic regardless of embedding-backend availability.
+    monkeypatch.setattr(sim, "embed_texts", AsyncMock(return_value=None))
+
+    async with engine.connect() as conn:
+        await _seed_three_agents(conn)
+        await sim.run_topology(
+            "q", conn, rounds=3, mode="weighted_opinion_pooling", topology="dynamic", fanout=3
+        )
+        rows = (
+            (
+                await conn.execute(
+                    _sa_select(messages).where(messages.c.message_type == "weighted_agent_to_agent")
+                )
+            )
+            .mappings()
+            .all()
+        )
+
+    assert any(r["from_agent_id"] == "a3" for r in rows)
+
+
 # ── API: topology/fanout request schema + route ─────────────────────────────
 
 
