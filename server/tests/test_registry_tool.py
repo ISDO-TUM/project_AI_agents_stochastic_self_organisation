@@ -3,7 +3,6 @@ from typing import Any
 import pytest
 
 import server.tools.builtin.registry as reg
-from server.tools.builtin.registry import RegistryIndex, RegistryTool, _agent_text
 
 
 def _agents() -> list[dict[str, Any]]:
@@ -18,7 +17,7 @@ def _agents() -> list[dict[str, Any]]:
 
 
 def test_agent_text_includes_metadata_and_file_excerpts() -> None:
-    text = _agent_text(
+    text = reg._agent_text(
         {"id": "a2", "name": "Legal", "description": "Reviews contracts"},
         {"nda.txt": "This non-disclosure agreement governs..."},
     )
@@ -37,7 +36,7 @@ async def test_build_embeds_each_agent(monkeypatch: pytest.MonkeyPatch) -> None:
 
     monkeypatch.setattr(reg, "embed_texts", fake_embed)
 
-    index = await RegistryIndex.build(_agents(), files_by_agent={})
+    index = await reg.RegistryIndex.build(_agents(), files_by_agent={})
     assert set(index.vectors) == {"a1", "a2", "a3"}
     assert all(len(v) == 2 for v in index.vectors.values())
 
@@ -51,7 +50,7 @@ async def test_build_falls_back_to_lexical_when_embedding_fails(
 
     monkeypatch.setattr(reg, "embed_texts", boom)
 
-    index = await RegistryIndex.build(_agents(), files_by_agent={})
+    index = await reg.RegistryIndex.build(_agents(), files_by_agent={})
     assert index.vectors == {}
     assert set(index.texts) == {"a1", "a2", "a3"}
 
@@ -65,7 +64,7 @@ async def test_build_falls_back_to_lexical_when_embedding_returns_none(
 
     monkeypatch.setattr(reg, "embed_texts", none_embed)
 
-    index = await RegistryIndex.build(_agents(), files_by_agent={})
+    index = await reg.RegistryIndex.build(_agents(), files_by_agent={})
     assert index.vectors == {}
     assert set(index.texts) == {"a1", "a2", "a3"}
 
