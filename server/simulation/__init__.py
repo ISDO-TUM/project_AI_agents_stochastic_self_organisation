@@ -699,6 +699,91 @@ async def _create_self_message_round(
     return int(await create_round(db, trial_id, round_index, phase))
 
 
+# ── dynamic topology: discovery, selection, reputation ─────────────────────────
+#
+# These helpers power the optional ``dynamic`` topology, where agents rebuild the
+# communication graph themselves each round. They are pure functions + small
+# dataclasses with no DB access, so they are unit-tested in isolation. ``static``
+# topology never touches any of this (see ``TopologyController``).
+
+_CONNECT_RE = re.compile(r"^\s*CONNECT:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+
+
+def _parse_connect(text: str) -> list[str]:
+    """Pull agent ids from the last CONNECT: line (commas/spaces/brackets ok)."""
+    matches = _CONNECT_RE.findall(text)
+    if not matches:
+        return []
+    raw = matches[-1].strip().strip("[]")
+    parts = [p.strip().strip("[]") for p in re.split(r"[,\s]+", raw)]
+    return [p for p in parts if p]
+
+
+def _apply_selection(
+    declared: list[str],
+    prior: list[str],
+    valid_ids: set[str],
+    reputation: dict[str, float],
+    k: int,
+    self_id: str,
+) -> list[str]:
+    """Resolve one agent's incoming neighbours for the next round.
+
+    Drops invalid/self ids; if nothing valid remains, falls back to the previous
+    round's neighbours (the floor); ranks by reputation; caps at k.
+    """
+
+    def _clean(ids: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for i in ids:
+            if i in valid_ids and i != self_id and i not in seen:
+                seen.add(i)
+                out.append(i)
+        return out
+
+    candidates = _clean(declared) or _clean(prior)
+    candidates.sort(key=lambda i: reputation.get(i, 0.5), reverse=True)
+    return candidates[:k]
+
+
+def _grounded(text: str) -> bool:
+    """Cheap grounding proxy: did the agent supply a REASON line?"""
+    return _extract_reason(text) is not None
+
+
+def _centroid_text(responses: dict[str, str]) -> str:
+    """Cheap consensus proxy: all current-round responses joined."""
+    return "\n".join(responses.values())
+
+
+_REP_INIT = 0.5
+_REP_ALPHA = 0.5  # EMA factor
+_REP_W_GROUND = 0.5
+_REP_W_AGREE = 0.5
+
+
+@dataclass
+class Reputation:
+    """Running per-agent 'worth calling?' score in [0, 1].
+
+    A deliberate slim stand-in for EigenTrust: each round an agent's score is
+    nudged by whether it grounded its answer (supplied a REASON) and how much it
+    agrees with the emerging consensus (Jaccard to the joined responses). Used to
+    bias neighbour selection toward agents the group finds useful.
+    """
+
+    score: dict[str, float] = field(default_factory=dict)
+
+    def update(self, responses: dict[str, str], consensus: str) -> None:
+        for aid, resp in responses.items():
+            ground = 1.0 if _grounded(resp) else 0.0
+            agree = _jaccard(resp, consensus)
+            signal = _REP_W_GROUND * ground + _REP_W_AGREE * agree
+            old = self.score.get(aid, _REP_INIT)
+            self.score[aid] = (1 - _REP_ALPHA) * old + _REP_ALPHA * signal
+
+
 # ── public interface ──────────────────────────────────────────────────────────
 
 

@@ -4,8 +4,11 @@ from sqlalchemy import insert
 from server.db import create_connection, create_round, create_trial, get_engine
 from server.db.tables import agents
 from server.simulation import (
+    Reputation,
     _aggregate_trust,
+    _apply_selection,
     _centroid_response,
+    _centroid_text,
     _entity_aware_similarity,
     _extract_answer,
     _extract_entities,
@@ -16,6 +19,7 @@ from server.simulation import (
     _extract_vote,
     _jaccard,
     _normalise_trust,
+    _parse_connect,
     _tally,
 )
 
@@ -332,3 +336,76 @@ def test_extract_structured_response_partial() -> None:
     assert result["answer"] == "Acme Computers"
     assert result["source"] is None
     assert result["reasoning"] is None
+
+
+# ── dynamic topology: CONNECT parser ────────────────────────────────────────
+
+
+def test_parse_connect_reads_ids_from_last_line() -> None:
+    text = "Answer.\nCONNECT: a1, a2\nMore.\nCONNECT: a3 a4\n"
+    assert _parse_connect(text) == ["a3", "a4"]
+
+
+def test_parse_connect_handles_brackets_and_missing_line() -> None:
+    assert _parse_connect("CONNECT: [a1, a2]") == ["a1", "a2"]
+    assert _parse_connect("no connect line here") == []
+
+
+# ── dynamic topology: neighbour selection ───────────────────────────────────
+
+
+def test_apply_selection_drops_invalid_and_self() -> None:
+    out = _apply_selection(
+        declared=["a2", "ghost", "a1"],
+        prior=["a3"],
+        valid_ids={"a1", "a2", "a3"},
+        reputation={},
+        k=5,
+        self_id="a1",
+    )
+    assert out == ["a2"]
+
+
+def test_apply_selection_falls_back_to_prior_when_empty() -> None:
+    out = _apply_selection(
+        declared=["ghost"],
+        prior=["a2", "a3"],
+        valid_ids={"a1", "a2", "a3"},
+        reputation={},
+        k=5,
+        self_id="a1",
+    )
+    assert set(out) == {"a2", "a3"}
+
+
+def test_apply_selection_ranks_by_reputation_then_caps() -> None:
+    out = _apply_selection(
+        declared=["a2", "a3", "a4"],
+        prior=[],
+        valid_ids={"a2", "a3", "a4"},
+        reputation={"a2": 0.1, "a3": 0.9, "a4": 0.5},
+        k=2,
+        self_id="a1",
+    )
+    assert out == ["a3", "a4"]
+
+
+# ── dynamic topology: reputation tally + consensus proxy ────────────────────
+
+
+def test_centroid_text_joins_responses() -> None:
+    text = _centroid_text({"a1": "alpha beta", "a2": "gamma"})
+    assert "alpha" in text and "gamma" in text
+
+
+def test_reputation_rewards_grounding_and_agreement() -> None:
+    rep = Reputation()
+    consensus = "the supplier is acme computers"
+    responses = {
+        "grounded": "REASON: acme per contract.txt\nVOTE: acme computers",
+        "ungrounded": "totally unrelated rambling about weather",
+    }
+    rep.update(responses, consensus)
+
+    assert rep.score["grounded"] > rep.score["ungrounded"]
+    assert 0.0 <= rep.score["ungrounded"] <= 1.0
