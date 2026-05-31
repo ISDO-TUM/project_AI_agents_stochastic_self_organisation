@@ -72,7 +72,7 @@ function HoverInfo({
   block?: boolean;
 }) {
   const [open, setOpen] = useState(false);
-  const [mounted, setMounted] = useState(false);
+  const mounted = typeof window !== "undefined";
   const { dark } = useTheme();
   const [pos, setPos] = useState<{
     top: number;
@@ -86,10 +86,6 @@ function HoverInfo({
     placeAbove: true,
   });
   const anchorRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    setMounted(true);
-  }, []);
 
   useEffect(() => {
     if (!open) return;
