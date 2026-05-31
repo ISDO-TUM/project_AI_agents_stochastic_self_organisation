@@ -27,6 +27,8 @@ async def _run_simulation_background(
     agent_context: dict[str, str] | None,
     trial_id: str,
     ruleset: str | None,
+    topology: str,
+    fanout: int,
 ) -> None:
     try:
         await run_topology(
@@ -37,6 +39,8 @@ async def _run_simulation_background(
             agent_context=agent_context,
             trial_id=trial_id,
             ruleset=ruleset,
+            topology=topology,
+            fanout=fanout,
         )
     except Exception:
         await update_trial_status(db, trial_id, "failed")
@@ -77,5 +81,7 @@ async def run_simulation(
         body.agent_context,
         trial_id,
         body.ruleset,
+        body.topology,
+        body.fanout,
     )
     return SimulationStartResponse(trial_id=trial_id)

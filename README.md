@@ -1,13 +1,4 @@
----
-title: "TUM Agentic Demo"
-sdk: docker
-python_version: "3.12"
-pinned: false
----
-
-<div align="center">
-
-# 🤖 Self-Organising Agentic System
+# 🤖 Stochastic Agents
 
 [![CI](https://github.com/ISDO-TUM/project_AI_agents_stochastic_self_organisation/actions/workflows/pull-request-checks.yaml/badge.svg)](https://github.com/ISDO-TUM/project_AI_agents_stochastic_self_organisation/actions)
 ![Python](https://img.shields.io/badge/Python-3.12-3776AB?logo=python&logoColor=white)
@@ -20,8 +11,6 @@ _[One-line project description to be added]_
 <!-- 💡 IMAGE SUGGESTION: Add a screenshot or a short GIF demo of the app here.
      Drop the file in docs/assets/ and update the path below.
      Example: ![App demo](docs/assets/demo.gif) -->
-
-</div>
 
 ---
 

@@ -13,6 +13,7 @@ import type {
   KnowledgeFile,
   Provider,
   Rule,
+  TopologyMode,
 } from "./types";
 
 // ─── Wire types ──────────────────────────────────────────────────────────────
@@ -308,6 +309,8 @@ export async function runSimulation(
     mode?: ConsensusMode;
     agentContext?: Record<string, string>;
     ruleset?: string;
+    topology?: TopologyMode;
+    fanout?: number;
   } = {},
 ): Promise<SimulationResult> {
   const {
@@ -315,6 +318,8 @@ export async function runSimulation(
     mode = "broadcast_no_consensus",
     agentContext,
     ruleset,
+    topology = "static",
+    fanout = 3,
   } = options;
   const data = await request<WireSimulationResponse>(
     "POST",
@@ -323,6 +328,8 @@ export async function runSimulation(
       prompt,
       rounds,
       mode,
+      topology,
+      fanout,
       ...(agentContext && { agent_context: agentContext }),
       ...(ruleset && ruleset.trim() && { ruleset }),
     },

@@ -8,6 +8,7 @@ from typing import Any
 from server.schemas import ToolCall
 from server.tools.base import Tool
 from server.tools.builtin.files import FilesTool
+from server.tools.builtin.registry import RegistryTool
 
 # ── registry ───────────────────────────────────────────────────────
 
@@ -23,6 +24,7 @@ def get_tool(name: str) -> Tool | None:
 
 
 register(FilesTool())
+register(RegistryTool())
 
 # ── provider format builders ───────────────────────────────────────
 

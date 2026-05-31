@@ -1,7 +1,14 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Agent, Source, Edge, AnimatedParticle, Tweaks } from "@/lib/types";
+import {
+  Agent,
+  Source,
+  Edge,
+  AnimatedParticle,
+  Tweaks,
+  SimStep,
+} from "@/lib/types";
 import { clamp } from "@/lib/utils";
 import { useTheme } from "@/lib/theme-context";
 
@@ -9,11 +16,13 @@ import { AgentNode } from "./agent-node";
 import { SourceNode } from "./source-node";
 import { EdgeLayer } from "./edge-layer";
 import { Minimap } from "./minimap";
+import { PhonebookPanel } from "../phonebook-panel";
 
 interface CanvasProps {
   agents: Agent[];
   sources: Source[];
   edges: Edge[];
+  dynamicEdges: Edge[];
   selectedNode: string | null;
   selectedEdge: string | null;
   onSelectNode: (id: string, e: React.MouseEvent) => void;
@@ -31,6 +40,15 @@ interface CanvasProps {
   /** Fired by parent when the available canvas width changes; dx is the
    *  translation to apply to the current pan so nodes stay put visually. */
   panAdjust?: { dx: number; seq: number };
+  /** When provided, renders the PhonebookPanel inside the world transform so
+   *  it pans/zooms with the canvas like any other element. */
+  phonebook?: {
+    agents: Agent[];
+    steps: SimStep[];
+    currentStep: number;
+    dynamicEdges: Edge[];
+    simMode: boolean;
+  } | null;
 }
 
 interface ConnectingState {
@@ -50,6 +68,7 @@ export function Canvas({
   agents,
   sources,
   edges,
+  dynamicEdges,
   selectedNode,
   selectedEdge,
   onSelectNode,
@@ -65,6 +84,7 @@ export function Canvas({
   tweaks,
   onCanvasClick,
   panAdjust,
+  phonebook = null,
 }: CanvasProps) {
   const { dark } = useTheme();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -84,10 +104,29 @@ export function Canvas({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPan((p) => ({ ...p, x: p.x + panAdjust.dx }));
   }, [panAdjust]);
-  const handleWheel = useCallback((e: WheelEvent) => {
-    e.preventDefault();
-    setZoom((z) => clamp(z * (e.deltaY > 0 ? 0.93 : 1.07), 0.15, 5));
-  }, []);
+  const handleWheel = useCallback(
+    (e: WheelEvent) => {
+      e.preventDefault();
+      const el = canvasRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      // Cursor position in canvas-element space (screen coords relative to canvas)
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const oldZoom = zoom;
+      const newZoom = clamp(oldZoom * (e.deltaY > 0 ? 0.93 : 1.07), 0.15, 5);
+      const { x: px, y: py } = pan;
+      // Keep the world-space point under the cursor fixed:
+      //   worldPt = (screenPt - pan) / zoom
+      //   newPan  = screenPt - worldPt * newZoom
+      setPan({
+        x: mx - ((mx - px) / oldZoom) * newZoom,
+        y: my - ((my - py) / oldZoom) * newZoom,
+      });
+      setZoom(newZoom);
+    },
+    [pan, zoom],
+  );
 
   useEffect(() => {
     const el = canvasRef.current;
@@ -298,6 +337,7 @@ export function Canvas({
       >
         <EdgeLayer
           edges={edges}
+          dynamicEdges={dynamicEdges}
           agents={agents}
           sources={sources}
           selectedEdge={selectedEdge}
@@ -363,10 +403,21 @@ export function Canvas({
             tweaks={tweaks}
           />
         ))}
+        {/* PhonebookPanel lives in world space — pans & zooms with the canvas */}
+        {phonebook && (
+          <PhonebookPanel
+            agents={phonebook.agents}
+            steps={phonebook.steps}
+            currentStep={phonebook.currentStep}
+            dynamicEdges={phonebook.dynamicEdges}
+            simMode={phonebook.simMode}
+            zoom={zoom}
+          />
+        )}
       </div>
 
-      {/* Empty state */}
-      {!hasNodes && (
+      {/* Empty state — hidden when the phonebook panel takes its place */}
+      {!hasNodes && !phonebook && (
         <div
           style={{
             position: "absolute",
