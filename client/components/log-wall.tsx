@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useCallback } from "react";
+import { useEffect, useRef, useCallback, useMemo, useState } from "react";
 import { SimStep } from "@/lib/types";
 import { BURG, BURG_LT, BURG_GLOW, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
@@ -9,6 +9,54 @@ import { LIcon } from "@/lib/icons";
 
 const MIN_WIDTH = 220;
 const MAX_WIDTH = 640;
+
+const IMPORTANT_SYSTEM_LABELS = new Set([
+  "Broadcast",
+  "Vote tally",
+  "Tally delivered",
+  "Consensus",
+  "Converged",
+  "Topology settled",
+  "Trust update",
+]);
+
+const REGISTRY_TOOL_HINTS = [
+  "Agents you can contact:",
+  "Most relevant agents:",
+  "No matching agents",
+  "Registry not available",
+  "Knowledge files:",
+  "' not found.",
+];
+
+function isImportantStep(step: SimStep): boolean {
+  if (step.type === "agent-to-agent") {
+    // Keep peer exchanges visible in condensed mode.
+    return true;
+  }
+
+  if (step.type === "tool") {
+    // Keep high-signal tool events: registry discovery + failures.
+    if (REGISTRY_TOOL_HINTS.some((h) => step.msg.includes(h))) return true;
+    return /(error|failed|blocked|not found|not available)/i.test(step.msg);
+  }
+
+  if (step.type === "agent-to-source") {
+    return true;
+  }
+
+  if (step.type === "system") {
+    if (step.icon === "TriangleAlert") return true;
+    // Hide only the noisiest internal trace entries.
+    if (step.label === "Trust vector") return false;
+    if (IMPORTANT_SYSTEM_LABELS.has(step.label)) return true;
+    return /(error|failed|blocked|consensus|converged|topology|round|completed)/i.test(
+      step.msg,
+    );
+  }
+
+  return false;
+}
 
 interface LogWallProps {
   steps: SimStep[];
@@ -72,6 +120,15 @@ export function LogWall({
   const listRef = useRef<HTMLDivElement>(null);
   const { dark } = useTheme();
   const t = getTheme(dark);
+  const [importantOnly, setImportantOnly] = useState(true);
+
+  const visibleSteps = useMemo(
+    () =>
+      steps
+        .map((step, originalIndex) => ({ step, originalIndex }))
+        .filter(({ step }) => !importantOnly || isImportantStep(step)),
+    [steps, importantOnly],
+  );
 
   // ── Resize drag ────────────────────────────────────────────────────────
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
@@ -162,6 +219,37 @@ export function LogWall({
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 4 }}>
           <button
+            onClick={() => setImportantOnly((v) => !v)}
+            title={
+              importantOnly
+                ? "Showing important events only"
+                : "Showing full trace"
+            }
+            style={{
+              border: `1px solid ${importantOnly ? BURG : t.border}`,
+              background: importantOnly
+                ? dark
+                  ? "rgba(139,26,47,0.16)"
+                  : "rgba(139,26,47,0.09)"
+                : "transparent",
+              cursor: "pointer",
+              color: importantOnly ? BURG : t.textDim,
+              display: "inline-flex",
+              alignItems: "center",
+              gap: 5,
+              padding: "3px 7px",
+              borderRadius: 999,
+              fontSize: 9,
+              fontWeight: 700,
+              letterSpacing: 0.45,
+              textTransform: "uppercase",
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
+          >
+            <LIcon name="Filter" size={10} color="currentColor" />
+            {importantOnly ? "Important" : "Full"}
+          </button>
+          <button
             onClick={() => {
               const blob = new Blob([JSON.stringify(steps, null, 2)], {
                 type: "application/json",
@@ -224,16 +312,29 @@ export function LogWall({
         ref={listRef}
         style={{ flex: 1, overflowY: "auto", padding: "4px 0" }}
       >
-        {steps.map((step, idx) => {
-          const isActive = idx === currentStep;
-          const isPast = idx < currentStep;
-          const isFuture = idx > currentStep;
+        {visibleSteps.length === 0 && importantOnly && (
+          <div
+            style={{
+              padding: "16px 18px",
+              color: t.textDim,
+              fontSize: 11,
+              lineHeight: 1.45,
+              fontStyle: "italic",
+            }}
+          >
+            No important events yet. Switch to Full to inspect all steps live.
+          </div>
+        )}
+        {visibleSteps.map(({ step, originalIndex }) => {
+          const isActive = originalIndex === currentStep;
+          const isPast = originalIndex < currentStep;
+          const isFuture = originalIndex > currentStep;
           const color = typeColor(step.type, dark, t.textDim, step.roundIndex);
           return (
             <div
               key={step.id}
               data-active={isActive ? "true" : "false"}
-              onClick={() => onJumpTo(idx)}
+              onClick={() => onJumpTo(originalIndex)}
               style={{
                 padding: "11px 18px",
                 borderLeft: `2.5px solid ${isActive ? BURG : "transparent"}`,
@@ -364,7 +465,7 @@ export function LogWall({
                           letterSpacing: 0.5,
                         }}
                       >
-                        STEP {idx + 1}/{steps.length}
+                        STEP {originalIndex + 1}/{steps.length}
                       </span>
                     </div>
                   )}

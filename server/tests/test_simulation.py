@@ -4,6 +4,7 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import insert
 
+import server.simulation as sim
 from server.db import create_connection, create_round, create_trial, get_engine
 from server.db.tables import agents
 from server.simulation import (
