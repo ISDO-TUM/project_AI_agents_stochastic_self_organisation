@@ -197,23 +197,50 @@ export function EdgeLayer({
       })}
 
       {/* Edges formed at runtime in dynamic topology — rendered dashed so they
-          read as "freshly rewired" and distinct from the static seed graph. */}
+          read as "freshly rewired" and distinct from the static seed graph.
+          When the active step travels along one of these edges the same glow +
+          pulse treatment applied to static edges is shown here too. */}
       {dynamicEdges.map((edge) => {
         const from = posMap.get(edge.from) ?? null;
         const to = posMap.get(edge.to) ?? null;
         if (!from || !to) return null;
+        const isActive = activeEdgeId === edge.id;
+        const reversed = isActive && activeEdgeReversed;
+        const pathFrom = reversed ? to : from;
+        const pathTo = reversed ? from : to;
+        const path = bezierPath(pathFrom, pathTo);
         return (
-          <path
-            key={edge.id}
-            d={bezierPath(from, to)}
-            stroke={accent}
-            strokeWidth={ew * 1.4}
-            strokeDasharray="6 5"
-            fill="none"
-            opacity={0.8}
-            markerEnd="url(#arr-a)"
-            style={{ transition: "opacity 0.2s" }}
-          />
+          <g key={edge.id}>
+            {isActive && (
+              <path
+                d={path}
+                stroke={accent}
+                strokeWidth={ew * 3}
+                fill="none"
+                opacity={0.22}
+                filter="url(#eGlow)"
+              />
+            )}
+            <path
+              d={path}
+              stroke={accent}
+              strokeWidth={isActive ? ew * 1.8 : ew * 1.4}
+              strokeDasharray={isActive ? undefined : "6 5"}
+              fill="none"
+              opacity={isActive ? 0.95 : 0.8}
+              markerEnd="url(#arr-a)"
+              style={{ transition: "opacity 0.2s, stroke-width 0.2s" }}
+            />
+            {isActive && (
+              <circle r="4.5" fill={accent} opacity={0.95}>
+                <animateMotion
+                  dur={`${tweaks.particleSpeed}s`}
+                  repeatCount="indefinite"
+                  path={path}
+                />
+              </circle>
+            )}
+          </g>
         );
       })}
 

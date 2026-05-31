@@ -1,7 +1,14 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Agent, Source, Edge, AnimatedParticle, Tweaks } from "@/lib/types";
+import {
+  Agent,
+  Source,
+  Edge,
+  AnimatedParticle,
+  Tweaks,
+  SimStep,
+} from "@/lib/types";
 import { clamp } from "@/lib/utils";
 import { useTheme } from "@/lib/theme-context";
 
@@ -9,6 +16,7 @@ import { AgentNode } from "./agent-node";
 import { SourceNode } from "./source-node";
 import { EdgeLayer } from "./edge-layer";
 import { Minimap } from "./minimap";
+import { PhonebookPanel } from "../phonebook-panel";
 
 interface CanvasProps {
   agents: Agent[];
@@ -32,6 +40,15 @@ interface CanvasProps {
   /** Fired by parent when the available canvas width changes; dx is the
    *  translation to apply to the current pan so nodes stay put visually. */
   panAdjust?: { dx: number; seq: number };
+  /** When provided, renders the PhonebookPanel inside the world transform so
+   *  it pans/zooms with the canvas like any other element. */
+  phonebook?: {
+    agents: Agent[];
+    steps: SimStep[];
+    currentStep: number;
+    dynamicEdges: Edge[];
+    simMode: boolean;
+  } | null;
 }
 
 interface ConnectingState {
@@ -67,6 +84,7 @@ export function Canvas({
   tweaks,
   onCanvasClick,
   panAdjust,
+  phonebook = null,
 }: CanvasProps) {
   const { dark } = useTheme();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -366,10 +384,21 @@ export function Canvas({
             tweaks={tweaks}
           />
         ))}
+        {/* PhonebookPanel lives in world space — pans & zooms with the canvas */}
+        {phonebook && (
+          <PhonebookPanel
+            agents={phonebook.agents}
+            steps={phonebook.steps}
+            currentStep={phonebook.currentStep}
+            dynamicEdges={phonebook.dynamicEdges}
+            simMode={phonebook.simMode}
+            zoom={zoom}
+          />
+        )}
       </div>
 
-      {/* Empty state */}
-      {!hasNodes && (
+      {/* Empty state — hidden when the phonebook panel takes its place */}
+      {!hasNodes && !phonebook && (
         <div
           style={{
             position: "absolute",

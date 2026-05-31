@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   Agent,
   ConsensusMode,
@@ -119,6 +119,27 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     };
   }, []);
 
+  // Edges formed at runtime: agent-to-agent steps played back so far whose
+  // (from,to) pair is NOT one of the static seed edges. Deduped by from->to.
+  const dynamicEdges = useMemo((): Edge[] => {
+    const seedKeys = new Set<string>();
+    for (const e of edges) {
+      seedKeys.add(`${e.from}->${e.to}`);
+      seedKeys.add(`${e.to}->${e.from}`);
+    }
+    const seen = new Set<string>();
+    const out: Edge[] = [];
+    for (let i = 0; i <= cur && i < steps.length; i++) {
+      const s = steps[i];
+      if (s.type !== "agent-to-agent" || !s.fromId || !s.toId) continue;
+      const key = `${s.fromId}->${s.toId}`;
+      if (seedKeys.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ id: `dyn-${key}`, from: s.fromId, to: s.toId });
+    }
+    return out;
+  }, [cur, steps, edges]);
+
   useEffect(() => {
     if (!simMode || !steps.length) return;
     const s = steps[cur];
@@ -129,7 +150,10 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
       setActEdge(null);
       setActEdgeReversed(false);
     } else if (s.fromId && s.toId) {
-      const e = edges.find(
+      // Search static edges first; fall back to runtime-formed dynamic edges so
+      // that phone-book connections also receive the directional pulse.
+      const allEdges = [...edges, ...dynamicEdges];
+      const e = allEdges.find(
         (e) =>
           (e.from === s.fromId && e.to === s.toId) ||
           (e.from === s.toId && e.to === s.fromId),
@@ -142,7 +166,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
       setActEdge(null);
       setActEdgeReversed(false);
     }
-  }, [cur, simMode, steps, edges]);
+  }, [cur, simMode, steps, edges, dynamicEdges]);
 
   const runSim = useCallback(
     async (
@@ -248,27 +272,6 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     setParticles([]);
     setOutcome(null);
   }, []);
-
-  // Edges formed at runtime: agent-to-agent steps played back so far whose
-  // (from,to) pair is NOT one of the static seed edges. Deduped by from->to.
-  const dynamicEdges: Edge[] = (() => {
-    const seedKeys = new Set<string>();
-    for (const e of edges) {
-      seedKeys.add(`${e.from}->${e.to}`);
-      seedKeys.add(`${e.to}->${e.from}`);
-    }
-    const seen = new Set<string>();
-    const out: Edge[] = [];
-    for (let i = 0; i <= cur && i < steps.length; i++) {
-      const s = steps[i];
-      if (s.type !== "agent-to-agent" || !s.fromId || !s.toId) continue;
-      const key = `${s.fromId}->${s.toId}`;
-      if (seedKeys.has(key) || seen.has(key)) continue;
-      seen.add(key);
-      out.push({ id: `dyn-${key}`, from: s.fromId, to: s.toId });
-    }
-    return out;
-  })();
 
   return {
     steps,

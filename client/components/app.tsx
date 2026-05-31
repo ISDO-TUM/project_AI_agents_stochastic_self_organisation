@@ -31,6 +31,7 @@ import { HistoryPage } from "@/components/history-page";
 import { PromptBar } from "@/components/prompt-bar";
 import { ContextMenu, ContextMenuItem } from "@/components/context-menu";
 import { TweaksPanel } from "@/components/tweaks-panel";
+
 import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
 import { getTheme } from "@/lib/theme";
@@ -483,6 +484,17 @@ export function App() {
           tweaks={tweaks}
           onCanvasClick={onCanvasClick}
           panAdjust={panAdjust}
+          phonebook={
+            topology === "dynamic"
+              ? {
+                  agents,
+                  steps,
+                  currentStep: cur,
+                  dynamicEdges: simMode ? dynamicEdges : [],
+                  simMode,
+                }
+              : null
+          }
         />
 
         <Toolbar
