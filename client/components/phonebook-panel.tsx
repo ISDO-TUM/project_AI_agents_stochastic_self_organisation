@@ -364,7 +364,7 @@ export function PhonebookPanel({
                   color: t.text,
                 }}
               >
-                Phone Book
+                Phone Registry
               </span>
               {registryActive && (
                 <span

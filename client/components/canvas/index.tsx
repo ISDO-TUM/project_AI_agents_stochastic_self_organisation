@@ -90,6 +90,13 @@ export function Canvas({
   const canvasRef = useRef<HTMLDivElement>(null);
   const [pan, setPan] = useState({ x: 0, y: 0 });
   const [zoom, setZoom] = useState(1);
+  // Refs that always mirror the latest state values so the wheel handler
+  // (registered via addEventListener, not a React synthetic event) can read
+  // current pan/zoom without stale-closure issues.
+  const panRef = useRef(pan);
+  const zoomRef = useRef(zoom);
+  panRef.current = pan;
+  zoomRef.current = zoom;
   const panning = useRef(false);
   const panStart = useRef({ x: 0, y: 0 });
   const connectingFrom = useRef<ConnectingState | null>(null);
@@ -106,7 +113,23 @@ export function Canvas({
   }, [panAdjust]);
   const handleWheel = useCallback((e: WheelEvent) => {
     e.preventDefault();
-    setZoom((z) => clamp(z * (e.deltaY > 0 ? 0.93 : 1.07), 0.15, 5));
+    const el = canvasRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    // Cursor position in canvas-element space (screen coords relative to canvas)
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+    const oldZoom = zoomRef.current;
+    const newZoom = clamp(oldZoom * (e.deltaY > 0 ? 0.93 : 1.07), 0.15, 5);
+    const { x: px, y: py } = panRef.current;
+    // Keep the world-space point under the cursor fixed:
+    //   worldPt = (screenPt - pan) / zoom
+    //   newPan  = screenPt - worldPt * newZoom
+    setPan({
+      x: mx - ((mx - px) / oldZoom) * newZoom,
+      y: my - ((my - py) / oldZoom) * newZoom,
+    });
+    setZoom(newZoom);
   }, []);
 
   useEffect(() => {
