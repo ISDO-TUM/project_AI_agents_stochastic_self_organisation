@@ -1,6 +1,7 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import { ConsensusMode, Rule, TopologyMode } from "@/lib/types";
 import { BURG, BURG_DIM, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
@@ -16,15 +17,169 @@ const PROVIDERS = [
   { key: "proxyKey", label: "Custom Proxy" },
 ] as const;
 
-const CONSENSUS_LABELS: [ConsensusMode, string][] = [
-  ["broadcast_no_consensus", "Broadcast"],
-  ["weighted_opinion_pooling", "Weighted"],
-  ["plurality_voting", "Plurality"],
+type SegmentedOption<T extends string> = {
+  value: T;
+  label: string;
+  tooltip?: string;
+};
+
+const CONSENSUS_OPTIONS: SegmentedOption<ConsensusMode>[] = [
+  {
+    value: "broadcast_no_consensus",
+    label: "Broadcast",
+    tooltip:
+      "No voting step. Agents share updates, then proceed with their own final answer.",
+  },
+  {
+    value: "weighted_opinion_pooling",
+    label: "Weighted Pooling",
+    tooltip:
+      "Agent votes are blended using confidence weights, so stronger evidence has more impact.",
+  },
+  {
+    value: "plurality_voting",
+    label: "Plurality Vote",
+    tooltip:
+      "The answer with the most votes wins, even without an absolute majority.",
+  },
+];
+
+const TOPOLOGY_OPTIONS: SegmentedOption<TopologyMode>[] = [
+  {
+    value: "static",
+    label: "Static",
+    tooltip:
+      "Uses only the connections drawn on the canvas for the entire run.",
+  },
+  {
+    value: "dynamic",
+    label: "Dynamic",
+    tooltip: "Agents discover and rewire peers at runtime based on relevance.",
+  },
 ];
 
 type Theme = ReturnType<typeof getTheme>;
 
-function FieldLabel({ text, t }: { text: string; t: Theme }) {
+function HoverInfo({
+  text,
+  t,
+  children,
+  block = false,
+}: {
+  text: string;
+  t: Theme;
+  children: ReactNode;
+  block?: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [mounted, setMounted] = useState(false);
+  const { dark } = useTheme();
+  const [pos, setPos] = useState<{
+    top: number;
+    left: number;
+    width: number;
+    placeAbove: boolean;
+  }>({
+    top: 0,
+    left: 0,
+    width: 250,
+    placeAbove: true,
+  });
+  const anchorRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+
+    const updatePosition = () => {
+      const anchor = anchorRef.current;
+      if (!anchor) return;
+
+      const rect = anchor.getBoundingClientRect();
+      const viewportW = window.innerWidth;
+      const viewportH = window.innerHeight;
+      const width = Math.max(180, Math.min(280, viewportW - 16));
+      const centeredLeft = rect.left + rect.width / 2 - width / 2;
+      const left = Math.max(8, Math.min(centeredLeft, viewportW - width - 8));
+
+      const preferredTop = rect.top - 8;
+      const useBottom = preferredTop < 120;
+      const top = useBottom
+        ? Math.min(rect.bottom + 8, viewportH - 44)
+        : rect.top - 8;
+
+      setPos({ top, left, width, placeAbove: !useBottom });
+    };
+
+    updatePosition();
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
+    return () => {
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
+    };
+  }, [open]);
+
+  return (
+    <div
+      ref={anchorRef}
+      style={{
+        position: "relative",
+        display: block ? "block" : "flex",
+        flex: block ? 1 : undefined,
+        minWidth: 0,
+        width: block ? "100%" : undefined,
+      }}
+      onMouseEnter={() => setOpen(true)}
+      onMouseLeave={() => setOpen(false)}
+      onFocus={() => setOpen(true)}
+      onBlur={() => setOpen(false)}
+    >
+      {children}
+      {open &&
+        mounted &&
+        createPortal(
+          <div
+            role="tooltip"
+            style={{
+              position: "fixed",
+              left: pos.left,
+              top: pos.top,
+              transform: pos.placeAbove ? "translateY(-100%)" : "none",
+              background: dark ? "#110e1a" : "#fffdfd",
+              border: `1px solid ${t.borderHi}`,
+              borderRadius: 10,
+              boxShadow: "0 8px 24px rgba(0,0,0,0.28)",
+              color: t.text,
+              fontSize: 11,
+              lineHeight: 1.4,
+              fontWeight: 500,
+              padding: "8px 10px",
+              width: pos.width,
+              zIndex: 4000,
+              pointerEvents: "none",
+            }}
+          >
+            {text}
+          </div>,
+          document.body,
+        )}
+    </div>
+  );
+}
+
+function FieldLabel({
+  text,
+  t,
+  tooltip,
+}: {
+  text: string;
+  t: Theme;
+  tooltip?: string;
+}) {
   return (
     <div
       style={{
@@ -35,9 +190,34 @@ function FieldLabel({ text, t }: { text: string; t: Theme }) {
         fontFamily: "'JetBrains Mono', monospace",
         textTransform: "uppercase",
         marginBottom: 7,
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
       }}
     >
       {text}
+      {tooltip && (
+        <HoverInfo text={tooltip} t={t}>
+          <span
+            tabIndex={0}
+            aria-label={`${text} help`}
+            style={{
+              width: 14,
+              height: 14,
+              borderRadius: "50%",
+              border: `1px solid ${t.border}`,
+              color: t.textSub,
+              display: "inline-flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 9,
+              fontWeight: 700,
+            }}
+          >
+            ?
+          </span>
+        </HoverInfo>
+      )}
     </div>
   );
 }
@@ -49,7 +229,7 @@ function Segmented<T extends string>({
   disabled,
   t,
 }: {
-  options: [T, string][];
+  options: SegmentedOption<T>[];
   value: T;
   onChange: (v: T) => void;
   disabled: boolean;
@@ -58,7 +238,8 @@ function Segmented<T extends string>({
   return (
     <div
       style={{
-        display: "flex",
+        display: "grid",
+        gridTemplateColumns: `repeat(${options.length}, minmax(0, 1fr))`,
         gap: 6,
         background: t.inputBg,
         border: `1px solid ${t.border}`,
@@ -66,31 +247,41 @@ function Segmented<T extends string>({
         padding: 4,
       }}
     >
-      {options.map(([val, label]) => {
-        const active = val === value;
-        return (
+      {options.map((option) => {
+        const active = option.value === value;
+        const button = (
           <button
-            key={val}
+            key={option.value}
             type="button"
             disabled={disabled}
-            onClick={() => onChange(val)}
+            onClick={() => onChange(option.value)}
             style={{
-              flex: 1,
+              width: "100%",
+              minWidth: 0,
               background: active ? BURG : "transparent",
               border: "none",
               borderRadius: 7,
               color: active ? "#fff" : t.textSub,
               fontSize: 12,
               fontWeight: active ? 700 : 500,
-              padding: "7px 8px",
+              minHeight: 34,
+              padding: "8px 10px",
               cursor: disabled ? "not-allowed" : "pointer",
               opacity: disabled ? 0.5 : 1,
               transition: "all 0.15s",
               whiteSpace: "nowrap",
             }}
           >
-            {label}
+            {option.label}
           </button>
+        );
+
+        return option.tooltip ? (
+          <HoverInfo key={option.value} text={option.tooltip} t={t} block>
+            {button}
+          </HoverInfo>
+        ) : (
+          button
         );
       })}
     </div>
@@ -178,9 +369,10 @@ export function TweaksPanel({
     <div
       style={{
         position: "fixed",
-        bottom: 96,
+        top: "clamp(16px, 8vh, 88px)",
         left: 16,
-        width: 340,
+        width: "min(460px, calc(100vw - 32px))",
+        maxHeight: "min(760px, calc(100vh - 32px))",
         background: dark ? "rgba(8,6,16,0.97)" : "rgba(255,253,255,0.98)",
         backdropFilter: "blur(28px)",
         border: `1px solid ${t.borderHi}`,
@@ -190,7 +382,9 @@ export function TweaksPanel({
           ? "0 0 0 1px rgba(139,26,47,0.16), 0 20px 60px rgba(0,0,0,0.7)"
           : "0 0 0 1px rgba(139,26,47,0.10), 0 12px 40px rgba(0,0,0,0.12)",
         animation: "tweakSlide 0.22s cubic-bezier(0.22,1,0.36,1)",
-        overflow: "hidden",
+        overflow: "visible",
+        display: "flex",
+        flexDirection: "column",
       }}
     >
       {/* Header */}
@@ -278,7 +472,7 @@ export function TweaksPanel({
         className="pscroll"
         style={{
           padding: "14px 18px 18px",
-          maxHeight: 440,
+          maxHeight: "min(620px, calc(100vh - 210px))",
           overflowY: "auto",
         }}
       >
@@ -297,10 +491,14 @@ export function TweaksPanel({
               run.
             </p>
 
-            {/* Consensus mode */}
-            <FieldLabel text="Consensus mode" t={t} />
+            {/* Consensus */}
+            <FieldLabel
+              text="Consensus"
+              t={t}
+              tooltip="Select how the swarm combines agent opinions into a final decision."
+            />
             <Segmented
-              options={CONSENSUS_LABELS}
+              options={CONSENSUS_OPTIONS}
               value={consensusMode}
               onChange={onConsensusModeChange}
               disabled={simRunning}
@@ -309,12 +507,13 @@ export function TweaksPanel({
 
             {/* Topology */}
             <div style={{ height: 14 }} />
-            <FieldLabel text="Topology" t={t} />
+            <FieldLabel
+              text="Topology"
+              t={t}
+              tooltip="Select how communication links are formed between agents during a run."
+            />
             <Segmented
-              options={[
-                ["static", "Static"],
-                ["dynamic", "Dynamic"],
-              ]}
+              options={TOPOLOGY_OPTIONS}
               value={topology}
               onChange={onTopologyChange}
               disabled={simRunning}
@@ -640,64 +839,67 @@ export function TweaksPanel({
               {rules.map((rule) => {
                 const active = selectedRules.has(rule.id);
                 return (
-                  <div
-                    key={rule.id}
-                    role="checkbox"
-                    aria-checked={active}
-                    tabIndex={0}
-                    onClick={() => onToggleRule(rule.id)}
-                    onKeyDown={(e) =>
-                      (e.key === " " || e.key === "Enter") &&
-                      onToggleRule(rule.id)
-                    }
-                    style={{
-                      display: "flex",
-                      alignItems: "flex-start",
-                      gap: 10,
-                      cursor: "pointer",
-                      padding: "10px 12px",
-                      borderRadius: 10,
-                      border: `1.5px solid ${
-                        active ? "rgba(139,26,47,0.38)" : t.border
-                      }`,
-                      background: active ? BURG_DIM : t.inputBg,
-                      transition: "all 0.15s",
-                    }}
-                  >
-                    <div style={{ paddingTop: 1, flexShrink: 0 }}>
-                      <Checkbox
-                        checked={active}
-                        onChange={() => onToggleRule(rule.id)}
-                      />
-                    </div>
+                  <HoverInfo key={rule.id} text={rule.instruction} t={t} block>
                     <div
+                      role="checkbox"
+                      aria-checked={active}
+                      tabIndex={0}
+                      onClick={() => onToggleRule(rule.id)}
+                      onKeyDown={(e) =>
+                        (e.key === " " || e.key === "Enter") &&
+                        onToggleRule(rule.id)
+                      }
                       style={{
                         display: "flex",
-                        flexDirection: "column",
-                        gap: 4,
-                        minWidth: 0,
+                        alignItems: "center",
+                        gap: 10,
+                        cursor: "pointer",
+                        padding: "10px 12px",
+                        borderRadius: 10,
+                        border: `1.5px solid ${
+                          active ? "rgba(139,26,47,0.38)" : t.border
+                        }`,
+                        background: active ? BURG_DIM : t.inputBg,
+                        transition: "all 0.15s",
                       }}
                     >
+                      <div style={{ paddingTop: 1, flexShrink: 0 }}>
+                        <Checkbox
+                          checked={active}
+                          onChange={() => onToggleRule(rule.id)}
+                        />
+                      </div>
                       <span
                         style={{
                           fontSize: 13,
                           color: t.text,
                           fontWeight: active ? 600 : 500,
+                          minWidth: 0,
+                          flex: 1,
                         }}
                       >
                         {rule.label}
                       </span>
                       <span
+                        aria-hidden
                         style={{
-                          fontSize: 11,
+                          width: 14,
+                          height: 14,
+                          borderRadius: "50%",
+                          border: `1px solid ${t.border}`,
                           color: t.textSub,
-                          lineHeight: 1.5,
+                          display: "inline-flex",
+                          alignItems: "center",
+                          justifyContent: "center",
+                          fontSize: 9,
+                          fontWeight: 700,
+                          flexShrink: 0,
                         }}
                       >
-                        {rule.instruction}
+                        ?
                       </span>
                     </div>
-                  </div>
+                  </HoverInfo>
                 );
               })}
             </div>

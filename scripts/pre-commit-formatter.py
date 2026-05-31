@@ -300,6 +300,25 @@ def _find_uv() -> str:
     return "uv"
 
 
+def _find_pre_commit(repo_root: str) -> list[str] | None:
+    """Return a runnable pre-commit command with local-first fallbacks."""
+    import shutil
+
+    candidates = [
+        os.path.join(repo_root, "server", ".venv", "bin", "pre-commit"),
+        os.path.join(repo_root, "api", ".venv", "bin", "pre-commit"),
+    ]
+    for candidate in candidates:
+        if os.path.isfile(candidate) and os.access(candidate, os.X_OK):
+            return [candidate]
+
+    if found := shutil.which("pre-commit"):
+        return [found]
+
+    # Last resort: use whichever python is currently running this script.
+    return [sys.executable, "-m", "pre_commit"]
+
+
 def _fallback(raw: str, returncode: int) -> None:
     if raw.strip():
         print(raw, end="")
@@ -402,10 +421,16 @@ def main() -> None:
 
     uv = _find_uv()
 
-    pre_commit_bin = os.path.join(repo_root, "server", ".venv", "bin", "pre-commit")
+    pre_commit_cmd = _find_pre_commit(repo_root)
+    if not pre_commit_cmd:
+        print(
+            f"{RED}{BOLD}pre-commit: could not find a runnable pre-commit command.{RESET}"
+        )
+        sys.exit(1)
+
     try:
         proc = subprocess.run(
-            [pre_commit_bin, "run", "--hook-stage=pre-commit", *sys.argv[1:]],
+            [*pre_commit_cmd, "run", "--hook-stage=pre-commit", *sys.argv[1:]],
             cwd=repo_root,
             capture_output=True,
             text=True,
