@@ -83,6 +83,44 @@ export function BiddingBoardPanel({
     return out;
   }, [state.gaps]);
 
+  // ── click-to-highlight a node's connections ──────────────────────────────
+  const [selected, setSelected] = useState<{
+    kind: "gap" | "con";
+    id: string;
+  } | null>(null);
+
+  const toggleSelect = useCallback((kind: "gap" | "con", id: string) => {
+    setSelected((prev) =>
+      prev && prev.kind === kind && prev.id === id ? null : { kind, id },
+    );
+  }, []);
+
+  // Node keys (`gap:id` / `con:id`) and edge ids connected to the selection.
+  // null ⇒ nothing selected, so everything renders at full strength.
+  const highlight = useMemo(() => {
+    if (!selected) return null;
+    const nodeKeys = new Set<string>();
+    const edgeIds = new Set<string>();
+    if (selected.kind === "gap") {
+      const g = state.gaps.find((x) => x.id === selected.id);
+      if (!g) return null;
+      nodeKeys.add(`gap:${g.id}`);
+      for (const cid of g.coveredByContributionIds) {
+        nodeKeys.add(`con:${cid}`);
+        edgeIds.add(`${g.id}->${cid}`);
+      }
+    } else {
+      const c = state.contributions.find((x) => x.id === selected.id);
+      if (!c) return null;
+      nodeKeys.add(`con:${c.id}`);
+      for (const gid of c.coversGapIds) {
+        nodeKeys.add(`gap:${gid}`);
+        edgeIds.add(`${gid}->${c.id}`);
+      }
+    }
+    return { nodeKeys, edgeIds };
+  }, [selected, state.gaps, state.contributions]);
+
   // ── post-it measurement + edge geometry ─────────────────────────────────
   const innerRef = useRef<HTMLDivElement>(null);
   const nodeRefs = useRef<Map<string, HTMLElement>>(new Map());
@@ -330,6 +368,7 @@ export function BiddingBoardPanel({
           ) : (
             <div
               ref={innerRef}
+              onClick={() => setSelected(null)}
               style={{
                 position: "relative",
                 display: "flex",
@@ -350,18 +389,28 @@ export function BiddingBoardPanel({
                   zIndex: 1,
                 }}
               >
-                {edges.map((e) => (
-                  <g key={e.id}>
-                    <path
-                      d={e.d}
-                      fill="none"
-                      stroke={edgeColor}
-                      strokeWidth={1.8}
-                    />
-                    <circle cx={e.x1} cy={e.y1} r={3} fill={edgeColor} />
-                    <circle cx={e.x2} cy={e.y2} r={3} fill={edgeColor} />
-                  </g>
-                ))}
+                {edges.map((e) => {
+                  const dimmed =
+                    highlight !== null && !highlight.edgeIds.has(e.id);
+                  return (
+                    <g
+                      key={e.id}
+                      style={{
+                        opacity: dimmed ? 0.1 : 1,
+                        transition: "opacity 0.15s",
+                      }}
+                    >
+                      <path
+                        d={e.d}
+                        fill="none"
+                        stroke={edgeColor}
+                        strokeWidth={highlight !== null && !dimmed ? 2.6 : 1.8}
+                      />
+                      <circle cx={e.x1} cy={e.y1} r={3} fill={edgeColor} />
+                      <circle cx={e.x2} cy={e.y2} r={3} fill={edgeColor} />
+                    </g>
+                  );
+                })}
               </svg>
 
               {/* Gaps column */}
@@ -376,6 +425,12 @@ export function BiddingBoardPanel({
                     key={g.id}
                     ref={setNodeRef(`gap:${g.id}`)}
                     rotate={i % 2 ? 0.6 : -0.6}
+                    dim={
+                      highlight !== null &&
+                      !highlight.nodeKeys.has(`gap:${g.id}`)
+                    }
+                    selected={selected?.kind === "gap" && selected.id === g.id}
+                    onSelect={() => toggleSelect("gap", g.id)}
                   >
                     <GapNote gap={g} dark={dark} />
                   </PostIt>
@@ -397,6 +452,12 @@ export function BiddingBoardPanel({
                     key={c.id}
                     ref={setNodeRef(`con:${c.id}`)}
                     rotate={i % 2 ? -0.6 : 0.6}
+                    dim={
+                      highlight !== null &&
+                      !highlight.nodeKeys.has(`con:${c.id}`)
+                    }
+                    selected={selected?.kind === "con" && selected.id === c.id}
+                    onSelect={() => toggleSelect("con", c.id)}
                   >
                     <ContributionNote contribution={c} dark={dark} />
                   </PostIt>
@@ -694,14 +755,37 @@ function ColumnEmpty({
  *  applies a slight rotation for the hand-placed feel. */
 const PostIt = forwardRef<
   HTMLDivElement,
-  { rotate?: number; children: React.ReactNode }
->(function PostIt({ rotate = 0, children }, ref) {
+  {
+    rotate?: number;
+    children: React.ReactNode;
+    dim?: boolean;
+    selected?: boolean;
+    onSelect?: () => void;
+  }
+>(function PostIt(
+  { rotate = 0, children, dim = false, selected = false, onSelect },
+  ref,
+) {
   return (
     <div
       ref={ref}
+      onClick={
+        onSelect
+          ? (e) => {
+              e.stopPropagation();
+              onSelect();
+            }
+          : undefined
+      }
       style={{
         transform: `rotate(${rotate}deg)`,
-        transition: "transform 0.15s",
+        transition: "transform 0.15s, opacity 0.15s, box-shadow 0.15s",
+        opacity: dim ? 0.25 : 1,
+        cursor: onSelect ? "pointer" : "default",
+        borderRadius: 4,
+        boxShadow: selected
+          ? `0 0 0 2px ${BURG}, 0 0 12px ${BURG_GLOW}`
+          : "none",
       }}
     >
       {children}
