@@ -1705,15 +1705,14 @@ _BIDDING_INSTRUCTION = (
     '  "gaps": [\n'
     "    {\n"
     '      "reason": "<what is missing for full completion>",\n'
-    '      "expects": "<what input or other agent would close this gap>"\n'
+    '      "expects": "<what information or other agent would close this gap>"\n'
     "    }\n"
     "  ],\n"
     '  "contribution": [\n'
     "    {\n"
-    '      "data": "<one concrete statement your files/tools let you '
-    'contribute toward the task>",\n'
+    '      "data": "<information or tools you have that is relevant for the task>",\n'
     '      "citation": "<the source backing this statement: file name plus '
-    "the file's date if present, e.g. 'nexora_overview_2024 (2024-09-01)'>\"\n"
+    "the file's date if present'>\"\n"
     "    }\n"
     "  ]\n"
     "}\n\n"
@@ -1722,22 +1721,6 @@ _BIDDING_INSTRUCTION = (
     "be removed.\n"
     "- Cite only files you actually read this turn; the system verifies "
     "every file citation against your tool-call log.\n"
-    "- Each entry in `contribution` is ONE statement plus ONE citation. "
-    "Split multi-fact contributions across multiple entries. Other agents "
-    "will see these verbatim during collaboration — make every statement "
-    "load-bearing.\n"
-    "- Be MAXIMALLY DETAILED. The `contribution.data` strings are the only "
-    "thing other agents (and the final answer) will see of your work, so "
-    "pack each one with the specifics from the source: exact names, dates, "
-    "numbers, titles, locations, quoted phrases — not paraphrased "
-    "summaries. Bad: 'The company has a new CEO.' Good: 'As of 2024-09-01, "
-    "Daniel Park is the CEO of Nexora Technologies, succeeding Margaret "
-    "Hollis (per nexora_overview_2024).' If a fact has a date attached in "
-    "the source, include it in the `data` itself, not just the citation.\n"
-    "- `gaps` entries must be EQUALLY SPECIFIC. `reason` should name the "
-    "exact missing fact (not 'more context needed'); `expects` should "
-    "describe the precise input that would close it (e.g. 'a 2024-or-later "
-    "filing naming the current CFO', not 'recent financial data').\n"
     "- `evidence.relevant_files[*].relevance` should quote or paraphrase "
     "the specific line(s) from the file that support your contribution — "
     "vague descriptions like 'discusses the company' are weak signals.\n"
@@ -1815,17 +1798,6 @@ _BIDDING_MATCHING_INSTRUCTION = (
     "`reuses_finding` OR provide a non-empty `contribution` array (or both) — "
     "if you have neither real reused finding nor new data, set "
     "can_contribute=false instead.\n\n"
-    "Be MAXIMALLY DETAILED in every `contribution.data`: include exact "
-    "names, dates, numbers, titles, quoted phrases from the source — not "
-    "paraphrased summaries. If the source carries a date, bake it into the "
-    "`data` itself, not just the citation. Bad: 'They have a new leader.' "
-    "Good: 'Per the 2024-09-01 overview, Daniel Park became CEO of Nexora "
-    "Technologies, succeeding Margaret Hollis.'\n\n"
-    "`rationale` should be one specific sentence — name the exact fact in "
-    "your contribution and how it answers the gap (e.g. 'The 2024-09-01 "
-    "filing names Daniel Park as CEO, which directly answers the gap "
-    "about the current CEO.'). Avoid generic phrases like 'this is "
-    "relevant'.\n\n"
 )
 
 
@@ -2325,52 +2297,57 @@ def _format_findings(
     return "\n".join(lines)
 
 
-_DECISION_RE = re.compile(
-    r"^\s*(?:>\s*)?(?:[-*+]\s*|\d+[.)]\s*)?(?:\*\*)?DECISION(?:\*\*)?\s*[:\-]\s*"
-    r"(?:\*\*)?(accept|revise)\b",
-    re.MULTILINE | re.IGNORECASE,
-)
+async def _answer_consensus(
+    answers: dict[str, str],
+) -> tuple[float, str | None]:
+    """Measure how strongly a set of agent answers agree.
 
-_REVISE_REASON_RE = re.compile(
-    r"^\s*(?:>\s*)?(?:[-*+]\s*|\d+[.)]\s*)?(?:\*\*)?REASON(?:\*\*)?\s*[:\-]\s*"
-    r"(?:\*\*)?(.+?)\s*$",
-    re.MULTILINE | re.IGNORECASE,
-)
+    Returns ``(mean_pairwise_similarity, medoid_agent_id)``:
 
+    - ``mean_pairwise_similarity`` — the average similarity over every unique
+      pair of answers, in ``[0, 1]``. This is the convergence signal.
+    - ``medoid_agent_id`` — the agent whose answer is, on average, most similar
+      to all the others: the single best representative of the group.
 
-def _extract_decision_and_answer(response: str) -> tuple[str, str, str]:
-    """Parse the ``DECISION: accept|revise`` marker.
-
-    Returns ``(decision, reason, answer)``:
-    - ``decision`` — ``"accept"`` or ``"revise"``
-    - ``reason`` — for revisions, the text from a ``REASON:`` line after the
-      DECISION line (empty if absent or on accept)
-    - ``answer`` — the corrected answer text after the DECISION (and optional
-      REASON) line; only meaningful for ``"revise"``
-
-    If no DECISION marker is found, treat the whole response as a revision
-    (defensive default for poorly-formatted outputs).
+    Similarity is semantic (OpenAI embeddings + cosine), falling back to
+    entity-aware Jaccard when the embedding backend is unavailable. Fewer than
+    two non-empty answers is trivially converged (similarity ``1.0``).
     """
-    match = _DECISION_RE.search(response)
-    if not match:
-        return "revise", "", response.strip()
-    decision = match.group(1).strip().lower()
-    if decision == "accept":
-        return "accept", "", ""
-    rest = response[match.end() :]
-    reason_match = _REVISE_REASON_RE.search(rest)
-    if reason_match:
-        reason = reason_match.group(1).strip()
-        answer = rest[reason_match.end() :].strip()
-    else:
-        reason = ""
-        answer = rest.strip()
-    if not answer:
-        answer = response.strip()
-    return "revise", reason, answer
+    items = [(aid, text) for aid, text in answers.items() if text and text.strip()]
+    if not items:
+        return 1.0, None
+    if len(items) == 1:
+        return 1.0, items[0][0]
+
+    ids = [aid for aid, _ in items]
+    texts = [text for _, text in items]
+    n = len(items)
+
+    vectors = await embed_texts(texts)
+    if vectors is None or len(vectors) != n:
+        vectors = None  # embedding backend unavailable — use lexical fallback
+
+    summed = [0.0] * n
+    total = 0.0
+    pairs = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            sim = (
+                cosine_similarity(vectors[i], vectors[j])
+                if vectors is not None
+                else _entity_aware_similarity(texts[i], texts[j])
+            )
+            total += sim
+            pairs += 1
+            summed[i] += sim
+            summed[j] += sim
+
+    mean = total / pairs if pairs else 1.0
+    medoid = max(range(n), key=lambda i: summed[i])
+    return max(0.0, min(1.0, mean)), ids[medoid]
 
 
-async def _run_sequential_collaboration(
+async def _run_parallel_consensus(
     prompt: str,
     collaborators: list[dict[str, Any]],
     agents_by_id: dict[str, dict[str, Any]],
@@ -2382,165 +2359,140 @@ async def _run_sequential_collaboration(
     trial_id: str,
     round_index: int,
     agent_context: dict[str, str] | None,
-    max_passes: int = 5,
+    convergence_threshold: float = 0.85,
+    max_rounds: int = 5,
 ) -> str | None:
-    """Convergence-based sequential refinement.
+    """Parallel convergence on a shared answer.
 
-    The first agent drafts an initial answer. Each subsequent agent (in
-    round-robin order across the collaborator set) either ACCEPTs the current
-    answer unchanged or REVISEs it with a full rewrite. The loop terminates
-    once every other collaborator has accepted the latest revision — i.e. the
-    consecutive-accept streak reaches ``len(collaborators) - 1`` — or once
-    ``max_passes`` full round-trips have elapsed without convergence (safety
-    cap).
+    Round 1 — every collaborator drafts an answer independently from the
+    bidding board (in parallel). The system then measures the semantic
+    similarity across those answers (mean pairwise cosine over embeddings).
+    If they already agree closely enough (``>= convergence_threshold``) the
+    consensus is reached. Otherwise every agent reads ALL the other agents'
+    answers and redrafts, and the loop repeats. It terminates on convergence
+    or after ``max_rounds`` (safety cap), returning the medoid — the answer
+    most representative of the group.
     """
     if not collaborators:
+        return None
+
+    valid = [c for c in collaborators if str(c["id"]) in agents_by_id]
+    if not valid:
         return None
 
     round_id = int(await create_round(db, trial_id, round_index, "bidding_collaboration"))
     findings_block = _format_findings(collaborators, bids, coverage, blackboard)
     findings_prelude = (
-        "\n\n## FINDINGS COMPILED BY EACH AGENT (from the bidding phase)\n"
-        "Every citation below has been independently verified by the system: "
-        "the cited file exists, was attached to the cited agent, and was "
-        "actually read by that agent during the bidding phase. Treat each "
+        "\n\n## THE BIDDING BOARD\n"
+        "Below is the bidding board. It contains ALL existing information "
+        "gathered during the bidding phase that provides value to the user's "
+        "question. Every citation below has been independently verified by the "
+        "system: the cited file exists, was attached to the cited agent, and "
+        "was actually read by that agent during the bidding phase. Treat each "
         "cited finding as an ESTABLISHED FACT — you do NOT need to "
         'disclaim "I don\'t have access to that file" or hedge with '
         '"reportedly" / "according to other agents". The findings are part '
         "of the shared knowledge of this collaboration; cite them the same "
         "way you would cite a file you read yourself.\n\n"
         f"{findings_block}\n\n"
-        "When findings disagree, reconcile by comparing the sources — "
-        "prefer the one backed by the most recent source for present-tense "
-        "questions ('current', 'now', 'today'). Do not default to only "
-        "your own file.\n"
-    )
-    user_facing_note = (
-        "\n\nWRITE FOR THE END USER who asked the question, not for other "
-        "agents. Do not include meta-commentary like 'reviewing the "
-        "previous answer', 'I am verifying', 'based on what other agents "
-        "said'. Do not write disclaimers like 'I can only confirm from my "
-        "own files…' or 'I do not have access to file X'. The findings "
-        "block is the collaboration's shared, system-verified knowledge — "
-        "cite sources by name when it helps the reader, but write polished "
-        "prose suitable for the user to read directly."
+        "Base your answer on ALL of the information on this board, not only on "
+        "what you personally found or already believe. Do not omit or "
+        "down-weight a finding just because another agent contributed it. "
+        "When findings disagree, reconcile by comparing the sources and let "
+        "the user get the whole context, especially if any conflicts arise."
     )
 
-    latest_output: str | None = None
-    accept_streak = 0
-    accept_target = max(0, len(collaborators) - 1)
-    max_turns = max(1, max_passes) * len(collaborators)
-    turn_idx = 0
-    converged = False
-
-    while turn_idx < max_turns:
-        if latest_output is not None and accept_streak >= accept_target:
-            converged = True
-            break
-
-        collaborator = collaborators[turn_idx % len(collaborators)]
-        agent = agents_by_id.get(collaborator["id"])
-        if agent is None:
-            turn_idx += 1
-            continue
+    async def _draft(
+        agent: dict[str, Any],
+        prior: dict[str, str] | None,
+        round_num: int,
+    ) -> tuple[str, str, list[ToolCall]]:
         agent_id = str(agent["id"])
-        turn_num = turn_idx + 1
-
-        if latest_output is None:
-            turn_prompt = _with_context(prompt, agent_id, agent_context) + (
-                f"\n\n## COLLABORATIVE OUTPUT (turn {turn_num})\n"
-                "Draft the answer to the user's question using the findings "
-                "below. Write polished, user-facing prose — this is the "
-                "answer the user will read." + user_facing_note + findings_prelude
+        if prior is None:
+            instruction = (
+                f"\n\n## CRAFT YOUR ANSWER (round {round_num})\n"
+                "This is the bidding board containing all existing information "
+                "that provides value to the user's question. Based on ALL of "
+                "this information — not just your own findings — craft a "
+                "complete answer to the user's question. Write polished, "
+                "user-facing prose."
             )
         else:
-            turn_prompt = _with_context(prompt, agent_id, agent_context) + (
-                f"\n\n## COLLABORATIVE OUTPUT (turn {turn_num})\n"
-                f"The current answer:\n\n"
-                f"---\n{latest_output}\n---\n\n"
-                "Your job is to VERIFY that every factual claim in the "
-                "answer is correct, supported by the findings below, and "
-                "free of fabrications. This is a fact-check, not a rewrite.\n\n"
-                "- ACCEPT if every claim is correct and supported. Do NOT "
-                "revise for style, tone, formatting, or to add detail.\n"
-                "- REVISE only if you find a factual error, an unsupported "
-                "claim, or a missing key fact that materially changes the "
-                "answer. When you revise, output the FULL corrected answer.\n\n"
-                "Respond in ONE of these two formats:\n\n"
-                "ACCEPT format:\n"
-                "  DECISION: accept\n\n"
-                "REVISE format:\n"
-                "  DECISION: revise\n"
-                "  REASON: <one short sentence stating the specific factual "
-                "problem you found, e.g. 'Margaret Hollis is no longer CEO "
-                "per the 2024 source.'>\n"
-                "\n"
-                "  <the FULL corrected answer, written for the end user>\n\n"
-                "The REASON line is for the audit log. The corrected answer "
-                "that follows it must be polished user-facing prose — do "
-                "NOT repeat the reason in the answer, do NOT write phrases "
-                "like 'I revised because…', and do NOT include any "
-                "commentary about what you changed." + user_facing_note + findings_prelude
+            others = "\n\n".join(
+                f"### Answer from {agents_by_id.get(oid, {}).get('name', oid)}\n{ans}"
+                for oid, ans in prior.items()
+                if oid != agent_id and ans.strip()
             )
-
+            instruction = (
+                f"\n\n## THE OTHER AGENTS' ANSWERS (round {round_num})\n"
+                f"{others}\n\n"
+                "## REVISE TOWARD CONSENSUS\n"
+                "The agents have NOT yet converged on a single shared answer. "
+                "Read the other agents' answers above together with the "
+                "bidding board, then write a revised answer: adopt every "
+                "well-supported claim the others surfaced that you missed, "
+                "drop any claim of yours the board does not support, and move "
+                "toward one shared answer. Where the board shows a genuine "
+                "conflict, keep it and explain it rather than papering over "
+                "it. Output the FULL revised answer as polished, user-facing "
+                "prose."
+            )
+        turn_prompt = (
+            _with_context(prompt, agent_id, agent_context) + findings_prelude + instruction
+        )
         try:
             response, tools_used = await call(agent, turn_prompt)
         except Exception as exc:
-            response = f"[error: {exc}]"
-            tools_used = []
+            return agent_id, f"[error: {exc}]", []
+        return agent_id, response, tools_used
 
-        self_messages: list[SelfMessage] = [
-            ("tool", _format_tool_message(tool)) for tool in _last_tool_calls(tools_used)
-        ]
+    answers: dict[str, str] = {}
+    similarity = 0.0
+    medoid_id: str | None = None
+    converged = False
+    rounds_run = 0
 
-        if latest_output is None:
-            # First turn — seed answer; no accept/revise decision yet.
+    for round_num in range(1, max(1, max_rounds) + 1):
+        prior = None if round_num == 1 else dict(answers)
+        results = await asyncio.gather(
+            *[_draft(agents_by_id[str(c["id"])], prior, round_num) for c in valid]
+        )
+
+        answers = {}
+        for agent_id, response, tools_used in results:
+            self_messages: list[SelfMessage] = [
+                ("tool", _format_tool_message(tool)) for tool in _last_tool_calls(tools_used)
+            ]
             self_messages.append(("agent_output", response))
             await _persist_self_messages(db, round_id, agent_id, self_messages)
-            latest_output = response
-            accept_streak = 0
-            handoff_msg = response
-        else:
-            decision, reason, new_answer = _extract_decision_and_answer(response)
-            if decision == "accept":
-                self_messages.append(("bidding_decision", "DECISION: accept"))
-                await _persist_self_messages(db, round_id, agent_id, self_messages)
-                accept_streak += 1
-                handoff_msg = latest_output
-            else:
-                decision_msg = (
-                    f"DECISION: revise\n\n**Reason:** {reason}"
-                    if reason
-                    else "DECISION: revise\n\n_(no reason provided)_"
-                )
-                self_messages.append(("bidding_decision", decision_msg))
-                self_messages.append(("agent_output", new_answer))
-                await _persist_self_messages(db, round_id, agent_id, self_messages)
-                latest_output = new_answer
-                accept_streak = 0
-                handoff_msg = new_answer
+            answers[agent_id] = response
 
-        # Will the loop terminate after this turn?
-        will_stop = latest_output is not None and accept_streak >= accept_target
-        if not will_stop and (turn_idx + 1) < max_turns:
-            next_id = str(collaborators[(turn_idx + 1) % len(collaborators)]["id"])
-            if next_id != agent_id:
-                await record_message(db, round_id, agent_id, next_id, "agent_to_agent", handoff_msg)
-
-        turn_idx += 1
-
-    if latest_output is not None and accept_streak >= accept_target:
-        converged = True
+        rounds_run = round_num
+        similarity, medoid_id = await _answer_consensus(answers)
+        await _persist_system_self_message(
+            db,
+            round_id,
+            "bidding_convergence",
+            f"Round {round_num}: mean pairwise answer similarity "
+            f"{similarity:.3f} (threshold {convergence_threshold:.2f}).",
+        )
+        if similarity >= convergence_threshold:
+            converged = True
+            break
 
     summary = (
-        f"Converged after {turn_idx} turn(s); all collaborators accept the current answer."
+        f"Converged after {rounds_run} round(s): answers agree at "
+        f"{similarity:.3f} >= {convergence_threshold:.2f}."
         if converged
-        else f"Did not converge after {turn_idx} turn(s) (cap: {max_turns}). "
-        "Returning the latest revision."
+        else f"Did not converge after {rounds_run} round(s) "
+        f"(cap: {max_rounds}; best similarity {similarity:.3f} "
+        f"< {convergence_threshold:.2f}). Returning the most representative answer."
     )
     await _persist_system_self_message(db, round_id, "bidding_convergence", summary)
 
-    return latest_output
+    if medoid_id is not None and medoid_id in answers:
+        return answers[medoid_id]
+    return next((ans for ans in answers.values() if ans.strip()), None)
 
 
 def _fenced_json(obj: Any) -> str:
@@ -2798,10 +2750,10 @@ async def _run_bidding(
         _fenced_json({"collaborators": collaborators, "uncovered_gaps": uncovered}),
     )
 
-    # ── Sequential refinement: collaborators take turns (two passes) ─────────
+    # ── Parallel consensus: collaborators draft in parallel, then converge ───
     if collaborators:
         agents_by_id = {str(a["id"]): a for a in agents}
-        final_output = await _run_sequential_collaboration(
+        final_output = await _run_parallel_consensus(
             prompt,
             collaborators,
             agents_by_id,
@@ -2813,7 +2765,8 @@ async def _run_bidding(
             trial_id,
             round_index=6,
             agent_context=agent_context,
-            max_passes=5,
+            convergence_threshold=0.85,
+            max_rounds=5,
         )
         if final_output is not None:
             final_round_id = await _create_self_message_round(

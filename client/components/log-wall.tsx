@@ -20,6 +20,7 @@ const IMPORTANT_SYSTEM_LABELS = new Set([
   "Trust update",
   "Gap board",
   "Collaborators",
+  "Final answer",
 ]);
 
 const REGISTRY_TOOL_HINTS = [

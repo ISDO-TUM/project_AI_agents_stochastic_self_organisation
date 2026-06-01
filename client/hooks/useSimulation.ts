@@ -45,6 +45,7 @@ const META_EVENTS: Record<string, { label: string; icon: string }> = {
   bidding_decision: { label: "", icon: "CheckCircle2" },
   bidding_convergence: { label: "Converged", icon: "CircleCheckBig" },
   bidding_collaborators: { label: "Collaborators", icon: "Users" },
+  bidding_final_output: { label: "Final answer", icon: "Sparkles" },
 };
 
 function historyMessageToStep(
