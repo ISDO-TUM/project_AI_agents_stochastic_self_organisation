@@ -1729,22 +1729,19 @@ async def _run_bidding(
             str(a["id"]): [e for e in blackboard if e["agent_id"] != str(a["id"])] for a in agents
         }
         blackboard_round_id = int(await create_round(db, trial_id, 3, "bidding_blackboard"))
-        for agent in agents:
-            agent_id = str(agent["id"])
-            agent_bid = bids.get(agent_id)
-            if agent_bid is None or agent_bid.get("yielded"):
-                continue
-            others = per_agent_board[agent_id]
-            if not others:
-                continue
-            await record_message(
-                db,
-                blackboard_round_id,
-                None,
-                agent_id,
-                "system_blackboard",
-                _format_blackboard(others),
-            )
+        # Emit a single consolidated SYSTEM message listing every gap, rather
+        # than one personalised broadcast per agent. Per-agent filtering still
+        # happens inside the matching prompt (`_match` uses `per_agent_board`)
+        # so agents only see other agents' gaps in their own prompt; the
+        # audit log shows the complete board once.
+        await record_message(
+            db,
+            blackboard_round_id,
+            None,
+            None,
+            "system_blackboard",
+            _format_blackboard(blackboard),
+        )
 
         matching_round_id = await _create_self_message_round(db, trial_id, 4, "bidding_matching")
 
