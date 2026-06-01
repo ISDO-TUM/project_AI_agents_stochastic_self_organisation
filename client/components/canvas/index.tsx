@@ -17,6 +17,7 @@ import { SourceNode } from "./source-node";
 import { EdgeLayer } from "./edge-layer";
 import { Minimap } from "./minimap";
 import { PhonebookPanel } from "../phonebook-panel";
+import { BiddingBoardPanel } from "../bidding-board-panel";
 
 interface CanvasProps {
   agents: Agent[];
@@ -48,6 +49,12 @@ interface CanvasProps {
     currentStep: number;
     dynamicEdges: Edge[];
     simMode: boolean;
+  } | null;
+  /** When provided, renders the BiddingBoardPanel as a draggable node inside
+   *  the world transform — pans/zooms with the canvas. */
+  biddingBoard?: {
+    steps: SimStep[];
+    onClose: () => void;
   } | null;
 }
 
@@ -85,6 +92,7 @@ export function Canvas({
   onCanvasClick,
   panAdjust,
   phonebook = null,
+  biddingBoard = null,
 }: CanvasProps) {
   const { dark } = useTheme();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -411,6 +419,13 @@ export function Canvas({
             currentStep={phonebook.currentStep}
             dynamicEdges={phonebook.dynamicEdges}
             simMode={phonebook.simMode}
+            zoom={zoom}
+          />
+        )}
+        {biddingBoard && (
+          <BiddingBoardPanel
+            steps={biddingBoard.steps}
+            onClose={biddingBoard.onClose}
             zoom={zoom}
           />
         )}

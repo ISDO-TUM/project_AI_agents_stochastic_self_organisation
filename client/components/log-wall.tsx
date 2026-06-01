@@ -18,6 +18,8 @@ const IMPORTANT_SYSTEM_LABELS = new Set([
   "Converged",
   "Topology settled",
   "Trust update",
+  "Gap board",
+  "Collaborators",
 ]);
 
 const REGISTRY_TOOL_HINTS = [

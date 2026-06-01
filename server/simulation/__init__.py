@@ -1726,6 +1726,21 @@ _BIDDING_INSTRUCTION = (
     "Split multi-fact contributions across multiple entries. Other agents "
     "will see these verbatim during collaboration — make every statement "
     "load-bearing.\n"
+    "- Be MAXIMALLY DETAILED. The `contribution.data` strings are the only "
+    "thing other agents (and the final answer) will see of your work, so "
+    "pack each one with the specifics from the source: exact names, dates, "
+    "numbers, titles, locations, quoted phrases — not paraphrased "
+    "summaries. Bad: 'The company has a new CEO.' Good: 'As of 2024-09-01, "
+    "Daniel Park is the CEO of Nexora Technologies, succeeding Margaret "
+    "Hollis (per nexora_overview_2024).' If a fact has a date attached in "
+    "the source, include it in the `data` itself, not just the citation.\n"
+    "- `gaps` entries must be EQUALLY SPECIFIC. `reason` should name the "
+    "exact missing fact (not 'more context needed'); `expects` should "
+    "describe the precise input that would close it (e.g. 'a 2024-or-later "
+    "filing naming the current CFO', not 'recent financial data').\n"
+    "- `evidence.relevant_files[*].relevance` should quote or paraphrase "
+    "the specific line(s) from the file that support your contribution — "
+    "vague descriptions like 'discusses the company' are weak signals.\n"
     '- Use "none" for `estimated_completeness` if nothing in your evidence '
     "applies to the task; in that case set `contribution` to an empty array.\n"
 )
@@ -1733,24 +1748,45 @@ _BIDDING_INSTRUCTION = (
 _BIDDING_MATCHING_INSTRUCTION = (
     "\n\n## GAP MATCHING\n"
     "The blackboard below lists gaps posted by OTHER agents during the "
-    "bidding phase. For each gap, decide whether YOU can *contribute* to "
-    "filling it. If yes, ADD the actual answering data to the gap — do not "
-    "just claim you could.\n\n"
+    "bidding phase. "
+    "Your own bid findings are listed under YOUR FINDINGS below, each with "
+    "a stable id (F0, F1, …). "
+    "For each gap, decide whether YOU can *contribute* to filling it. If "
+    "yes, ADD the actual answering data to the gap — do not just claim you "
+    "could. Two valid paths to contribute:\n"
+    "1. CONNECT an existing finding: if one of YOUR FINDINGS already answers "
+    "this gap, reference it by id in `reuses_finding` (e.g. "
+    '`"reuses_finding": ["F0"]`). You do NOT need to retype its data — the '
+    "system links that finding to the gap for you.\n"
+    "2. CREATE + CONNECT a new finding: if your tools or files contain "
+    "evidence you did NOT declare in your bid (e.g. you re-read a file "
+    "this turn and found something specific to this gap), produce a fresh "
+    "`contribution` entry with a verifiable citation and leave "
+    "`reuses_finding` empty.\n\n"
+    "You may combine both: reference one or more findings in `reuses_finding` "
+    "AND add new `contribution` entries in the same gap. What matters is "
+    "that every NEW contribution is backed by a real file you actually read "
+    "this turn or a real tool you were granted; reused findings are already "
+    "verified from your bid and need no re-read.\n\n"
     "Contributing does NOT mean fully resolving the gap. Partial, "
     "supporting, or complementary information counts. If anything in your "
     "files or tools is even tangentially useful — set can_contribute=true "
     "and put the relevant fact(s) under `contribution`. Only set "
     "can_contribute=false if you have NOTHING that touches the gap.\n\n"
-    "Verification rules are the same as before:\n"
+    "Verification rules for NEW contributions:\n"
     "- Cite only tools you have been granted.\n"
     "- For each file you cite, you MUST first call `files` with action='read' "
-    "to inspect its contents this turn — un-read citations are rejected.\n\n"
+    "to inspect its contents this turn — un-read citations are rejected.\n"
+    "- `reuses_finding` ids must be ids that appear under YOUR FINDINGS; "
+    "unknown ids are rejected.\n\n"
     "Respond with ONLY a single JSON object (no prose, no markdown fences):\n\n"
     "{\n"
     '  "gap_coverage": [\n'
     "    {\n"
     '      "gap_id": "<exact gap_id from the blackboard>",\n'
     '      "can_contribute": true,\n'
+    '      "reuses_finding": ["F0"],   // ids of YOUR FINDINGS that answer '
+    "this gap; [] if none\n"
     '      "evidence": {\n'
     '        "relevant_tools": [...],\n'
     '        "relevant_files": [\n'
@@ -1760,7 +1796,7 @@ _BIDDING_MATCHING_INSTRUCTION = (
     "      },\n"
     '      "contribution": [\n'
     "        {\n"
-    '          "data": "<the actual fact that helps answer this gap — '
+    '          "data": "<a NEW fact that helps answer this gap — '
     'one statement per entry>",\n'
     '          "citation": "<source: file name + date if present, '
     "e.g. 'nexora_overview_2024 (2024-09-01)'>\"\n"
@@ -1775,10 +1811,21 @@ _BIDDING_MATCHING_INSTRUCTION = (
     "  ]\n"
     "}\n\n"
     "Include exactly one entry per gap on the blackboard. When "
-    "can_contribute=true you MUST provide a non-empty `contribution` array — "
-    "an empty contribution means you have no real data to add, so set "
+    "can_contribute=true you MUST either reference at least one finding in "
+    "`reuses_finding` OR provide a non-empty `contribution` array (or both) — "
+    "if you have neither real reused finding nor new data, set "
     "can_contribute=false instead.\n\n"
-    "Blackboard:\n"
+    "Be MAXIMALLY DETAILED in every `contribution.data`: include exact "
+    "names, dates, numbers, titles, quoted phrases from the source — not "
+    "paraphrased summaries. If the source carries a date, bake it into the "
+    "`data` itself, not just the citation. Bad: 'They have a new leader.' "
+    "Good: 'Per the 2024-09-01 overview, Daniel Park became CEO of Nexora "
+    "Technologies, succeeding Margaret Hollis.'\n\n"
+    "`rationale` should be one specific sentence — name the exact fact in "
+    "your contribution and how it answers the gap (e.g. 'The 2024-09-01 "
+    "filing names Daniel Park as CEO, which directly answers the gap "
+    "about the current CEO.'). Avoid generic phrases like 'this is "
+    "relevant'.\n\n"
 )
 
 
@@ -1953,15 +2000,19 @@ def _validate_coverage(
     files_actually_read: set[str],
     tools_actually_used: set[str],
     known_gap_ids: set[str],
+    known_finding_ids: set[str],
 ) -> tuple[list[dict[str, Any]], dict[str, list[Any]]]:
     """Validate an agent's round-2 ``gap_coverage`` claims.
 
     Same unfakeable evidence checks as :func:`_validate_bid`, plus a gap-id
-    existence check against the blackboard the agent was actually shown.
+    existence check against the blackboard the agent was actually shown and a
+    finding-id existence check on any ``reuses_finding`` references (which must
+    name one of the agent's own bid findings, F0/F1/…).
     """
     tools_set = set(available_tools or [])
     rejections: dict[str, list[Any]] = {
         "unknown_gap_ids": [],
+        "unknown_finding_ids": [],
         "tools": [],
         "files": [],
     }
@@ -1999,15 +2050,32 @@ def _validate_coverage(
         )
         rejections["tools"].extend(ev_rej["tools"])
         rejections["files"].extend(ev_rej["files"])
+
+        # Validate reuses_finding references against the agent's own findings.
+        raw_reuses = entry.get("reuses_finding")
+        reuse_candidates: list[str] = []
+        if isinstance(raw_reuses, str) and raw_reuses.strip():
+            reuse_candidates = [raw_reuses.strip()]
+        elif isinstance(raw_reuses, list):
+            reuse_candidates = [r.strip() for r in raw_reuses if isinstance(r, str) and r.strip()]
+        valid_reuses: list[str] = []
+        for r in reuse_candidates:
+            if r in known_finding_ids:
+                valid_reuses.append(r)
+            else:
+                rejections["unknown_finding_ids"].append(r)
+
         contribution = _normalise_contribution(entry.get("contribution"))
-        if not contribution:
-            # Claimed to contribute but added no actual data — downgrade.
+        if not contribution and not valid_reuses:
+            # Claimed to contribute but added no new data and reused nothing
+            # real — downgrade.
             valid_entries.append({"gap_id": gap_id, "can_contribute": False})
             continue
         valid_entries.append(
             {
                 "gap_id": gap_id,
                 "can_contribute": True,
+                "reuses_finding": valid_reuses,
                 "evidence": valid_ev,
                 "contribution": contribution,
                 "rationale": entry.get("rationale"),
@@ -2058,6 +2126,31 @@ def _format_blackboard(entries: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
+def _format_own_findings(contribution: list[dict[str, Any]]) -> str:
+    """Render the agent's own validated bid findings with stable F-ids."""
+    if not contribution:
+        return "(you declared no findings in your bid)"
+    lines: list[str] = []
+    for i, item in enumerate(contribution):
+        if not isinstance(item, dict):
+            continue
+        data = str(item.get("data") or "").strip()
+        if not data:
+            continue
+        cite = str(item.get("citation") or "").strip() or "unspecified"
+        lines.append(f"- F{i}: {data}  [source: {cite}]")
+    return "\n".join(lines) or "(you declared no findings in your bid)"
+
+
+_FINDING_ID_RE = re.compile(r"^F(\d+)$")
+
+
+def _finding_index(fid: str) -> int | None:
+    """Parse a finding id like ``F3`` into its integer index, or None."""
+    m = _FINDING_ID_RE.match(fid.strip()) if isinstance(fid, str) else None
+    return int(m.group(1)) if m else None
+
+
 def _select_collaborators(
     bids: dict[str, dict[str, Any]],
     coverage: dict[str, list[dict[str, Any]]],
@@ -2066,23 +2159,23 @@ def _select_collaborators(
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     """Pick the collaboration set and list any uncovered gaps.
 
-    An agent is selected iff it provided non-empty validated evidence in
-    round 1 (initial bid) OR round 2 (matching). Order is the agents-table
-    order for determinism. Each collaborator is returned as
-    ``{id, name, covers: [...]}`` where each cover entry includes the
-    ``added_data`` the agent posted to that gap.
+    An agent is selected iff it produced an actual *contribution* — a direct
+    finding in its round-1 bid OR added data on a gap during round-2 matching.
+    Agents that only cited evidence but yielded without an actionable
+    contribution are excluded, so only agents with something to say take part
+    in answer generation. Order is the agents-table order for determinism.
+    Each collaborator is returned as ``{id, name, contribution, covers}`` where
+    each cover entry includes the ``added_data`` the agent posted to that gap.
     """
     collaborator_ids: set[str] = set()
 
     for agent_id, bid in bids.items():
-        ev = bid.get("evidence") if isinstance(bid.get("evidence"), dict) else {}
-        if ev and (ev.get("relevant_tools") or ev.get("relevant_files")):
+        if bid.get("contribution"):
             collaborator_ids.add(agent_id)
 
     for covers in coverage.values():
         for entry in covers:
-            ev = entry.get("evidence") or {}
-            if ev.get("relevant_tools") or ev.get("relevant_files"):
+            if entry.get("contribution"):
                 collaborator_ids.add(str(entry.get("agent_id") or ""))
 
     gap_lookup = {e["gap_id"]: e for e in blackboard}
@@ -2093,8 +2186,7 @@ def _select_collaborators(
         gap_entry = gap_lookup.get(gid)
         any_valid_cover = False
         for entry in entries:
-            ev = entry.get("evidence") or {}
-            if not (ev.get("relevant_tools") or ev.get("relevant_files")):
+            if not entry.get("contribution"):
                 continue
             any_valid_cover = True
             aid = str(entry.get("agent_id") or "")
@@ -2592,9 +2684,14 @@ async def _run_bidding(
                 return agent_id, [], {}
 
             known_ids = {e["gap_id"] for e in others}
+            own_findings = agent_bid.get("contribution") or []
+            known_finding_ids = {f"F{i}" for i in range(len(own_findings))}
             match_prompt = (
                 _with_context(prompt, agent_id, agent_context)
                 + _BIDDING_MATCHING_INSTRUCTION
+                + "## YOUR FINDINGS\n"
+                + _format_own_findings(own_findings)
+                + "\n\n## BLACKBOARD\n"
                 + _format_blackboard(others)
             )
             try:
@@ -2630,19 +2727,52 @@ async def _run_bidding(
                 files_actually_read,
                 tools_actually_used,
                 known_ids,
+                known_finding_ids,
             )
+            # Persist the validated entries verbatim — they carry only the NEW
+            # contributions plus `reuses_finding` references, so the board can
+            # wire reused bid findings to gaps without duplicating their text.
             self_messages.append(("bidding_match", _fenced_json({"gap_coverage": valid_entries})))
-            if rejections["unknown_gap_ids"] or rejections["tools"] or rejections["files"]:
+            if (
+                rejections["unknown_gap_ids"]
+                or rejections["unknown_finding_ids"]
+                or rejections["tools"]
+                or rejections["files"]
+            ):
                 self_messages.append(("bidding_rejection", _fenced_json(rejections)))
 
-            agent_coverage = {
-                entry["gap_id"]: {
-                    "evidence": entry.get("evidence") or {},
-                    "contribution": entry.get("contribution") or [],
+            # Resolve reuses into concrete data + inherited evidence so the
+            # selection/findings phase sees the reused finding as real coverage.
+            agent_evidence = agent_bid.get("evidence") or {}
+            agent_coverage: dict[str, dict[str, Any]] = {}
+            for entry in valid_entries:
+                if not entry.get("can_contribute"):
+                    continue
+                contribution = list(entry.get("contribution") or [])
+                evidence = entry.get("evidence") or {}
+                reuses = entry.get("reuses_finding") or []
+                if reuses:
+                    # A reused finding carries no fresh evidence block; inherit
+                    # the bid's (those files were proven read in round 1).
+                    if not (evidence.get("relevant_tools") or evidence.get("relevant_files")):
+                        evidence = agent_evidence
+                    seen = {str(c.get("data", "")).strip().lower() for c in contribution}
+                    for fid in reuses:
+                        idx = _finding_index(fid)
+                        if idx is None or idx >= len(own_findings):
+                            continue
+                        f = own_findings[idx]
+                        data = str(f.get("data") or "").strip()
+                        if not data or data.lower() in seen:
+                            continue
+                        seen.add(data.lower())
+                        contribution.append({"data": data, "citation": f.get("citation", "")})
+                if not contribution:
+                    continue
+                agent_coverage[entry["gap_id"]] = {
+                    "evidence": evidence,
+                    "contribution": contribution,
                 }
-                for entry in valid_entries
-                if entry.get("can_contribute")
-            }
             return agent_id, self_messages, agent_coverage
 
         match_results = await asyncio.gather(*[_match(a) for a in agents])

@@ -57,6 +57,9 @@ export interface SimStep {
   label: string;
   msg: string;
   type: SimStepType;
+  /** Raw server-side message_type (e.g. "bidding_bid"). Used by views that
+   *  need to parse the message body (bidding board) rather than render a label. */
+  messageType?: string;
   roundIndex?: number;
   target?: string;
   nodeId?: string;

@@ -2,7 +2,7 @@
   "agents": [
     {
       "id": "c418c7bd-61fd-4274-ad1c-c1e521f7ad51",
-      "name": "2",
+      "name": "Agent Bob",
       "description": "",
       "systemPrompt": "",
       "provider": "anthropic",
@@ -19,7 +19,7 @@
     },
     {
       "id": "18a93e82-0550-4a4d-b9ff-0209b8e274cb",
-      "name": "1",
+      "name": "Agent Alice",
       "description": "",
       "systemPrompt": "",
       "provider": "anthropic",
@@ -36,7 +36,7 @@
     },
     {
       "id": "c02ea75f-c8fa-40ca-bda3-ed2bb1de4f69",
-      "name": "3",
+      "name": "Agent Charlie",
       "description": "",
       "systemPrompt": "",
       "provider": "anthropic",

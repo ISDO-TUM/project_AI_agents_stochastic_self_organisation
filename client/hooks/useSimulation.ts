@@ -36,6 +36,15 @@ const META_EVENTS: Record<string, { label: string; icon: string }> = {
   consensus: { label: "Consensus", icon: "CircleCheckBig" },
   convergence: { label: "Converged", icon: "CircleCheckBig" },
   topology_converged: { label: "Topology settled", icon: "Network" },
+  // Bidding consensus
+  system_blackboard: { label: "Gap board", icon: "ClipboardList" },
+  bidding_bid: { label: "", icon: "Gavel" },
+  bidding_rejection: { label: "", icon: "ShieldAlert" },
+  bidding_yield: { label: "", icon: "Flag" },
+  bidding_match: { label: "", icon: "Link2" },
+  bidding_decision: { label: "", icon: "CheckCircle2" },
+  bidding_convergence: { label: "Converged", icon: "CircleCheckBig" },
+  bidding_collaborators: { label: "Collaborators", icon: "Users" },
 };
 
 function historyMessageToStep(
@@ -86,6 +95,7 @@ function historyMessageToStep(
     label,
     msg: message.message || "",
     type,
+    messageType: message.messageType,
     roundIndex: message.roundIndex,
     ...(icon && { icon }),
     ...(dynamic && { dynamic: true }),

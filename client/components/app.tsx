@@ -116,6 +116,7 @@ export function App() {
     useState<ConsensusMode>("plurality_voting");
   const [topology, setTopology] = useState<TopologyMode>("static");
   const [fanout, setFanout] = useState(3);
+  const [biddingBoardOpen, setBiddingBoardOpen] = useState(false);
 
   useEffect(() => {
     fetchRules()
@@ -144,6 +145,7 @@ export function App() {
       const ruleset = active.length
         ? active.map((r) => `- ${r.instruction}`).join("\n")
         : undefined;
+      if (consensusMode === "bidding") setBiddingBoardOpen(true);
       runSim(prompt, consensusMode, ruleset, topology, fanout);
     },
     [rules, selectedRules, runSim, consensusMode, topology, fanout],
@@ -495,6 +497,14 @@ export function App() {
                 }
               : null
           }
+          biddingBoard={
+            simMode && biddingBoardOpen && consensusMode === "bidding"
+              ? {
+                  steps,
+                  onClose: () => setBiddingBoardOpen(false),
+                }
+              : null
+          }
         />
 
         <Toolbar
@@ -510,6 +520,9 @@ export function App() {
           onOpenHistory={() => setView("history")}
           showTweaks={showTweaks}
           onToggleTweaks={onToggleTweaks}
+          showBiddingBoardToggle={consensusMode === "bidding"}
+          biddingBoardOpen={biddingBoardOpen}
+          onToggleBiddingBoard={() => setBiddingBoardOpen((x) => !x)}
         />
 
         <PromptBar
