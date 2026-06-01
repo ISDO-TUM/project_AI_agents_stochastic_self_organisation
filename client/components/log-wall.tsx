@@ -19,7 +19,7 @@ const IMPORTANT_SYSTEM_LABELS = new Set([
   "Topology settled",
   "Trust update",
   "Gap board",
-  "Collaborators",
+  "Bidding Board updated",
   "Final answer",
 ]);
 

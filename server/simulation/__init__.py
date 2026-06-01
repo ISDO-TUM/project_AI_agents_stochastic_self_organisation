@@ -1767,7 +1767,6 @@ _BIDDING_MATCHING_INSTRUCTION = (
     '  "gap_coverage": [\n'
     "    {\n"
     '      "gap_id": "<exact gap_id from the blackboard>",\n'
-    '      "can_contribute": true,\n'
     '      "reuses_finding": ["F0"],   // ids of YOUR FINDINGS that answer '
     "this gap; [] if none\n"
     '      "evidence": {\n'
@@ -1786,18 +1785,16 @@ _BIDDING_MATCHING_INSTRUCTION = (
     "        }\n"
     "      ],\n"
     '      "rationale": "<one sentence — why this data fills the gap>"\n'
-    "    },\n"
-    "    {\n"
-    '      "gap_id": "<another gap_id>",\n'
-    '      "can_contribute": false\n'
     "    }\n"
     "  ]\n"
     "}\n\n"
-    "Include exactly one entry per gap on the blackboard. When "
-    "can_contribute=true you MUST either reference at least one finding in "
-    "`reuses_finding` OR provide a non-empty `contribution` array (or both) — "
-    "if you have neither real reused finding nor new data, set "
-    "can_contribute=false instead.\n\n"
+    "IMPORTANT — keep the output small: include an entry ONLY for the gaps you "
+    "can actually contribute to. OMIT every gap you cannot help with — do NOT "
+    "emit `can_contribute:false` placeholders, and do not restate the gaps you "
+    "are skipping. If you cannot contribute to any gap, return "
+    '`{"gap_coverage": []}`. Every entry you DO include must reference at least '
+    "one finding in `reuses_finding` OR carry a non-empty `contribution` array "
+    "(or both).\n\n"
 )
 
 
