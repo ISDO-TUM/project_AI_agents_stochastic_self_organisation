@@ -28,33 +28,28 @@ class Rule(BaseModel):
 _RULES: list[Rule] = [
     Rule(
         id="temporal",
-        label="Temporal Reasoning",
+        label="Prefer Recent Sources",
         instruction=(
-            "When agents hold conflicting information, treat document recency as a proxy "
-            "for credibility. A claim from a newer source supersedes the same claim from "
-            "an older source."
+            "When two sources conflict on the same claim, prefer the newer source unless "
+            "there is a clear reason not to."
         ),
         default=True,
     ),
     Rule(
         id="combine_information",
-        label="Combine Information",
+        label="Synthesize Evidence",
         instruction=(
-            "An agent can improve or propose a new vote by combining their "
-            "information with that of another agent. "
-            "For example: 'I see that Agent X has information Y which conflicts "
-            "with mine, but if I combine it with my information Z I can conclude "
-            "W, which resolves the conflict and is supported by both our sources.'"
+            "Combine your evidence with other agents' evidence to propose a better answer, "
+            "especially when pieces from multiple sources resolve a conflict."
         ),
         default=False,
     ),
     Rule(
         id="propose_partial",
-        label="Propose Partial Answers",
+        label="Share Partial Findings",
         instruction=(
-            "If you think you only have partial information to answer the "
-            "question, you can propose a partial answer so other agents can "
-            "build on it."
+            "If your information is incomplete, share a partial finding so other agents can "
+            "build on it and refine the final answer."
         ),
         default=False,
     ),

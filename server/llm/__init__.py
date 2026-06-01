@@ -9,6 +9,7 @@ from server.schemas import ToolCall
 from server.tools.registry import create_tool_handler, get_tools_for_provider
 
 from .anthropic_provider import call_anthropic
+from .embeddings import cosine_similarity, embed_texts
 from .gemini_provider import call_gemini
 from .groq_provider import call_groq
 from .openai_provider import call_openai

@@ -58,7 +58,9 @@ from server.db.tables import agents as agents_table
 from server.guardrails import build_guarded_system_prompt, sanitize_prompt
 from server.guardrails.input_sanitizer import PromptInjectionError
 from server.llm import call_agent
+from server.llm.embeddings import cosine_similarity, embed_texts
 from server.schemas import ToolCall
+from server.tools.builtin.registry import RegistryIndex
 
 ConsensusMode = Literal[
     "broadcast_no_consensus",
@@ -77,7 +79,11 @@ SelfMessage = tuple[str, str]
 
 
 async def _call_agent(
-    agent: dict[str, Any], prompt: str, files: dict[str, str], ruleset: str | None = None
+    agent: dict[str, Any],
+    prompt: str,
+    files: dict[str, str],
+    ruleset: str | None = None,
+    registry: RegistryIndex | None = None,
 ) -> tuple[str, list[ToolCall]]:
     """Invoke an agent and return (response_text, tools_used).
 
@@ -86,6 +92,11 @@ async def _call_agent(
 
     The prompt is sanitised for injection attempts before being forwarded to the
     LLM.  The system prompt is wrapped with anti-hallucination guardrails.
+
+    When a `registry` index is provided (dynamic topology), the `registry`
+    discovery tool is offered to the agent and the index is passed in context so
+    the agent can semantically search for peers before declaring its CONNECT
+    line. The index is always placed in the tool context (it may be ``None``).
     """
     # Sanitise the incoming prompt (raises PromptInjectionError on attack)
     try:
@@ -110,13 +121,17 @@ async def _call_agent(
         f"## CURRENT DATE\n{date.today().isoformat()}\n\n{guarded_system_prompt}"
     )
 
+    tool_names = list(agent["tools"] or [])
+    if registry is not None and "registry" not in tool_names:
+        tool_names.append("registry")
+
     response, tools_used = await call_agent(
         prompt,
         provider=agent["provider"],
         model=agent["model"],
         system_prompt=guarded_system_prompt,
-        tool_names=agent["tools"] or None,
-        tool_context={"files": files},
+        tool_names=tool_names or None,
+        tool_context={"files": files, "registry": registry, "agent_id": agent["id"]},
     )
     return str(response), tools_used
 
@@ -173,6 +188,248 @@ def _jaccard(a: str, b: str) -> float:
     return len(sa & sb) / len(sa | sb)
 
 
+_COMMON_SENTENCE_STARTERS = frozenset(
+    {
+        "a",
+        "about",
+        "after",
+        "all",
+        "also",
+        "always",
+        "an",
+        "and",
+        "any",
+        "are",
+        "as",
+        "at",
+        "based",
+        "be",
+        "because",
+        "been",
+        "before",
+        "being",
+        "both",
+        "but",
+        "by",
+        "can",
+        "could",
+        "currently",
+        "do",
+        "does",
+        "during",
+        "each",
+        "even",
+        "every",
+        "first",
+        "for",
+        "from",
+        "get",
+        "given",
+        "had",
+        "has",
+        "have",
+        "he",
+        "her",
+        "here",
+        "his",
+        "how",
+        "however",
+        "i",
+        "if",
+        "in",
+        "into",
+        "is",
+        "it",
+        "its",
+        "just",
+        "last",
+        "let",
+        "like",
+        "make",
+        "many",
+        "may",
+        "me",
+        "might",
+        "more",
+        "most",
+        "much",
+        "must",
+        "my",
+        "never",
+        "new",
+        "next",
+        "no",
+        "none",
+        "not",
+        "now",
+        "of",
+        "on",
+        "once",
+        "only",
+        "or",
+        "other",
+        "our",
+        "out",
+        "over",
+        "per",
+        "please",
+        "recent",
+        "regarding",
+        "run",
+        "scope",
+        "shall",
+        "she",
+        "should",
+        "since",
+        "so",
+        "some",
+        "still",
+        "such",
+        "than",
+        "that",
+        "the",
+        "their",
+        "them",
+        "then",
+        "there",
+        "these",
+        "they",
+        "this",
+        "those",
+        "through",
+        "to",
+        "under",
+        "until",
+        "up",
+        "upon",
+        "use",
+        "using",
+        "very",
+        "was",
+        "we",
+        "were",
+        "what",
+        "when",
+        "where",
+        "which",
+        "while",
+        "who",
+        "will",
+        "with",
+        "would",
+        "yes",
+        "yet",
+        "you",
+        "your",
+    }
+)
+
+_ALPHANUMERIC_CODE_RE = re.compile(r"^[A-Za-z]+-\d+[\w-]*$")
+_CAMELCASE_RE = re.compile(r"[a-z][A-Z]")
+
+
+def _extract_entities(text: str) -> set[str]:
+    """Extract entity-like tokens: proper nouns, codes, abbreviations."""
+    entities: set[str] = set()
+    tokens = text.split()
+    for i, raw in enumerate(tokens):
+        cleaned = raw.strip(".,;:!?\"'()[]{}")
+        if len(cleaned) < 2:
+            continue
+        if _ALPHANUMERIC_CODE_RE.match(cleaned):
+            entities.add(cleaned.lower())
+            continue
+        if cleaned.isupper() and cleaned.isalpha():
+            entities.add(cleaned.lower())
+            continue
+        if _CAMELCASE_RE.search(cleaned):
+            entities.add(cleaned.lower())
+            continue
+        if cleaned[0].isupper() and not cleaned.isupper():
+            at_sentence_start = i == 0 or tokens[i - 1][-1] in ".!?"
+            if at_sentence_start and cleaned.lower() in _COMMON_SENTENCE_STARTERS:
+                continue
+            entities.add(cleaned.lower())
+    return entities
+
+
+_ENTITY_WEIGHT = 0.7
+_TEXT_WEIGHT = 0.3
+
+
+def _entity_aware_similarity(a: str, b: str) -> float:
+    """Blended similarity: entity-set Jaccard (0.7) + full-text Jaccard (0.3).
+
+    Falls back to text-only Jaccard when either text has no extractable entities.
+    """
+    text_sim = _jaccard(a, b)
+    a_ents = _extract_entities(a)
+    b_ents = _extract_entities(b)
+    if not a_ents or not b_ents:
+        return text_sim
+    entity_sim = len(a_ents & b_ents) / len(a_ents | b_ents)
+    return _ENTITY_WEIGHT * entity_sim + _TEXT_WEIGHT * text_sim
+
+
+def _centroid_response(responses: dict[str, str]) -> tuple[str | None, str | None]:
+    """The reply most similar to all others (highest summed Jaccard).
+
+    Returns (centroid_text, centroid_agent_id) — both None if no replies.
+    """
+    if not responses:
+        return None, None
+    items = list(responses.items())
+    if len(items) == 1:
+        aid, r = items[0]
+        return r, aid
+    best_id, best_text, best_score = None, None, -1.0
+    for aid, r in items:
+        score = sum(_jaccard(r, other) for oaid, other in items if oaid != aid)
+        if score > best_score:
+            best_score, best_id, best_text = score, aid, r
+    return best_text, best_id
+
+
+def _aggregate_trust(trust: dict[str, dict[str, float]]) -> dict[str, float]:
+    """Sum incoming trust per agent — how much the group trusts each agent.
+
+    For each target agent `t`, returns `sum over sources s of trust[s][t]`.
+    Used by the weighted-pool consensus selector to weight agents' replies
+    by how trustworthy the rest of the pool found them to be.
+    """
+    agg: dict[str, float] = {}
+    for src_trust in trust.values():
+        for target, w in src_trust.items():
+            agg[target] = agg.get(target, 0.0) + w
+    return agg
+
+
+def _weighted_consensus(
+    responses: dict[str, str],
+    aggregate_trust: dict[str, float],
+) -> tuple[str | None, str | None]:
+    """Pick the reply from the agent the group trusts most.
+
+    Falls back to ``_centroid_response`` when every agent has zero aggregate
+    trust (e.g. a disconnected graph), so we still return a sensible answer
+    instead of None.
+
+    Ties are broken by reply length (longer = more informative) for
+    determinism — without this two agents with identical aggregate trust
+    would resolve to whichever the dict iteration happened to visit first.
+    """
+    if not responses:
+        return None, None
+    candidates = {aid: aggregate_trust.get(aid, 0.0) for aid in responses}
+    if all(w <= 0.0 for w in candidates.values()):
+        return _centroid_response(responses)
+    best_id = max(
+        responses.keys(),
+        key=lambda aid: (candidates[aid], len(responses[aid])),
+    )
+    return responses[best_id], best_id
+
+
 _REASON_RE = re.compile(
     r"^\s*(?:>\s*)?(?:[-*+]\s*|\d+[.)]\s*)?(?:\*\*)?REASON(?:\*\*)?\s*[:\-]\s*(?:\*\*)?(.+?)\s*$",
     re.MULTILINE | re.IGNORECASE,
@@ -202,6 +459,74 @@ _VOTE_INSTRUCTION = (
     "        VOTE: none\n"
     "  BAD: none\n"
 )
+
+_WEIGHTED_POOL_INSTRUCTION = (
+    "\n\nIMPORTANT: Reply with ONLY these three lines. "
+    "No preamble, no extra text, no repetition.\n"
+    "ANSWER: <a concrete answer — you MUST commit to one>\n"
+    "SOURCE: <document name and key quote, or 'none'>\n"
+    "REASONING: <one sentence why>\n\n"
+    "Rules:\n"
+    "- You must always give a definitive answer. Never answer "
+    "'unknown', 'uncertain', or 'N/A'.\n"
+    "- Either defend your own source or adopt a peer's answer "
+    "if their source is more recent or authoritative.\n"
+    "- Once you change your answer based on better evidence, "
+    "do not revert to your previous answer.\n\n"
+    "GOOD example (entire response):\n"
+    "ANSWER: Acme Computers\n"
+    "SOURCE: 2026_master_agreement.txt — 'Vendor: Acme Computers'\n"
+    "REASONING: The master agreement names Acme as the sole supplier.\n\n"
+    "BAD example — do NOT do this:\n"
+    "Based on my analysis, I believe... ANSWER: Acme Computers ...\n"
+)
+
+_ANSWER_RE = re.compile(
+    r"^\s*(?:>\s*)?(?:[-*+]\s*|\d+[.)]\s*)?(?:\*\*)?ANSWER(?:\*\*)?\s*[:\-]\s*(?:\*\*)?(.+?)\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+_SOURCE_RE = re.compile(
+    r"^\s*(?:>\s*)?(?:[-*+]\s*|\d+[.)]\s*)?(?:\*\*)?SOURCE(?:\*\*)?\s*[:\-]\s*(?:\*\*)?(.+?)\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+_REASONING_RE = re.compile(
+    r"^\s*(?:>\s*)?(?:[-*+]\s*|\d+[.)]\s*)?(?:\*\*)?REASONING(?:\*\*)?\s*[:\-]\s*(?:\*\*)?(.+?)\s*$",
+    re.MULTILINE | re.IGNORECASE,
+)
+
+
+def _extract_answer(text: str) -> str | None:
+    """Pull the last ANSWER: ... line from a response."""
+    matches = _ANSWER_RE.findall(text)
+    if not matches:
+        return None
+    return matches[-1].strip() or None
+
+
+def _extract_source(text: str) -> str | None:
+    """Pull the last SOURCE: ... line from a response."""
+    matches = _SOURCE_RE.findall(text)
+    if not matches:
+        return None
+    return matches[-1].strip() or None
+
+
+def _extract_reasoning(text: str) -> str | None:
+    """Pull the last REASONING: ... line from a response."""
+    matches = _REASONING_RE.findall(text)
+    if not matches:
+        return None
+    return matches[-1].strip() or None
+
+
+def _extract_structured_response(text: str) -> dict[str, str | None]:
+    """Extract all structured fields from a weighted-pool response."""
+    return {
+        "answer": _extract_answer(text),
+        "source": _extract_source(text),
+        "reasoning": _extract_reasoning(text),
+    }
+
 
 # Strip stop-words and common framing prefixes so semantically equivalent
 # replies (\"Trump\" vs \"the president of america is trump\") tally together.
@@ -389,6 +714,176 @@ async def _create_self_message_round(
     return int(await create_round(db, trial_id, round_index, phase))
 
 
+# ── dynamic topology: discovery, selection, reputation ─────────────────────────
+#
+# These helpers power the optional ``dynamic`` topology, where agents rebuild the
+# communication graph themselves each round. They are pure functions + small
+# dataclasses with no DB access, so they are unit-tested in isolation. ``static``
+# topology never touches any of this (see ``TopologyController``).
+
+_CONNECT_RE = re.compile(r"^\s*CONNECT:\s*(.+?)\s*$", re.MULTILINE | re.IGNORECASE)
+
+
+def _parse_connect(text: str) -> list[str]:
+    """Pull agent ids from the last CONNECT: line (commas/spaces/brackets ok)."""
+    matches = _CONNECT_RE.findall(text)
+    if not matches:
+        return []
+    raw = matches[-1].strip().strip("[]")
+    parts = [p.strip().strip("[]") for p in re.split(r"[,\s]+", raw)]
+    return [p for p in parts if p]
+
+
+def _apply_selection(
+    declared: list[str],
+    prior: list[str],
+    valid_ids: set[str],
+    reputation: dict[str, float],
+    k: int,
+    self_id: str,
+) -> list[str]:
+    """Resolve one agent's incoming neighbours for the next round.
+
+    Drops invalid/self ids; if nothing valid remains, falls back to the previous
+    round's neighbours (the floor); ranks by reputation; caps at k. A non-positive
+    k means *unlimited* fan-out — every validly-declared peer is kept.
+    """
+
+    def _clean(ids: list[str]) -> list[str]:
+        seen: set[str] = set()
+        out: list[str] = []
+        for i in ids:
+            if i in valid_ids and i != self_id and i not in seen:
+                seen.add(i)
+                out.append(i)
+        return out
+
+    candidates = _clean(declared) or _clean(prior)
+    candidates.sort(key=lambda i: reputation.get(i, 0.5), reverse=True)
+    return candidates if k <= 0 else candidates[:k]
+
+
+def _grounded(text: str) -> bool:
+    """Cheap grounding proxy: did the agent supply a REASON line?"""
+    return _extract_reason(text) is not None
+
+
+def _centroid_text(responses: dict[str, str]) -> str:
+    """Cheap consensus proxy: all current-round responses joined."""
+    return "\n".join(responses.values())
+
+
+_REP_INIT = 0.5
+_REP_ALPHA = 0.5  # EMA factor
+_REP_W_GROUND = 0.5
+_REP_W_AGREE = 0.5
+
+
+@dataclass
+class Reputation:
+    """Running per-agent 'worth calling?' score in [0, 1].
+
+    A deliberate slim stand-in for EigenTrust: each round an agent's score is
+    nudged by whether it grounded its answer (supplied a REASON) and how much it
+    agrees with the emerging consensus (Jaccard to the joined responses). Used to
+    bias neighbour selection toward agents the group finds useful.
+    """
+
+    score: dict[str, float] = field(default_factory=dict)
+
+    def update(self, responses: dict[str, str], consensus: str) -> None:
+        for aid, resp in responses.items():
+            ground = 1.0 if _grounded(resp) else 0.0
+            agree = _jaccard(resp, consensus)
+            signal = _REP_W_GROUND * ground + _REP_W_AGREE * agree
+            old = self.score.get(aid, _REP_INIT)
+            self.score[aid] = (1 - _REP_ALPHA) * old + _REP_ALPHA * signal
+
+
+_CONNECT_INSTRUCTION = (
+    "\n\nYou may choose who you hear from next round. Use the `registry` tool to "
+    "discover relevant peers: action='search' with a short query describing the "
+    "expertise you need, action='list' for the full roster, or action='get' to "
+    "read one peer. Then end your response with a single line naming the agent "
+    "ids you want to hear from next round (most useful first):\n"
+    "CONNECT: <id>, <id>\n"
+)
+
+
+def _same_adjacency(a: dict[str, list[str]], b: dict[str, list[str]]) -> bool:
+    if a.keys() != b.keys():
+        return False
+    return all(set(a[k]) == set(b[k]) for k in a)
+
+
+@dataclass
+class TopologyController:
+    """Owns the per-round graph: static keeps it fixed, dynamic rewires it.
+
+    The runners loop over a single ``incoming`` adjacency map and persist each
+    round's deliveries from it. In ``static`` mode this controller is a no-op
+    wrapper around the seed graph (byte-for-byte identical behaviour to before).
+    In ``dynamic`` mode, ``prompt_suffix`` nudges each agent to use the registry
+    tool and emit a ``CONNECT:`` line, and ``rewire`` rebuilds the directed graph
+    from those declarations between rounds.
+    """
+
+    mode: str
+    fanout: int
+    agents: list[dict[str, Any]]
+    incoming: dict[str, list[str]]
+    reputation: Reputation
+    converged: bool = False
+
+    @classmethod
+    def create(
+        cls,
+        mode: str,
+        fanout: int,
+        agents: list[dict[str, Any]],
+        seed_incoming: dict[str, list[str]],
+    ) -> TopologyController:
+        return cls(
+            mode=mode,
+            fanout=fanout,
+            agents=agents,
+            incoming={k: list(v) for k, v in seed_incoming.items()},
+            reputation=Reputation(),
+        )
+
+    def prompt_suffix(self, agent: dict[str, Any]) -> str:
+        """Pull-model: tell the agent to use the registry tool + emit CONNECT.
+
+        No peer directory is pushed — the agent fetches peers on demand. Returns
+        an empty string in static mode so prompts are unchanged.
+        """
+        if self.mode != "dynamic":
+            return ""
+        return _CONNECT_INSTRUCTION
+
+    def rewire(self, responses: dict[str, str]) -> dict[str, list[str]]:
+        """Return the next round's incoming map. No-op (returns current) in static."""
+        if self.mode != "dynamic":
+            return self.incoming
+        self.reputation.update(responses, _centroid_text(responses))
+        valid_ids = {a["id"] for a in self.agents}
+        new_incoming: dict[str, list[str]] = {}
+        for a in self.agents:
+            aid = a["id"]
+            declared = _parse_connect(responses.get(aid, ""))
+            new_incoming[aid] = _apply_selection(
+                declared,
+                self.incoming.get(aid, []),
+                valid_ids,
+                self.reputation.score,
+                self.fanout,
+                aid,
+            )
+        self.converged = _same_adjacency(self.incoming, new_incoming)
+        self.incoming = new_incoming
+        return self.incoming
+
+
 # ── public interface ──────────────────────────────────────────────────────────
 
 
@@ -400,12 +895,20 @@ async def run_topology(
     agent_context: dict[str, str] | None = None,
     trial_id: str | None = None,
     ruleset: str | None = None,
+    topology: str = "static",
+    fanout: int = 3,
 ) -> None:
     """Run a topology simulation under the chosen consensus mode.
 
     All database reads happen here, up front and sequentially. Each agent's
     knowledge files are pre-loaded so the concurrent LLM phase never touches the
     connection (a single async connection cannot serve concurrent queries).
+
+    ``topology`` selects how the communication graph evolves: ``static``
+    (default) keeps the UI/seed graph fixed for the whole run, while ``dynamic``
+    lets agents rebuild it each round by discovering peers through the registry
+    tool and emitting CONNECT lines. ``fanout`` caps how many neighbours an agent
+    may pick per round in dynamic mode.
     """
     result = await db.execute(select(agents_table))
     agents: list[dict[str, Any]] = [deserialise_agent_row(row) for row in result.mappings().all()]
@@ -415,19 +918,25 @@ async def run_topology(
 
     files_by_agent = await load_files_by_agent(db)
     incoming = _build_incoming(agents)
+    controller = TopologyController.create(topology, fanout, agents, incoming)
+    # The semantic index is only built when discovery is actually enabled; static
+    # runs pay no embedding cost and offer no registry tool (registry is None).
+    registry = await RegistryIndex.build(agents, files_by_agent) if topology == "dynamic" else None
     if trial_id is None:
         trial_id = await create_trial(db, prompt, _trial_description(mode), mode)
 
     async def call(agent: dict[str, Any], prompt: str) -> tuple[str, list[ToolCall]]:
-        return await _call_agent(agent, prompt, files_by_agent.get(agent["id"], {}), ruleset)
+        return await _call_agent(
+            agent, prompt, files_by_agent.get(agent["id"], {}), ruleset, registry=registry
+        )
 
     if mode == "weighted_opinion_pooling":
         await _run_weighted_opinion_pool(
-            prompt, agents, incoming, call, db, rounds, agent_context, trial_id
+            prompt, agents, controller, call, db, rounds, agent_context, trial_id
         )
         return
     if mode == "plurality_voting":
-        await _run_voting(prompt, agents, incoming, call, db, rounds, agent_context, trial_id)
+        await _run_voting(prompt, agents, controller, call, db, rounds, agent_context, trial_id)
         return
     if mode == "bidding":
         await _run_bidding(
@@ -443,7 +952,7 @@ async def run_topology(
         )
         return
     await _run_broadcast_no_consensus(
-        prompt, agents, incoming, call, db, rounds, agent_context, trial_id
+        prompt, agents, controller, call, db, rounds, agent_context, trial_id
     )
 
 
@@ -453,7 +962,7 @@ async def run_topology(
 async def _run_broadcast_no_consensus(
     prompt: str,
     agents: list[dict[str, Any]],
-    incoming: dict[str, list[str]],
+    controller: TopologyController,
     call: _AgentCall,
     db: AsyncConnection,
     rounds: int,
@@ -461,6 +970,7 @@ async def _run_broadcast_no_consensus(
     trial_id: str,
 ) -> None:
     agent_by_id = {a["id"]: a for a in agents}
+    incoming = controller.incoming
     await _persist_system_broadcast(db, trial_id, agents, prompt, "broadcast_no_consensus")
     broadcast_output_round_id = await _create_self_message_round(
         db, trial_id, 2, "broadcast_no_consensus_outputs"
@@ -485,24 +995,40 @@ async def _run_broadcast_no_consensus(
         responses[agent_id] = response
 
     for round_num in range(1, rounds + 1):
-        if not any(incoming.values()):
+        # Static: an empty graph means nothing more can happen, so stop. Dynamic:
+        # keep going even with no edges so agents can self-organise from scratch
+        # (a fully-wireless start); convergence/round-limit still bound the loop.
+        if controller.mode != "dynamic" and not any(incoming.values()):
             break
         round_id = await create_round(db, trial_id, round_num + 2, "discussion")
 
         async def _discuss(
             agent: dict[str, Any],
+            incoming: dict[str, list[str]] = incoming,
         ) -> tuple[str, list[MessageDelivery], list[SelfMessage], str] | None:
             senders = [sid for sid in incoming[agent["id"]] if sid in responses]
-            if not senders:
+            suffix = controller.prompt_suffix(agent)
+            # Static: isolated agents stay silent. Dynamic: an agent with no
+            # incoming edges still gets a turn so it can discover peers via the
+            # registry and emit a CONNECT line — enabling a seedless start.
+            if not senders and not suffix:
                 return None
 
-            context_lines = [f"- {agent_by_id[sid]['name']}: {responses[sid]}" for sid in senders]
-            discussion_prompt = (
-                f"Original question: {prompt}\n\n"
-                "Other agents responded:\n"
-                + "\n".join(context_lines)
-                + "\n\nConsidering these perspectives, what is your updated view?"
-            )
+            if senders:
+                context_lines = [
+                    f"- {agent_by_id[sid]['name']}: {responses[sid]}" for sid in senders
+                ]
+                peer_block = (
+                    "Other agents responded:\n"
+                    + "\n".join(context_lines)
+                    + "\n\nConsidering these perspectives, what is your updated view?"
+                )
+            else:
+                peer_block = (
+                    "You have no incoming connections yet. Use the registry to find peers "
+                    "whose input would improve your answer next round."
+                )
+            discussion_prompt = f"Original question: {prompt}\n\n" + peer_block + suffix
 
             agent_id = str(agent["id"])
             deliveries: list[MessageDelivery] = [(sid, agent_id, responses[sid]) for sid in senders]
@@ -527,18 +1053,45 @@ async def _run_broadcast_no_consensus(
             new_responses[agent_id] = new_resp
         responses.update(new_responses)
 
+        # Dynamic topology: rebuild the graph from this round's CONNECT lines.
+        # Reassigning `incoming` means the next round's `_discuss` (redefined each
+        # iteration) closes over the rewired graph. In static mode this returns
+        # the same dict and `converged` stays False, so behaviour is unchanged.
+        incoming = controller.rewire(responses)
+        if controller.converged:
+            await _persist_system_self_message(
+                db, round_id, "topology_converged", "Topology stabilised — stopping."
+            )
+            break
+
 
 # ── mode 2: weighted opinion pooling (Option A) ───────────────────────────────
 
 
-_WEIGHT_BLEND = 0.5  # how much old trust to retain each round (EMA factor)
-_WEIGHT_EPSILON = 0.05  # max trust change to declare convergence
+_WEIGHT_BLEND = 0.3  # how much old trust to retain each round (EMA factor)
+_WEIGHT_EPSILON = 0.05  # max per-edge trust change tolerated as "stable"
+_WEIGHT_STABILITY_K = 1  # consecutive stable rounds needed for convergence
+_SIM_FLOOR = 0.001  # floor on similarity — prevents division-by-zero
+
+
+def _normalise_trust(weights: dict[str, float]) -> dict[str, float]:
+    """Renormalise a per-neighbour weight dict to sum to 1.0.
+
+    The EMA blend keeps weights summing to 1 in theory (convex combination
+    of two probability distributions), but floating-point drift accumulates
+    over many rounds. Renormalising defensively keeps the invariant exact.
+    """
+    total = sum(weights.values())
+    if total <= 0.0:
+        n = len(weights)
+        return dict.fromkeys(weights, 1.0 / n) if n else {}
+    return {k: v / total for k, v in weights.items()}
 
 
 async def _run_weighted_opinion_pool(
     prompt: str,
     agents: list[dict[str, Any]],
-    incoming: dict[str, list[str]],
+    controller: TopologyController,
     call: _AgentCall,
     db: AsyncConnection,
     rounds: int,
@@ -546,6 +1099,7 @@ async def _run_weighted_opinion_pool(
     trial_id: str,
 ) -> None:
     agent_by_id = {a["id"]: a for a in agents}
+    incoming = controller.incoming
     await _persist_system_broadcast(
         db,
         trial_id,
@@ -567,8 +1121,9 @@ async def _run_weighted_opinion_pool(
         agent: dict[str, Any],
     ) -> tuple[str, list[SelfMessage]]:
         agent_id = str(agent["id"])
+        full_prompt = _with_context(prompt, agent_id, agent_context) + _WEIGHTED_POOL_INSTRUCTION
         try:
-            response, tools = await call(agent, _with_context(prompt, agent_id, agent_context))
+            response, tools = await call(agent, full_prompt)
         except Exception as exc:
             err = f"[error: {exc}]"
             return err, [("agent_error", err)]
@@ -581,31 +1136,146 @@ async def _run_weighted_opinion_pool(
         await _persist_self_messages(db, broadcast_output_round_id, agent_id, self_messages)
         responses[agent_id] = resp
 
+    broadcast_responses: dict[str, str] = dict(responses)
+    stable_streak = 0
+
+    # Seed trust from broadcast responses so the initial disagreement is
+    # captured before agents have a chance to flip during discussion.
+    bcast_ids = [aid for aid in broadcast_responses if incoming[aid]]
+    bcast_answers = [
+        _extract_answer(broadcast_responses[aid]) or broadcast_responses[aid] for aid in bcast_ids
+    ]
+    bcast_embeddings_list = await embed_texts(bcast_answers)
+    bcast_embeddings: dict[str, list[float]] | None = None
+    if bcast_embeddings_list is not None:
+        bcast_embeddings = dict(zip(bcast_ids, bcast_embeddings_list, strict=True))
+
+    for a in agents:
+        aid = a["id"]
+        nbrs = incoming[aid]
+        if not nbrs or aid not in broadcast_responses:
+            continue
+        bcast_sims: dict[str, float] = {}
+        for n in nbrs:
+            nbr_text = broadcast_responses.get(n, "")
+            if bcast_embeddings is not None and aid in bcast_embeddings and n in bcast_embeddings:
+                sim = cosine_similarity(bcast_embeddings[aid], bcast_embeddings[n])
+                bcast_sims[n] = max(sim, _SIM_FLOOR)
+            else:
+                my_answer = _extract_answer(broadcast_responses[aid]) or broadcast_responses[aid]
+                nbr_answer = _extract_answer(nbr_text) or nbr_text
+                bcast_sims[n] = max(_entity_aware_similarity(my_answer, nbr_answer), _SIM_FLOOR)
+        total = sum(bcast_sims.values())
+        if total > 0:
+            trust[aid] = _normalise_trust({n: s / total for n, s in bcast_sims.items()})
+
+    # Persist broadcast trust seeding so the UI shows scores after round 1.
+    agg_seed = _aggregate_trust(trust)
+    if agg_seed:
+        ranked = sorted(agg_seed.items(), key=lambda kv: -kv[1])[:5]
+        top_str = ", ".join(
+            f"{agent_by_id[a]['name']}={w:.2f}" for a, w in ranked if a in agent_by_id
+        )
+        await _persist_system_self_message(
+            db,
+            broadcast_output_round_id,
+            "trust_update",
+            f"Broadcast trust seed: {top_str}",
+        )
+        for a in agents:
+            aid = a["id"]
+            if not trust[aid]:
+                continue
+            trust_data = json.dumps(
+                {
+                    "agent_id": aid,
+                    "agent_name": agent_by_id[aid]["name"],
+                    "round": 0,
+                    "trust_vector": {
+                        agent_by_id[n]["name"]: round(w, 4)
+                        for n, w in trust[aid].items()
+                        if n in agent_by_id
+                    },
+                }
+            )
+            await _persist_system_self_message(
+                db,
+                broadcast_output_round_id,
+                "trust_evolution",
+                trust_data,
+            )
+
     for round_num in range(1, rounds + 1):
-        if not any(incoming.values()):
+        # Static stops on an empty graph; dynamic keeps going so a seedless graph
+        # can self-organise (bounded by convergence + the round limit).
+        if controller.mode != "dynamic" and not any(incoming.values()):
             break
         round_id = await create_round(db, trial_id, round_num + 2, "weighted_opinion_pooling")
 
         async def _discuss(
             agent: dict[str, Any],
+            incoming: dict[str, list[str]] = incoming,
         ) -> tuple[str, list[MessageDelivery], list[SelfMessage], str] | None:
             nbrs = [n for n in incoming[agent["id"]] if n in responses]
-            if not nbrs:
+            suffix = controller.prompt_suffix(agent)
+            # Static: silent when isolated. Dynamic: still answer + discover so a
+            # seedless graph can bootstrap from scratch.
+            if not nbrs and not suffix:
                 return None
 
-            weights = trust[agent["id"]]
-            context_lines = [
-                f"- {agent_by_id[n]['name']} (trust {weights.get(n, 0.0):.2f}): {responses[n]}"
-                for n in nbrs
-            ]
-            discussion_prompt = (
-                f"Original question: {prompt}\n\n"
-                "Other agents responded (weighted by your trust in them):\n"
-                + "\n".join(context_lines)
-                + "\n\nGiving more weight to higher-trust voices, what is your updated answer?"
+            agent_id = str(agent["id"])
+            weights = trust[agent_id]
+            own_prev = _extract_structured_response(responses.get(agent_id, ""))
+            own_answer = own_prev["answer"] or "no previous answer"
+            own_source = own_prev["source"] or "none"
+
+            # Detect if the agent changed its answer from the broadcast.
+            bcast_parsed = _extract_structured_response(broadcast_responses.get(agent_id, ""))
+            bcast_answer = bcast_parsed["answer"]
+            changed = (
+                bcast_answer
+                and own_answer != "no previous answer"
+                and bcast_answer.lower() != own_answer.lower()
+            )
+            change_note = (
+                f"\nYou originally answered '{bcast_answer}' but changed to "
+                f"'{own_answer}' based on stronger evidence. "
+                "Do NOT revert to your original answer."
+                if changed
+                else ""
             )
 
-            agent_id = str(agent["id"])
+            context_lines: list[str] = []
+            for n in nbrs:
+                parsed = _extract_structured_response(responses[n])
+                answer_text = parsed["answer"] or responses[n]
+                source_text = f" [source: {parsed['source']}]" if parsed["source"] else ""
+                context_lines.append(
+                    f"- {agent_by_id[n]['name']} "
+                    f"(trust {weights.get(n, 0.0):.2f}): "
+                    f"{answer_text}{source_text}"
+                )
+            if nbrs:
+                peer_block = (
+                    "Other agents responded (weighted by your trust in them):\n"
+                    + "\n".join(context_lines)
+                    + "\n\nGiving more weight to higher-trust voices, "
+                    "what is your updated answer?"
+                )
+            else:
+                peer_block = (
+                    "You have no incoming connections yet. Use the registry to find peers "
+                    "whose input would improve your answer next round."
+                )
+            discussion_prompt = (
+                f"Original question: {prompt}\n\n"
+                f"Your previous answer: {own_answer} "
+                f"[source: {own_source}]{change_note}\n\n"
+                + peer_block
+                + _WEIGHTED_POOL_INSTRUCTION
+                + suffix
+            )
+
             deliveries: list[MessageDelivery] = [(n, agent_id, responses[n]) for n in nbrs]
 
             try:
@@ -618,18 +1288,33 @@ async def _run_weighted_opinion_pool(
 
         results = await asyncio.gather(*[_discuss(a) for a in agents])
 
+        # Persist in logical order: all deliveries → all self-messages
+        # so the activity log reads: incoming → tools → output → trust.
+        parsed_results: list[tuple[str, list[MessageDelivery], list[SelfMessage], str]] = []
+        for result in results:
+            if result is not None:
+                parsed_results.append(result)
+
+        for _, deliveries, _, _ in parsed_results:
+            await _persist_agent_deliveries(db, round_id, deliveries, "weighted_agent_to_agent")
+
         prev_responses = dict(responses)
         new_responses: dict[str, str] = {}
-        for result in results:
-            if result is None:
-                continue
-            agent_id, deliveries, self_messages, new_resp = result
-            await _persist_agent_deliveries(db, round_id, deliveries, "weighted_agent_to_agent")
+        for agent_id, _, self_messages, new_resp in parsed_results:
             await _persist_self_messages(db, round_id, agent_id, self_messages)
             new_responses[agent_id] = new_resp
 
-        # Trust update: increase weight on neighbours whose latest reply
-        # agrees most (Jaccard) with the agent's own latest reply.
+        # Trust update: embed extracted answers and use cosine similarity.
+        # Falls back to entity-aware Jaccard if the embedding call fails.
+        responding_ids = [aid for aid in new_responses if incoming[aid]]
+        responding_answers = [
+            _extract_answer(new_responses[aid]) or new_responses[aid] for aid in responding_ids
+        ]
+        embeddings_list = await embed_texts(responding_answers)
+        embeddings: dict[str, list[float]] | None = None
+        if embeddings_list is not None:
+            embeddings = dict(zip(responding_ids, embeddings_list, strict=True))
+
         max_trust_change = 0.0
         for a in agents:
             aid = a["id"]
@@ -640,18 +1325,20 @@ async def _run_weighted_opinion_pool(
             sims: dict[str, float] = {}
             for n in nbrs:
                 nbr_text = new_responses.get(n, prev_responses.get(n, ""))
-                sims[n] = _jaccard(my_new, nbr_text)
+                if embeddings is not None and aid in embeddings and n in embeddings:
+                    sims[n] = max(cosine_similarity(embeddings[aid], embeddings[n]), _SIM_FLOOR)
+                else:
+                    my_answer = _extract_answer(my_new) or my_new
+                    nbr_answer = _extract_answer(nbr_text) or nbr_text
+                    sims[n] = max(_entity_aware_similarity(my_answer, nbr_answer), _SIM_FLOOR)
             total = sum(sims.values())
-            target = (
-                {n: s / total for n, s in sims.items()}
-                if total > 0
-                else {n: 1.0 / len(nbrs) for n in nbrs}
-            )
+            target = {n: s / total for n, s in sims.items()}
             old = trust[aid]
-            updated = {
+            blended = {
                 n: _WEIGHT_BLEND * old.get(n, 1.0 / len(nbrs)) + (1 - _WEIGHT_BLEND) * target[n]
                 for n in nbrs
             }
+            updated = _normalise_trust(blended)
             for n in nbrs:
                 max_trust_change = max(
                     max_trust_change, abs(updated[n] - old.get(n, 1.0 / len(nbrs)))
@@ -660,8 +1347,110 @@ async def _run_weighted_opinion_pool(
 
         responses.update(new_responses)
 
+        agg = _aggregate_trust(trust)
+        if agg:
+            ranked = sorted(agg.items(), key=lambda kv: -kv[1])[:5]
+            top_str = ", ".join(
+                f"{agent_by_id[a]['name']}={w:.2f}" for a, w in ranked if a in agent_by_id
+            )
+            await _persist_system_self_message(
+                db,
+                round_id,
+                "trust_update",
+                f"Aggregate trust (top): {top_str}  |  Δmax = {max_trust_change:.3f}",
+            )
+
+            for a in agents:
+                aid = a["id"]
+                if not trust[aid]:
+                    continue
+                trust_data = json.dumps(
+                    {
+                        "agent_id": aid,
+                        "agent_name": agent_by_id[aid]["name"],
+                        "round": round_num,
+                        "trust_vector": {
+                            agent_by_id[n]["name"]: round(w, 4)
+                            for n, w in trust[aid].items()
+                            if n in agent_by_id
+                        },
+                    }
+                )
+                await _persist_system_self_message(db, round_id, "trust_evolution", trust_data)
+
+        # Stability-based convergence: require K consecutive rounds of small
+        # delta before declaring convergence. A single quiet round was prone
+        # to spurious early stops on noisy first iterations.
         if max_trust_change < _WEIGHT_EPSILON:
+            stable_streak += 1
+        else:
+            stable_streak = 0
+
+        weights_stable = stable_streak >= _WEIGHT_STABILITY_K
+
+        # Static: trust stability alone stops the run (unchanged behaviour).
+        if controller.mode != "dynamic":
+            if weights_stable:
+                await _persist_system_self_message(
+                    db,
+                    round_id,
+                    "convergence",
+                    f"Converged after {round_num} round(s) (Δmax < {_WEIGHT_EPSILON}).",
+                )
+                break
+            continue
+
+        # Dynamic: rewire EVERY round from the agents' CONNECT lines BEFORE deciding
+        # to stop, then reconcile each trust vector to the new neighbour set — new
+        # neighbours get the uniform prior, dropped ones are removed and the vector
+        # is renormalised. The previous order (break-then-rewire) meant trust
+        # convergence — which can fire after a single round (K == 1) — short-
+        # circuited the run before the graph ever evolved, so isolated agents could
+        # never join. We keep exploring until the *graph* also settles.
+        incoming = controller.rewire(responses)
+        for a in agents:
+            aid = a["id"]
+            nbrs = incoming[aid]
+            vec = trust.get(aid, {})
+            uniform = 1.0 / len(nbrs) if nbrs else 0.0
+            vec = {n: vec.get(n, uniform) for n in nbrs}  # add new, drop missing
+            total = sum(vec.values())
+            trust[aid] = {n: w / total for n, w in vec.items()} if total > 0 else vec
+        if controller.converged:
+            note = (
+                f"Answer and topology both stabilised after {round_num} round(s)."
+                if weights_stable
+                else "Topology stabilised — stopping."
+            )
+            await _persist_system_self_message(db, round_id, "topology_converged", note)
             break
+
+    agg_trust = _aggregate_trust(trust)
+    consensus, consensus_aid = _weighted_consensus(responses, agg_trust)
+
+    if consensus is not None and not any(agg_trust.get(aid, 0.0) > 0 for aid in responses):
+        if broadcast_responses:
+            consensus_aid = max(
+                broadcast_responses.items(),
+                key=lambda kv: _jaccard(kv[1], consensus),
+            )[0]
+
+    if consensus is not None:
+        winner_trust = agg_trust.get(consensus_aid or "", 0.0)
+        attribution = (
+            f" (aggregate trust = {winner_trust:.2f})"
+            if winner_trust > 0
+            else " (no edges — textual centroid)"
+        )
+        consensus_round_id = await _create_self_message_round(
+            db, trial_id, round_num + 3, "weighted_opinion_pooling_consensus"
+        )
+        await _persist_system_self_message(
+            db,
+            consensus_round_id,
+            "consensus",
+            f"Selected consensus answer{attribution}:\n{consensus}",
+        )
 
 
 # ── mode 3: plurality voting (Option B) ───────────────────────────────────────
@@ -673,7 +1462,7 @@ _VOTE_STABILITY_K = 2  # consecutive rounds the plurality must hold to converge
 async def _run_voting(
     prompt: str,
     agents: list[dict[str, Any]],
-    incoming: dict[str, list[str]],
+    controller: TopologyController,
     call: _AgentCall,
     db: AsyncConnection,
     rounds: int,
@@ -681,6 +1470,7 @@ async def _run_voting(
     trial_id: str,
 ) -> None:
     agent_by_id = {a["id"]: a for a in agents}
+    incoming = controller.incoming
     next_round_index = 1
     await _persist_system_broadcast(
         db,
@@ -741,6 +1531,7 @@ async def _run_voting(
             agent: dict[str, Any],
             tally_msg: str = tally_msg,
             reasons_msg: str = reasons_msg,
+            incoming: dict[str, list[str]] = incoming,
         ) -> tuple[
             str,
             list[MessageDelivery],
@@ -789,10 +1580,32 @@ async def _run_voting(
                     "files/sources when available."
                     + unknown_nudge
                     + source_nudge
+                    + controller.prompt_suffix(agent)
+                    + _VOTE_INSTRUCTION
+                )
+            elif controller.mode == "dynamic":
+                # Dynamic (phone-book): a truly isolated agent is NOT spoon-fed the
+                # global tally. It must use the registry to find peers and CONNECT,
+                # so next round's rewire wires it and real agent-to-agent messages
+                # flow. No delivery is recorded — its registry tool calls are what
+                # the activity log shows for this turn.
+                agent_id = str(agent["id"])
+                deliveries = []
+                delivery_type = "voting_agent_to_agent"  # unused: no deliveries
+                full_prompt = (
+                    f"Original question: {prompt}\n\n"
+                    f"Your previous answer:\n{own_prev}\n\n"
+                    "You have no incoming connections yet, so you cannot see other "
+                    "agents' answers. Use the registry tool to find the peers whose "
+                    "expertise would most improve your answer, then CONNECT to them so "
+                    "you hear from them next round."
+                    + unknown_nudge
+                    + source_nudge
+                    + controller.prompt_suffix(agent)
                     + _VOTE_INSTRUCTION
                 )
             else:
-                # Isolated agent: fall back to global tally so it isn't blind.
+                # Static: fall back to global tally so an isolated agent isn't blind.
                 agent_id = str(agent["id"])
                 deliveries = [(None, agent_id, f"{tally_msg}\n\n{reasons_msg}")]
                 delivery_type = "voting_tally"
@@ -836,7 +1649,28 @@ async def _run_voting(
             stable_streak = 1
         last_plurality = plurality
 
-        if stable_streak >= _VOTE_STABILITY_K:
+        consensus_stable = stable_streak >= _VOTE_STABILITY_K
+
+        # Static: a stable plurality alone stops the run (unchanged behaviour).
+        if controller.mode != "dynamic":
+            if consensus_stable:
+                break
+            continue
+
+        # Dynamic: rewire EVERY round from the agents' CONNECT lines BEFORE deciding
+        # to stop, so an isolated agent's phone-registry picks are always honoured.
+        # The previous order (break-then-rewire) meant a stable plurality — the
+        # common case — short-circuited the run before the graph ever evolved, so
+        # isolated agents could never join. We keep exploring until the *graph*
+        # also settles (or the round limit is hit), not on consensus alone.
+        incoming = controller.rewire(responses)
+        if controller.converged:
+            note = (
+                "Answer and topology both stabilised — stopping."
+                if consensus_stable
+                else "Topology stabilised — stopping."
+            )
+            await _persist_system_self_message(db, round_id, "topology_converged", note)
             break
 
 

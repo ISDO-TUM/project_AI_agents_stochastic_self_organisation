@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import {
   Agent,
   ConsensusMode,
@@ -8,6 +8,7 @@ import {
   HistoryMessage,
   SimStep,
   AnimatedParticle,
+  TopologyMode,
 } from "@/lib/types";
 import { uuid } from "@/lib/utils";
 import {
@@ -21,26 +22,81 @@ function timeFromIso(iso: string): string {
   return new Date(iso).toLocaleTimeString("en-GB", { hour12: false });
 }
 
-function historyMessageToStep(message: HistoryMessage): SimStep {
+// Coordinator / meta events carry no agent sender. Map their raw message_type to
+// a readable label + a distinct icon so the activity log reads as something
+// richer than a wall of identical "SYSTEM" lines.
+const META_EVENTS: Record<string, { label: string; icon: string }> = {
+  system_broadcast: { label: "Broadcast", icon: "Radio" },
+  agent_output: { label: "", icon: "MessageSquare" }, // label filled from agent name
+  agent_error: { label: "", icon: "TriangleAlert" },
+  vote_tally: { label: "Vote tally", icon: "ListChecks" },
+  voting_tally: { label: "Tally delivered", icon: "ListChecks" },
+  trust_update: { label: "Trust update", icon: "Scale" },
+  trust_evolution: { label: "Trust vector", icon: "Scale" },
+  consensus: { label: "Consensus", icon: "CircleCheckBig" },
+  convergence: { label: "Converged", icon: "CircleCheckBig" },
+  topology_converged: { label: "Topology settled", icon: "Network" },
+};
+
+function historyMessageToStep(
+  message: HistoryMessage,
+  seedKeys?: Set<string>,
+): SimStep {
   const isSelf = message.fromAgentId === message.toAgentId;
   const isAgentToAgent = Boolean(message.fromAgentId) && !isSelf;
-  const type: SimStep["type"] =
-    message.messageType === "tool"
-      ? "tool"
-      : isAgentToAgent
-        ? "agent-to-agent"
-        : "system";
+
+  // A "phone-book" connection: an agent-to-agent edge that the user never drew —
+  // it was discovered at runtime via the registry in dynamic topology.
+  const dynamic =
+    isAgentToAgent &&
+    seedKeys != null &&
+    Boolean(message.fromAgentId) &&
+    Boolean(message.toAgentId) &&
+    !seedKeys.has(`${message.fromAgentId}->${message.toAgentId}`) &&
+    !seedKeys.has(`${message.toAgentId}->${message.fromAgentId}`);
+
+  // A coordinator note delivered to one specific agent (e.g. an isolated agent's
+  // tally in static mode). Highlight the recipient node so the delivery is visible.
+  const isDirectedToAgent =
+    !message.fromAgentId &&
+    Boolean(message.toAgentId) &&
+    message.messageType !== "system_broadcast";
+
+  const meta = META_EVENTS[message.messageType];
+
+  let type: SimStep["type"];
+  let icon: string | undefined;
+  let label = message.fromAgentName;
+  if (message.messageType === "tool") {
+    type = "tool";
+  } else if (isAgentToAgent) {
+    type = "agent-to-agent";
+    if (dynamic) icon = "Phone";
+  } else {
+    type = "system";
+    if (meta) {
+      icon = meta.icon;
+      if (meta.label) label = meta.label;
+    }
+  }
+
   return {
     id: String(message.id),
     ts: timeFromIso(message.createdAt),
-    label: message.fromAgentName,
+    label,
     msg: message.message || "",
     type,
     roundIndex: message.roundIndex,
-    ...(isAgentToAgent && { target: message.toAgentName }),
+    ...(icon && { icon }),
+    ...(dynamic && { dynamic: true }),
+    ...((isAgentToAgent || isDirectedToAgent) && {
+      target: message.toAgentName,
+    }),
     ...(message.fromAgentId && { fromId: message.fromAgentId }),
     ...(message.toAgentId && { toId: message.toAgentId }),
     ...(isSelf && message.toAgentId && { nodeId: message.toAgentId }),
+    ...(isDirectedToAgent &&
+      message.toAgentId && { nodeId: message.toAgentId }),
   };
 }
 
@@ -51,6 +107,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
   const [logExp, setLogExp] = useState(false);
   const [activeNode, setActNode] = useState<string | null>(null);
   const [activeEdge, setActEdge] = useState<string | null>(null);
+  const [activeEdgeReversed, setActEdgeReversed] = useState(false);
   const [particles, setParticles] = useState<AnimatedParticle[]>([]);
   const [outcome, setOutcome] = useState<SimulationResult | null>(null);
   const particleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
@@ -62,6 +119,27 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     };
   }, []);
 
+  // Edges formed at runtime: agent-to-agent steps played back so far whose
+  // (from,to) pair is NOT one of the static seed edges. Deduped by from->to.
+  const dynamicEdges = useMemo((): Edge[] => {
+    const seedKeys = new Set<string>();
+    for (const e of edges) {
+      seedKeys.add(`${e.from}->${e.to}`);
+      seedKeys.add(`${e.to}->${e.from}`);
+    }
+    const seen = new Set<string>();
+    const out: Edge[] = [];
+    for (let i = 0; i <= cur && i < steps.length; i++) {
+      const s = steps[i];
+      if (s.type !== "agent-to-agent" || !s.fromId || !s.toId) continue;
+      const key = `${s.fromId}->${s.toId}`;
+      if (seedKeys.has(key) || seen.has(key)) continue;
+      seen.add(key);
+      out.push({ id: `dyn-${key}`, from: s.fromId, to: s.toId });
+    }
+    return out;
+  }, [cur, steps, edges]);
+
   useEffect(() => {
     if (!simMode || !steps.length) return;
     const s = steps[cur];
@@ -70,25 +148,33 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
       // eslint-disable-next-line react-hooks/set-state-in-effect
       setActNode(s.nodeId);
       setActEdge(null);
+      setActEdgeReversed(false);
     } else if (s.fromId && s.toId) {
-      const e = edges.find(
+      // Search static edges first; fall back to runtime-formed dynamic edges so
+      // that phone-book connections also receive the directional pulse.
+      const allEdges = [...edges, ...dynamicEdges];
+      const e = allEdges.find(
         (e) =>
           (e.from === s.fromId && e.to === s.toId) ||
           (e.from === s.toId && e.to === s.fromId),
       );
       setActEdge(e ? e.id : null);
+      setActEdgeReversed(e ? e.from === s.toId && e.to === s.fromId : false);
       setActNode(s.fromId ?? null);
     } else {
       setActNode(null);
       setActEdge(null);
+      setActEdgeReversed(false);
     }
-  }, [cur, simMode, steps, edges]);
+  }, [cur, simMode, steps, edges, dynamicEdges]);
 
   const runSim = useCallback(
     async (
       prompt: string,
       mode: ConsensusMode = "broadcast_no_consensus",
       ruleset?: string,
+      topology: TopologyMode = "static",
+      fanout: number = 3,
     ) => {
       if (agents.length === 0) return;
 
@@ -112,8 +198,21 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
       if (particleTimerRef.current) clearTimeout(particleTimerRef.current);
       particleTimerRef.current = setTimeout(() => setParticles([]), 3500);
 
+      // Keys of the user-drawn seed graph (both directions) — used to flag
+      // phone-book connections formed at runtime in the activity log.
+      const seedKeys = new Set<string>();
+      for (const e of edges) {
+        seedKeys.add(`${e.from}->${e.to}`);
+        seedKeys.add(`${e.to}->${e.from}`);
+      }
+
       try {
-        const result = await runSimulation(prompt, { mode, ruleset });
+        const result = await runSimulation(prompt, {
+          mode,
+          ruleset,
+          topology,
+          fanout,
+        });
         setOutcome(result);
         let lastMessageId = 0;
         let complete = false;
@@ -127,7 +226,9 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
               ...messages.map((m) => m.id),
               lastMessageId,
             );
-            const newSteps = messages.map(historyMessageToStep);
+            const newSteps = messages.map((m) =>
+              historyMessageToStep(m, seedKeys),
+            );
             setSteps((prev) => {
               const next = [...prev, ...newSteps];
               setCur(Math.max(0, next.length - 1));
@@ -167,6 +268,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     setCur(0);
     setActNode(null);
     setActEdge(null);
+    setActEdgeReversed(false);
     setParticles([]);
     setOutcome(null);
   }, []);
@@ -180,9 +282,11 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     setLogExp,
     activeNode,
     activeEdge,
+    activeEdgeReversed,
     particles,
     runSim,
     stopSim,
     outcome,
+    dynamicEdges,
   };
 }

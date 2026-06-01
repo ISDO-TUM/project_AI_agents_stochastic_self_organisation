@@ -1,7 +1,13 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { CanvasState, ConsensusMode, Rule, Tweaks } from "@/lib/types";
+import {
+  CanvasState,
+  ConsensusMode,
+  Rule,
+  TopologyMode,
+  Tweaks,
+} from "@/lib/types";
 import { BURG } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { useCanvasState } from "@/hooks/useCanvasState";
@@ -25,6 +31,7 @@ import { HistoryPage } from "@/components/history-page";
 import { PromptBar } from "@/components/prompt-bar";
 import { ContextMenu, ContextMenuItem } from "@/components/context-menu";
 import { TweaksPanel } from "@/components/tweaks-panel";
+
 import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
 import { getTheme } from "@/lib/theme";
@@ -67,9 +74,11 @@ export function App() {
     setLogExp,
     activeNode,
     activeEdge,
+    activeEdgeReversed,
     particles,
     runSim,
     stopSim,
+    dynamicEdges,
   } = useSimulation(agents, edges);
 
   const [logSidebarWidth, setLogSidebarWidth] = useState(290);
@@ -102,6 +111,12 @@ export function App() {
   const [selectedRules, setSelectedRules] = useState<Set<string>>(new Set());
   const [importError, setImportError] = useState<string | null>(null);
 
+  // Run configuration — edited in the Settings panel, read at run start.
+  const [consensusMode, setConsensusMode] =
+    useState<ConsensusMode>("plurality_voting");
+  const [topology, setTopology] = useState<TopologyMode>("static");
+  const [fanout, setFanout] = useState(3);
+
   useEffect(() => {
     fetchRules()
       .then((rs) => {
@@ -124,14 +139,14 @@ export function App() {
   }, []);
 
   const handleRun = useCallback(
-    (prompt: string, mode: ConsensusMode) => {
+    (prompt: string) => {
       const active = rules.filter((r) => selectedRules.has(r.id));
       const ruleset = active.length
         ? active.map((r) => `- ${r.instruction}`).join("\n")
         : undefined;
-      runSim(prompt, mode, ruleset);
+      runSim(prompt, consensusMode, ruleset, topology, fanout);
     },
-    [rules, selectedRules, runSim],
+    [rules, selectedRules, runSim, consensusMode, topology, fanout],
   );
   const importErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -453,6 +468,7 @@ export function App() {
           agents={agents}
           sources={sources}
           edges={edges}
+          dynamicEdges={simMode ? dynamicEdges : []}
           selectedNode={selNode}
           selectedEdge={selEdge}
           onSelectNode={selectNode}
@@ -463,10 +479,22 @@ export function App() {
           simMode={simMode}
           activeNodeId={activeNode}
           activeEdgeId={activeEdge}
+          activeEdgeReversed={activeEdgeReversed}
           animatedParticles={particles}
           tweaks={tweaks}
           onCanvasClick={onCanvasClick}
           panAdjust={panAdjust}
+          phonebook={
+            topology === "dynamic"
+              ? {
+                  agents,
+                  steps,
+                  currentStep: cur,
+                  dynamicEdges: simMode ? dynamicEdges : [],
+                  simMode,
+                }
+              : null
+          }
         />
 
         <Toolbar
@@ -510,6 +538,13 @@ export function App() {
           rules={rules}
           selectedRules={selectedRules}
           onToggleRule={toggleRule}
+          consensusMode={consensusMode}
+          onConsensusModeChange={setConsensusMode}
+          topology={topology}
+          onTopologyChange={setTopology}
+          fanout={fanout}
+          onFanoutChange={setFanout}
+          simRunning={simMode}
           onClose={() => setShowTweaks(false)}
         />
       )}

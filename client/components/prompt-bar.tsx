@@ -7,32 +7,18 @@ import { useTheme } from "@/lib/theme-context";
 import { useApiKeys } from "@/lib/api-keys-context";
 import { fetchModels } from "@/lib/api";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import type { ConsensusMode } from "@/lib/types";
 
 interface PromptBarProps {
   simMode: boolean;
-  onRun: (prompt: string, mode: ConsensusMode) => void;
+  // Consensus mode, topology and fan-out now live in the Settings panel; the
+  // prompt bar only collects the prompt and triggers the run.
+  onRun: (prompt: string) => void;
   onOpenKeys: () => void;
 }
-
-const MODE_LABELS: Partial<Record<ConsensusMode, string>> = {
-  broadcast_no_consensus: "Broadcast",
-  weighted_opinion_pooling: "Weighted pooling",
-  plurality_voting: "Plurality voting",
-  bidding: "Bidding",
-};
 
 export function PromptBar({ simMode, onRun, onOpenKeys }: PromptBarProps) {
   const [val, setVal] = useState("");
   const [preview, setPreview] = useState(false);
-  const [mode, setMode] = useState<ConsensusMode>("plurality_voting");
   const { dark } = useTheme();
   const t = getTheme(dark);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -51,10 +37,10 @@ export function PromptBar({ simMode, onRun, onOpenKeys }: PromptBarProps) {
 
   const handleSubmit = useCallback(() => {
     if (!canRun) return;
-    onRun(val, mode);
+    onRun(val);
     setVal("");
     setPreview(false);
-  }, [canRun, onRun, val, mode]);
+  }, [canRun, onRun, val]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -239,26 +225,6 @@ export function PromptBar({ simMode, onRun, onOpenKeys }: PromptBarProps) {
             />
           </button>
         )}
-
-        {/* Consensus mode selector */}
-        <Select
-          value={mode}
-          onValueChange={(v) => setMode(v as ConsensusMode)}
-          disabled={simMode}
-        >
-          <SelectTrigger disabled={simMode}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {(Object.entries(MODE_LABELS) as [ConsensusMode, string][]).map(
-              ([m, label]) => (
-                <SelectItem key={m} value={m}>
-                  {label}
-                </SelectItem>
-              ),
-            )}
-          </SelectContent>
-        </Select>
 
         {/* Run button */}
         <button

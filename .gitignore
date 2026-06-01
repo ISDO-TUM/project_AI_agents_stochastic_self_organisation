@@ -1,6 +1,12 @@
 # dependencies
 node_modules/
 
+# Next.js build output
+.next/
+app/.next/
+client/.next/
+*.tsbuildinfo
+
 # environment
 .env
 
