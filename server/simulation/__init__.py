@@ -1730,71 +1730,46 @@ _BIDDING_INSTRUCTION = (
 
 _BIDDING_MATCHING_INSTRUCTION = (
     "\n\n## GAP MATCHING\n"
-    "The blackboard below lists gaps posted by OTHER agents during the "
-    "bidding phase. "
-    "Your own bid findings are listed under YOUR FINDINGS below, each with "
-    "a stable id (F0, F1, …). "
-    "For each gap, decide whether YOU can *contribute* to filling it. If "
-    "yes, ADD the actual answering data to the gap — do not just claim you "
-    "could. Two valid paths to contribute:\n"
-    "1. CONNECT an existing finding: if one of YOUR FINDINGS already answers "
-    "this gap, reference it by id in `reuses_finding` (e.g. "
-    '`"reuses_finding": ["F0"]`). You do NOT need to retype its data — the '
-    "system links that finding to the gap for you.\n"
-    "2. CREATE + CONNECT a new finding: if your tools or files contain "
-    "evidence you did NOT declare in your bid (e.g. you re-read a file "
-    "this turn and found something specific to this gap), produce a fresh "
-    "`contribution` entry with a verifiable citation and leave "
-    "`reuses_finding` empty.\n\n"
-    "You may combine both: reference one or more findings in `reuses_finding` "
-    "AND add new `contribution` entries in the same gap. What matters is "
-    "that every NEW contribution is backed by a real file you actually read "
-    "this turn or a real tool you were granted; reused findings are already "
-    "verified from your bid and need no re-read.\n\n"
-    "Contributing does NOT mean fully resolving the gap. Partial, "
-    "supporting, or complementary information counts. If anything in your "
-    "files or tools is even tangentially useful — set can_contribute=true "
-    "and put the relevant fact(s) under `contribution`. Only set "
-    "can_contribute=false if you have NOTHING that touches the gap.\n\n"
-    "Verification rules for NEW contributions:\n"
-    "- Cite only tools you have been granted.\n"
-    "- For each file you cite, you MUST first call `files` with action='read' "
-    "to inspect its contents this turn — un-read citations are rejected.\n"
-    "- `reuses_finding` ids must be ids that appear under YOUR FINDINGS; "
-    "unknown ids are rejected.\n\n"
-    "Respond with ONLY a single JSON object (no prose, no markdown fences):\n\n"
+    "The BLACKBOARD below lists gaps posted by OTHER agents. YOUR FINDINGS "
+    "below are your own bid findings, each with a stable id (F0, F1, …).\n\n"
+    "Go through every gap. Add one entry to `gap_coverage` for each gap you "
+    "can help answer, and omit the gaps you cannot. Two ways to contribute, "
+    "usable together:\n"
+    "- `reuses_finding`: ids of YOUR FINDINGS that already answer the gap "
+    '(e.g. ["F0"]); the system links them, so you need not retype the data.\n'
+    "- `contribution`: NEW facts you find by reading a file this turn, each "
+    "with a citation.\n"
+    "Partial or complementary information still counts — contribute it.\n\n"
+    "Rules:\n"
+    "- Cite only tools you were granted.\n"
+    "- Every NEW contribution must come from a file you actually read this "
+    "turn (`files` action='read'); un-read citations are rejected.\n"
+    "- `reuses_finding` ids must appear in YOUR FINDINGS.\n\n"
+    "Respond with ONLY this JSON (no prose, no fences). If you can help with "
+    'no gap, return `{"gap_coverage": []}`:\n\n'
     "{\n"
     '  "gap_coverage": [\n'
     "    {\n"
     '      "gap_id": "<exact gap_id from the blackboard>",\n'
-    '      "reuses_finding": ["F0"],   // ids of YOUR FINDINGS that answer '
-    "this gap; [] if none\n"
+    '      "can_contribute": true,\n'
+    '      "reuses_finding": ["F0"],\n'
     '      "evidence": {\n'
     '        "relevant_tools": [...],\n'
     '        "relevant_files": [\n'
-    '          {"file_name": "...", "file_type": "...",\n'
-    '           "relevance": "what part of the gap this helps with"}\n'
+    '          {"file_name": "...", "file_type": "...", "relevance": "..."}\n'
     "        ]\n"
     "      },\n"
     '      "contribution": [\n'
-    "        {\n"
-    '          "data": "<a NEW fact that helps answer this gap — '
-    'one statement per entry>",\n'
-    '          "citation": "<source: file name + date if present, '
-    "e.g. 'nexora_overview_2024 (2024-09-01)'>\"\n"
-    "        }\n"
+    '        {"data": "<a new fact answering this gap>",\n'
+    '         "citation": "<file name + date, e.g. '
+    'nexora_overview_2024 (2024-09-01)>"}\n'
     "      ],\n"
-    '      "rationale": "<one sentence — why this data fills the gap>"\n'
+    '      "rationale": "<one sentence: why this fills the gap>"\n'
     "    }\n"
     "  ]\n"
     "}\n\n"
-    "IMPORTANT — keep the output small: include an entry ONLY for the gaps you "
-    "can actually contribute to. OMIT every gap you cannot help with — do NOT "
-    "emit `can_contribute:false` placeholders, and do not restate the gaps you "
-    "are skipping. If you cannot contribute to any gap, return "
-    '`{"gap_coverage": []}`. Every entry you DO include must reference at least '
-    "one finding in `reuses_finding` OR carry a non-empty `contribution` array "
-    "(or both).\n\n"
+    "Each entry must set `can_contribute: true` and carry a non-empty "
+    "`reuses_finding` OR `contribution` (or both).\n\n"
 )
 
 
