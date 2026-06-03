@@ -54,22 +54,6 @@ _HOOKS: dict[str, tuple[str, str]] = {
 
 _GROUP_ORDER = ["File hygiene", "Python", "TypeScript", "Other"]
 
-# ── Conventional commit validation ────────────────────────────────────────────
-_CC_RE = re.compile(
-    r"^(feat|fix|docs|refactor|test|ci|chore|perf|style|build|revert)"
-    r"(\([^)]+\))?!?: .+",
-)
-
-
-def _read_commit_msg(repo_root: str) -> str:
-    """Read the staged commit message from .git/COMMIT_EDITMSG if present."""
-    path = os.path.join(repo_root, ".git", "COMMIT_EDITMSG")
-    if not os.path.isfile(path):
-        return ""
-    with open(path) as fh:
-        return fh.read()
-
-
 # ── pre-commit output parser ───────────────────────────────────────────────────
 _HOOK_LINE_RE = re.compile(r"^([A-Za-z].+?)\.{3,}(.*?)$")
 _META = ("- hook id:", "- exit code:", "- duration:")
@@ -443,12 +427,6 @@ def main() -> None:
     if not results:
         _fallback(proc.stdout + proc.stderr, proc.returncode)
 
-    # ── Commit message ─────────────────────────────────────────────────────────
-    raw_msg = _read_commit_msg(repo_root)
-    first_line = raw_msg.strip().splitlines()[0] if raw_msg.strip() else ""
-    commit_valid = bool(_CC_RE.match(first_line)) if first_line else True
-    show_commit = bool(first_line)
-
     # ── Group hooks ────────────────────────────────────────────────────────────
     groups: dict[str, list[HookResult]] = defaultdict(list)
     for result in results:
@@ -462,14 +440,6 @@ def main() -> None:
 
     # ── Header ─────────────────────────────────────────────────────────────────
     print(f"\n  {BOLD}{CYAN}Pre-commit checks{RESET}\n")
-
-    # ── Commit message section (always first) ──────────────────────────────────
-    print(_divider("Commit"))
-    if show_commit:
-        print(_commit_row(commit_valid, first_line))
-    else:
-        print(f"  {GRAY}–  (no message — interactive commit){RESET}")
-    print()
 
     # ── Hook groups ────────────────────────────────────────────────────────────
     for group_name in _GROUP_ORDER:
@@ -496,17 +466,11 @@ def main() -> None:
     other_failures = [
         (n, e) for n, e in real_failures if n.lower() != "don't commit to branch"
     ]
-    commit_blocked = show_commit and not commit_valid
 
-    total_issues = (
-        len(real_failures) + (1 if commit_blocked else 0) + (0 if tests_passed else 1)
-    )
+    total_issues = len(real_failures) + (0 if tests_passed else 1)
 
     if total_issues > 0:
         print(f"  {GRAY}{'─' * _W}{RESET}")
-
-    if commit_blocked:
-        _commit_error_block(first_line)
 
     if branch_blocked:
         _branch_error_block()
