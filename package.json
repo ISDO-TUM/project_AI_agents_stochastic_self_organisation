@@ -5,7 +5,7 @@
   "scripts": {
     "dev": "pnpm run dev:db && concurrently -c \"green,blue\" -n \"UI,API\" \"pnpm --filter app run dev\" \"pnpm run dev:api\"",
     "dev:api": "sh -c 'PATH=$HOME/.local/bin:$PATH uv run --project server uvicorn server.index:app --reload --reload-dir server --port 8000'",
-    "dev:db": "docker compose up -d postgres && sh -c 'until docker compose exec -T postgres pg_isready -U app -d app >/dev/null 2>&1; do sleep 1; done'",
+    "dev:db": "docker compose up -d postgres langfuse-db langfuse-web && sh -c 'until docker compose exec -T postgres pg_isready -U app -d app >/dev/null 2>&1; do sleep 1; done'",
     "clean": "rm -rf node_modules client/node_modules server/.venv server/__pycache__"
   },
   "devDependencies": {

@@ -12,6 +12,7 @@ dependencies = [
     "anthropic==0.102.0",
     "groq==1.2.0",
     "python-dotenv==1.2.2",
+    "langfuse>=2.0.0,<3.0.0",
 ]
 
 [tool.ruff]

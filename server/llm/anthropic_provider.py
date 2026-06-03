@@ -4,6 +4,7 @@ from anthropic import AsyncAnthropic
 
 from .base_provider import BaseLLMProvider
 from .credentials import resolve_api_key, resolve_base_url
+from .langfuse_setup import langfuse_context, observe
 from .normalizer import NormalizedToolCall, extract_anthropic_tool_calls
 
 # max_tokens is required by the Anthropic API (no server-side default).
@@ -77,8 +78,21 @@ class AnthropicProvider(BaseLLMProvider):
 
         return self._extract_text(response) if response else ""
 
+    @observe(as_type="generation", name="anthropic")
     async def _send(self, kwargs: dict[str, Any]) -> Any:
-        return await self._get_client().messages.create(**kwargs)
+        response = await self._get_client().messages.create(**kwargs)
+        usage = getattr(response, "usage", None)
+        langfuse_context.update_current_observation(
+            model=kwargs.get("model"),
+            input=kwargs.get("messages"),
+            usage={
+                "input": getattr(usage, "input_tokens", None),
+                "output": getattr(usage, "output_tokens", None),
+            }
+            if usage
+            else None,
+        )
+        return response
 
     def _extract_tool_calls(self, response: Any) -> list[NormalizedToolCall]:
         return extract_anthropic_tool_calls(response)
