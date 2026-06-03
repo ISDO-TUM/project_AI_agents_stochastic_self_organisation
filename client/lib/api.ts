@@ -237,6 +237,7 @@ export async function fetchModels(): Promise<ModelEntry[]> {
 export interface SimulationResult {
   trialId: string;
   status: string;
+  consensus?: string;
 }
 
 interface WireSimulationResponse {
