@@ -290,6 +290,8 @@ interface TweaksPanelProps {
   onToggleRule: (id: string) => void;
   consensusMode: ConsensusMode;
   onConsensusModeChange: (mode: ConsensusMode) => void;
+  /** True when the canvas has fewer than 2 agents — consensus is meaningless. */
+  consensusLocked: boolean;
   topology: TopologyMode;
   onTopologyChange: (topology: TopologyMode) => void;
   fanout: number;
@@ -304,6 +306,7 @@ export function TweaksPanel({
   onToggleRule,
   consensusMode,
   onConsensusModeChange,
+  consensusLocked,
   topology,
   onTopologyChange,
   fanout,
@@ -495,11 +498,24 @@ export function TweaksPanel({
             />
             <Segmented
               options={CONSENSUS_OPTIONS}
-              value={consensusMode}
+              value={consensusLocked ? "broadcast_no_consensus" : consensusMode}
               onChange={onConsensusModeChange}
-              disabled={simRunning}
+              disabled={simRunning || consensusLocked}
               t={t}
             />
+            {consensusLocked && (
+              <p
+                style={{
+                  fontSize: 10.5,
+                  color: t.textDim,
+                  lineHeight: 1.5,
+                  margin: "7px 0 0",
+                }}
+              >
+                Consensus needs at least two connected agents. A single agent
+                runs in Broadcast mode.
+              </p>
+            )}
 
             {/* Topology */}
             <div style={{ height: 14 }} />

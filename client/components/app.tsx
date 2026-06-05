@@ -391,6 +391,11 @@ export function App() {
     setSelNode(null);
   }, [setPanel, setSelNode]);
 
+  const onAddDataset = useCallback(() => {
+    setPanel({ type: "source", id: null, sourceType: "dataset" });
+    setSelNode(null);
+  }, [setPanel, setSelNode]);
+
   const onClear = useCallback(async () => {
     await clearAll().catch(() => {});
     dispatch({ type: "CLEAR" });
@@ -505,6 +510,7 @@ export function App() {
           onToggleTheme={toggleTheme}
           onAddAgent={onAddAgent}
           onAddFile={onAddFile}
+          onAddDataset={onAddDataset}
           onClear={onClear}
           onStop={stopSim}
           onAutoLayout={onAutoLayout}
@@ -545,6 +551,7 @@ export function App() {
           onToggleRule={toggleRule}
           consensusMode={consensusMode}
           onConsensusModeChange={setConsensusMode}
+          consensusLocked={agents.length < 2}
           topology={topology}
           onTopologyChange={setTopology}
           fanout={fanout}
@@ -576,6 +583,7 @@ export function App() {
         <SourcePanel
           key={panel.id ?? "new-source"}
           source={panelSource}
+          initialType={panel.sourceType}
           onSave={(data) => {
             saveSource(data);
             setPanel(null);

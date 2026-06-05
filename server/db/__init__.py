@@ -306,8 +306,14 @@ async def load_files_by_agent(conn: AsyncConnection) -> dict[str, dict[str, str]
 def hint_files_in_prompt(
     system_prompt: str | None,
     file_names: list[str],
+    tool_names: list[str] | None = None,
 ) -> str | None:
-    """Append an instruction to use the files tool before answering.
+    """Append an instruction telling the agent how to reach its attached files.
+
+    The instruction is tailored to the tools the agent actually has: the
+    ``files`` tool reads text knowledge files, while the ``table`` tool loads
+    tabular files (CSV) for inspection and editing. When ``tool_names`` is not
+    supplied, the files-oriented hint is used (backwards-compatible default).
 
     File names are sanitised before interpolation: newlines, quotes and
     angle-brackets are stripped so that a maliciously named file cannot inject
@@ -321,11 +327,23 @@ def hint_files_in_prompt(
         for n in file_names
     ]
     names = ", ".join(f'"{n}"' for n in _safe)
-    hint = (
-        f"\n\nYou have knowledge files attached: {names}. "
-        "Use the 'files' tool to read relevant files before answering. "
-        "Always check file contents first, then base your answer on what you find."
-    )
+
+    tools = set(tool_names) if tool_names is not None else None
+    # Default (no tool info) keeps the files-oriented hint for back-compat.
+    use_files = tools is None or "files" in tools
+    use_table = tools is not None and "table" in tools
+
+    hint = f"\n\nYou have knowledge files attached: {names}."
+    if use_files:
+        hint += (
+            " Use the 'files' tool to read relevant files before answering. "
+            "Always check file contents first, then base your answer on what you find."
+        )
+    if use_table:
+        hint += (
+            " Tabular files (e.g. CSV) can be loaded with the 'table' tool "
+            "(action='load' with the file_name) and then inspected or edited."
+        )
     return (system_prompt or "") + hint
 
 

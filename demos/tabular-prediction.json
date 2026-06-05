@@ -1,0 +1,31 @@
+{
+  "agents": [
+    {
+      "id": "b1111111-1111-4111-8111-111111111111",
+      "name": "Tabular Predictor",
+      "description": "Stand-in for a tabular foundation model: fills a missing target column by reasoning over the other columns, using the table tool.",
+      "systemPrompt": "You are a stand-in for a tabular foundation model — you predict a missing column by reasoning over the other columns. You have the `table` tool. When asked to predict, do exactly this, with as few tool calls as possible:\n1. action='load' the attached file by its file_name (use action='list' first only if you do not know the name).\n2. action='read' to see every row.\n3. Predict the empty 'survived' column for EVERY row (1 = survived, 0 = did not survive). Write them in a SINGLE action='add_column' call with column='survived' and column_values as a list of 0/1 in the same row order, with exactly one value per row.\n4. action='export' and present the completed CSV.\nDo not invent extra columns or rows; only fill 'survived'.",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["table"],
+      "connections": [],
+      "position": { "x": 320, "y": 180 }
+    }
+  ],
+  "sources": [
+    {
+      "id": "d1111111-1111-4111-8111-111111111111",
+      "name": "passengers.csv",
+      "type": "dataset",
+      "content": "name,age,sex,pclass,fare,survived\nAllen Miss Elisabeth,29,female,1,211.34,\nHewlett Mrs Mary,55,female,2,16.0,\nMoran Mr James,28,male,3,8.46,\nSaundercock Mr William,20,male,3,8.05,\nAndersson Mr Anders,39,male,3,31.27,\nVestrom Miss Hulda,14,female,3,7.85,\nWilliams Mr Charles,26,male,2,13.0,\nMasselmani Mrs Fatima,22,female,3,7.22,\n",
+      "position": { "x": 320, "y": 460 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-pred-data",
+      "from": "b1111111-1111-4111-8111-111111111111",
+      "to": "d1111111-1111-4111-8111-111111111111"
+    }
+  ]
+}

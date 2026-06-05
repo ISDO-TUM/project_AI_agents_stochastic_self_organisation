@@ -17,6 +17,24 @@ async def _run(tool: TableTool, ctx: dict[str, Any], **args: Any) -> str:
     return result
 
 
+# ── list ────────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_list_shows_attached_files() -> None:
+    tool, ctx = TableTool(), _ctx({"data.csv": CSV, "notes.txt": "hi"})
+    out = await _run(tool, ctx, action="list")
+    assert "data.csv" in out
+    assert "notes.txt" in out
+
+
+@pytest.mark.asyncio
+async def test_list_without_files() -> None:
+    tool, ctx = TableTool(), _ctx()
+    out = await _run(tool, ctx, action="list")
+    assert "No files" in out
+
+
 # ── load ────────────────────────────────────────────────────────────────────────
 
 
@@ -49,6 +67,63 @@ async def test_load_requires_a_source() -> None:
     tool, ctx = TableTool(), _ctx()
     out = await _run(tool, ctx, action="load")
     assert "requires" in out
+
+
+# ── create ──────────────────────────────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_create_empty_table() -> None:
+    tool, ctx = TableTool(), _ctx()
+    out = await _run(tool, ctx, action="create", columns=["name", "score"])
+    assert "0 row(s)" in out
+    assert list(ctx["table"].df.columns) == ["name", "score"]
+
+
+@pytest.mark.asyncio
+async def test_create_seeded_table_then_read() -> None:
+    tool, ctx = TableTool(), _ctx()
+    await _run(
+        tool,
+        ctx,
+        action="create",
+        columns=["name", "score"],
+        rows=[{"name": "a", "score": 1}, {"name": "b", "score": 2}],
+    )
+    out = await _run(tool, ctx, action="read")
+    assert "a" in out and "b" in out
+    assert len(ctx["table"].df) == 2
+
+
+@pytest.mark.asyncio
+async def test_create_aligns_seed_to_declared_columns() -> None:
+    tool, ctx = TableTool(), _ctx()
+    # 'extra' is dropped; missing 'score' becomes NaN — schema is exactly `columns`.
+    await _run(
+        tool,
+        ctx,
+        action="create",
+        columns=["name", "score"],
+        values={"name": "a", "extra": "ignored"},
+    )
+    assert list(ctx["table"].df.columns) == ["name", "score"]
+
+
+@pytest.mark.asyncio
+async def test_create_requires_columns() -> None:
+    tool, ctx = TableTool(), _ctx()
+    out = await _run(tool, ctx, action="create")
+    assert "requires 'columns'" in out
+
+
+@pytest.mark.asyncio
+async def test_create_then_insert_and_add_column() -> None:
+    tool, ctx = TableTool(), _ctx()
+    await _run(tool, ctx, action="create", columns=["city"])
+    await _run(tool, ctx, action="insert", values={"city": "Berlin"})
+    out = await _run(tool, ctx, action="add_column", column="prediction", default=0)
+    assert "column 'prediction'" in out
+    assert ctx["table"].df["prediction"].tolist() == [0]
 
 
 # ── guard: operating before load ────────────────────────────────────────────────

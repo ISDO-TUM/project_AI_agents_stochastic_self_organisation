@@ -10,6 +10,7 @@ interface ToolbarProps {
   onToggleTheme: () => void;
   onAddAgent: () => void;
   onAddFile: () => void;
+  onAddDataset: () => void;
   onClear: () => void;
   onStop: () => void;
   onAutoLayout: () => void;
@@ -85,11 +86,57 @@ function TBtn({
   );
 }
 
+function ToolsMenuItem({
+  icon,
+  label,
+  onClick,
+  t,
+}: {
+  icon: string;
+  label: string;
+  onClick: () => void;
+  t: ReturnType<typeof getTheme>;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 9,
+        width: "100%",
+        background: "none",
+        border: "none",
+        color: t.textSub,
+        fontSize: 12,
+        fontWeight: 600,
+        padding: "8px 14px",
+        cursor: "pointer",
+        textAlign: "left",
+        transition: "all 0.12s",
+      }}
+      onMouseEnter={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = t.hover;
+        (e.currentTarget as HTMLButtonElement).style.color = t.text;
+      }}
+      onMouseLeave={(e) => {
+        (e.currentTarget as HTMLButtonElement).style.background = "none";
+        (e.currentTarget as HTMLButtonElement).style.color = t.textSub;
+      }}
+    >
+      <LIcon name={icon} size={13} color="currentColor" />
+      {label}
+    </button>
+  );
+}
+
 function ToolsDropdown({
   onAddFile,
+  onAddDataset,
   t,
 }: {
   onAddFile: () => void;
+  onAddDataset: () => void;
   t: ReturnType<typeof getTheme>;
 }) {
   const [open, setOpen] = useState(false);
@@ -132,40 +179,24 @@ function ToolsDropdown({
               animation: "fadeIn 0.15s ease-out",
             }}
           >
-            <button
+            <ToolsMenuItem
+              icon="FileText"
+              label="Files"
               onClick={() => {
                 setOpen(false);
                 onAddFile();
               }}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 9,
-                width: "100%",
-                background: "none",
-                border: "none",
-                color: t.textSub,
-                fontSize: 12,
-                fontWeight: 600,
-                padding: "8px 14px",
-                cursor: "pointer",
-                textAlign: "left",
-                transition: "all 0.12s",
+              t={t}
+            />
+            <ToolsMenuItem
+              icon="Table2"
+              label="Dataset"
+              onClick={() => {
+                setOpen(false);
+                onAddDataset();
               }}
-              onMouseEnter={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  t.hover;
-                (e.currentTarget as HTMLButtonElement).style.color = t.text;
-              }}
-              onMouseLeave={(e) => {
-                (e.currentTarget as HTMLButtonElement).style.background =
-                  "none";
-                (e.currentTarget as HTMLButtonElement).style.color = t.textSub;
-              }}
-            >
-              <LIcon name="FileText" size={13} color="currentColor" />
-              Files
-            </button>
+              t={t}
+            />
           </div>
         </>
       )}
@@ -178,6 +209,7 @@ export function Toolbar({
   onToggleTheme,
   onAddAgent,
   onAddFile,
+  onAddDataset,
   onClear,
   onStop,
   onAutoLayout,
@@ -263,7 +295,11 @@ export function Toolbar({
             <TBtn onClick={onAddAgent} icon="Plus" title="Add Agent" t={t}>
               Agent
             </TBtn>
-            <ToolsDropdown onAddFile={onAddFile} t={t} />
+            <ToolsDropdown
+              onAddFile={onAddFile}
+              onAddDataset={onAddDataset}
+              t={t}
+            />
             <Sep t={t} />
             <TBtn
               onClick={onAutoLayout}

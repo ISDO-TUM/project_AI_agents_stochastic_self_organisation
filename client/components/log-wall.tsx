@@ -5,10 +5,27 @@ import { SimStep } from "@/lib/types";
 import { BURG, BURG_LT, BURG_GLOW, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
+import {
+  ResultBanner,
+  TablePreviewModal,
+  TableResultCard,
+} from "@/components/table-preview";
 import { LIcon } from "@/lib/icons";
 
 const MIN_WIDTH = 220;
 const MAX_WIDTH = 640;
+
+/** Pull the CSV out of a `table` tool `export` step (formatted as a fenced
+ *  code block by the backend), or null if this step is not an export result. */
+function extractExportCsv(step: SimStep): string | null {
+  if (step.type !== "tool" || !step.msg.includes("`export`")) return null;
+  const fenced = step.msg.match(/```[a-z]*\n([\s\S]*?)\n```/i);
+  if (!fenced) return null;
+  const csv = fenced[1].trim();
+  const lines = csv.split(/\r?\n/);
+  if (lines.length < 2 || !lines[0].includes(",")) return null;
+  return csv;
+}
 
 const IMPORTANT_SYSTEM_LABELS = new Set([
   "Broadcast",
@@ -36,6 +53,8 @@ function isImportantStep(step: SimStep): boolean {
   }
 
   if (step.type === "tool") {
+    // An exported result table is the headline output — always surface it.
+    if (extractExportCsv(step)) return true;
     // Keep high-signal tool events: registry discovery + failures.
     if (REGISTRY_TOOL_HINTS.some((h) => step.msg.includes(h))) return true;
     return /(error|failed|blocked|not found|not available)/i.test(step.msg);
@@ -121,6 +140,7 @@ export function LogWall({
   const { dark } = useTheme();
   const t = getTheme(dark);
   const [importantOnly, setImportantOnly] = useState(true);
+  const [previewCsv, setPreviewCsv] = useState<string | null>(null);
 
   const visibleSteps = useMemo(
     () =>
@@ -129,6 +149,15 @@ export function LogWall({
         .filter(({ step }) => !importantOnly || isImportantStep(step)),
     [steps, importantOnly],
   );
+
+  // The newest exported table is the headline result for a tabular run.
+  const latestExport = useMemo(() => {
+    for (let i = steps.length - 1; i >= 0; i--) {
+      const csv = extractExportCsv(steps[i]);
+      if (csv) return csv;
+    }
+    return null;
+  }, [steps]);
 
   // ── Resize drag ────────────────────────────────────────────────────────
   const dragRef = useRef<{ startX: number; startW: number } | null>(null);
@@ -307,6 +336,15 @@ export function LogWall({
         </div>
       </div>
 
+      {/* Headline result: a run that produced a table surfaces it here. */}
+      {latestExport && (
+        <ResultBanner
+          csv={latestExport}
+          onOpen={() => setPreviewCsv(latestExport)}
+          dark={dark}
+        />
+      )}
+
       {/* Steps */}
       <div
         ref={listRef}
@@ -330,6 +368,7 @@ export function LogWall({
           const isPast = originalIndex < currentStep;
           const isFuture = originalIndex > currentStep;
           const color = typeColor(step.type, dark, t.textDim, step.roundIndex);
+          const exportCsv = extractExportCsv(step);
           return (
             <div
               key={step.id}
@@ -436,21 +475,30 @@ export function LogWall({
                       fontSize: isActive ? (expanded ? 13 : 11) : 11,
                       color: isActive ? t.text : t.textSub,
                       lineHeight: 1.45,
-                      ...(!isActive && {
-                        maxHeight: 52,
-                        overflow: "hidden",
-                        maskImage:
-                          "linear-gradient(to bottom, black 50%, transparent 100%)",
-                        WebkitMaskImage:
-                          "linear-gradient(to bottom, black 50%, transparent 100%)",
-                      }),
+                      ...(!isActive &&
+                        !exportCsv && {
+                          maxHeight: 52,
+                          overflow: "hidden",
+                          maskImage:
+                            "linear-gradient(to bottom, black 50%, transparent 100%)",
+                          WebkitMaskImage:
+                            "linear-gradient(to bottom, black 50%, transparent 100%)",
+                        }),
                     }}
                   >
-                    <MarkdownRenderer
-                      content={step.msg}
-                      fontSize={isActive && expanded ? 13 : 11}
-                      compact
-                    />
+                    {exportCsv ? (
+                      <TableResultCard
+                        csv={exportCsv}
+                        onOpen={() => setPreviewCsv(exportCsv)}
+                        dark={dark}
+                      />
+                    ) : (
+                      <MarkdownRenderer
+                        content={step.msg}
+                        fontSize={isActive && expanded ? 13 : 11}
+                        compact
+                      />
+                    )}
                   </div>
                   {isActive && (
                     <div style={{ marginTop: 6 }}>
@@ -545,88 +593,99 @@ export function LogWall({
     </>
   );
 
+  const previewModal = previewCsv ? (
+    <TablePreviewModal csv={previewCsv} onClose={() => setPreviewCsv(null)} />
+  ) : null;
+
   // ── Expanded modal ─────────────────────────────────────────────────────────
   if (expanded) {
     return (
-      <div
-        style={{
-          position: "fixed",
-          inset: 0,
-          zIndex: 500,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          background: dark ? "rgba(0,0,0,0.65)" : "rgba(220,216,235,0.6)",
-          backdropFilter: "blur(12px)",
-          WebkitBackdropFilter: "blur(12px)",
-          animation: "fadeIn 0.2s ease-out",
-        }}
-        onClick={(e) => {
-          // Close when clicking the backdrop
-          if (e.target === e.currentTarget) onToggleExpand();
-        }}
-      >
+      <>
+        {previewModal}
         <div
           style={{
-            width: "min(860px, 92vw)",
-            height: "82vh",
-            background: dark ? "rgba(8,6,16,0.97)" : "rgba(255,254,255,0.98)",
-            border: `1px solid ${t.borderHi}`,
-            borderRadius: 16,
+            position: "fixed",
+            inset: 0,
+            zIndex: 500,
             display: "flex",
-            flexDirection: "column",
-            overflow: "hidden",
-            boxShadow: dark
-              ? "0 24px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(139,26,47,0.2)"
-              : "0 24px 80px rgba(0,0,0,0.18), 0 0 0 1px rgba(139,26,47,0.14)",
-            animation: "logSlide 0.28s cubic-bezier(0.22,1,0.36,1)",
+            alignItems: "center",
+            justifyContent: "center",
+            background: dark ? "rgba(0,0,0,0.65)" : "rgba(220,216,235,0.6)",
+            backdropFilter: "blur(12px)",
+            WebkitBackdropFilter: "blur(12px)",
+            animation: "fadeIn 0.2s ease-out",
+          }}
+          onClick={(e) => {
+            // Close when clicking the backdrop
+            if (e.target === e.currentTarget) onToggleExpand();
           }}
         >
-          {panelContent}
+          <div
+            style={{
+              width: "min(860px, 92vw)",
+              height: "82vh",
+              background: dark ? "rgba(8,6,16,0.97)" : "rgba(255,254,255,0.98)",
+              border: `1px solid ${t.borderHi}`,
+              borderRadius: 16,
+              display: "flex",
+              flexDirection: "column",
+              overflow: "hidden",
+              boxShadow: dark
+                ? "0 24px 80px rgba(0,0,0,0.7), 0 0 0 1px rgba(139,26,47,0.2)"
+                : "0 24px 80px rgba(0,0,0,0.18), 0 0 0 1px rgba(139,26,47,0.14)",
+              animation: "logSlide 0.28s cubic-bezier(0.22,1,0.36,1)",
+            }}
+          >
+            {panelContent}
+          </div>
         </div>
-      </div>
+      </>
     );
   }
 
   // ── Sidebar (resizable) ────────────────────────────────────────────────────
   return (
-    <div
-      style={{
-        width: sidebarWidth,
-        minWidth: sidebarWidth,
-        height: "100%",
-        background: dark ? "rgba(5,4,10,0.95)" : "rgba(252,250,255,0.96)",
-        backdropFilter: "blur(24px)",
-        borderLeft: `1px solid ${t.border}`,
-        display: "flex",
-        flexDirection: "column",
-        flexShrink: 0,
-        position: "relative",
-        zIndex: 50,
-        animation: "logSlide 0.3s cubic-bezier(0.22,1,0.36,1)",
-      }}
-    >
-      {/* Resize handle — left edge */}
+    <>
+      {previewModal}
       <div
-        onMouseDown={onResizeMouseDown}
         style={{
-          position: "absolute",
-          left: 0,
-          top: 0,
-          bottom: 0,
-          width: 5,
-          cursor: "col-resize",
-          zIndex: 10,
+          width: sidebarWidth,
+          minWidth: sidebarWidth,
+          height: "100%",
+          background: dark ? "rgba(5,4,10,0.95)" : "rgba(252,250,255,0.96)",
+          backdropFilter: "blur(24px)",
+          borderLeft: `1px solid ${t.border}`,
+          display: "flex",
+          flexDirection: "column",
+          flexShrink: 0,
+          position: "relative",
+          zIndex: 50,
+          animation: "logSlide 0.3s cubic-bezier(0.22,1,0.36,1)",
         }}
-        onMouseEnter={(e) => {
-          (e.currentTarget as HTMLDivElement).style.background =
-            "rgba(139,26,47,0.18)";
-        }}
-        onMouseLeave={(e) => {
-          (e.currentTarget as HTMLDivElement).style.background = "transparent";
-        }}
-      />
-      {panelContent}
-    </div>
+      >
+        {/* Resize handle — left edge */}
+        <div
+          onMouseDown={onResizeMouseDown}
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 0,
+            bottom: 0,
+            width: 5,
+            cursor: "col-resize",
+            zIndex: 10,
+          }}
+          onMouseEnter={(e) => {
+            (e.currentTarget as HTMLDivElement).style.background =
+              "rgba(139,26,47,0.18)";
+          }}
+          onMouseLeave={(e) => {
+            (e.currentTarget as HTMLDivElement).style.background =
+              "transparent";
+          }}
+        />
+        {panelContent}
+      </div>
+    </>
   );
 }

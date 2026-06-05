@@ -1,5 +1,5 @@
 export type Provider = "openai" | "anthropic" | "groq" | "gemini";
-export type SourceType = "text" | "document";
+export type SourceType = "text" | "document" | "dataset";
 export type SimStepType =
   | "system"
   | "agent-to-agent"

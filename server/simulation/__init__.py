@@ -104,8 +104,12 @@ async def _call_agent(
     except PromptInjectionError as exc:
         return f"[GUARDRAIL BLOCKED] {exc}", []
 
+    tool_names = list(agent["tools"] or [])
+    if registry is not None and "registry" not in tool_names:
+        tool_names.append("registry")
+
     file_names = list(files.keys())
-    raw_system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, file_names)
+    raw_system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, file_names, tool_names)
 
     # Wrap with anti-hallucination guardrails
     guarded_system_prompt = build_guarded_system_prompt(raw_system_prompt)
@@ -120,10 +124,6 @@ async def _call_agent(
     guarded_system_prompt = (
         f"## CURRENT DATE\n{date.today().isoformat()}\n\n{guarded_system_prompt}"
     )
-
-    tool_names = list(agent["tools"] or [])
-    if registry is not None and "registry" not in tool_names:
-        tool_names.append("registry")
 
     response, tools_used = await call_agent(
         prompt,
@@ -920,6 +920,12 @@ async def run_topology(
 
     if not agents:
         return
+
+    # Consensus is only meaningful with at least two communicating agents; a lone
+    # agent has nothing to reconcile. Skip voting/pooling entirely so no empty
+    # "no valid votes" tally is ever generated for a single-agent run.
+    if len(agents) < 2:
+        mode = "broadcast_no_consensus"
 
     files_by_agent = await load_files_by_agent(db)
     incoming = _build_incoming(agents)

@@ -75,7 +75,9 @@ def _format_df(df: pd.DataFrame) -> str:
 
 class TableInput(BaseModel):
     action: Literal[
+        "list",
         "load",
+        "create",
         "describe",
         "read",
         "insert",
@@ -85,8 +87,11 @@ class TableInput(BaseModel):
         "export",
     ] = Field(
         description=(
+            "'list' shows the attached files you can load as a table. "
             "'load' parses tabular data into the workspace (provide 'file_name' or "
-            "'csv_text'). 'describe' summarises columns, dtypes and row count. "
+            "'csv_text'). 'create' builds a NEW table from scratch with the given "
+            "'columns' (optionally seeded with 'values'/'rows'). "
+            "'describe' summarises columns, dtypes and row count. "
             "'read' returns rows (optionally filtered by 'where', narrowed to "
             "'columns', capped by 'limit'). 'insert' appends row(s) from 'values' "
             "and/or 'rows'. 'update' sets 'values' on rows matching 'where'. "
@@ -105,7 +110,10 @@ class TableInput(BaseModel):
     )
     columns: list[str] | None = Field(
         default=None,
-        description="For action='read': restrict the output to these column names.",
+        description=(
+            "For action='read': restrict the output to these column names. "
+            "For action='create': the column names of the new table."
+        ),
     )
     limit: int | None = Field(
         default=None,
@@ -149,8 +157,10 @@ class TableInput(BaseModel):
 class TableTool(Tool):
     name = "table"
     description = (
-        "Work with an uploaded data table (CSV). Use action='load' first to parse "
-        "the data into a workspace, then 'describe'/'read' to inspect it and "
+        "Work with a data table held in memory. Use action='list' to see which "
+        "files are attached and action='load' to parse one into the workspace, or "
+        "action='create' to build a new table from scratch for the task. Then use "
+        "'describe'/'read' to inspect it and "
         "'insert'/'update'/'delete'/'add_column' to modify it. A prediction column "
         "is attached with action='add_column'. Retrieve the final table as CSV with "
         "action='export'. All changes persist within the current run."
@@ -174,8 +184,12 @@ class TableTool(Tool):
             return f"Table operation failed: {exc}"
 
     def _dispatch(self, inp: TableInput, store: TableStore, ctx: dict[str, Any]) -> str:
+        if inp.action == "list":
+            return self._list(ctx)
         if inp.action == "load":
             return self._load(inp, store, ctx)
+        if inp.action == "create":
+            return self._create(inp, store)
 
         df = store.df
         if df is None:
@@ -199,6 +213,13 @@ class TableTool(Tool):
 
     # ── action handlers ─────────────────────────────────────────────────────────
 
+    def _list(self, ctx: dict[str, Any]) -> str:
+        files: dict[str, str] = ctx.get("files") or {}
+        if not files:
+            return "No files are attached to this agent."
+        lines = "\n".join(f"- {name}" for name in files)
+        return f"Files you can load as a table (use action='load' with file_name):\n{lines}"
+
     def _load(self, inp: TableInput, store: TableStore, ctx: dict[str, Any]) -> str:
         if inp.csv_text:
             text = inp.csv_text
@@ -220,6 +241,22 @@ class TableTool(Tool):
             f"Loaded table: {rows} row(s) x {cols} column(s).\n"
             f"Columns: {', '.join(map(str, df.columns))}"
         )
+
+    def _create(self, inp: TableInput, store: TableStore) -> str:
+        if not inp.columns:
+            return "action='create' requires 'columns' (the new table's column names)."
+        seed: list[dict[str, Any]] = []
+        if inp.values:
+            seed.append(inp.values)
+        if inp.rows:
+            seed.extend(inp.rows)
+        # Seed rows are aligned to the declared columns: missing keys become NaN,
+        # extra keys are dropped, so the table's schema is exactly `columns`.
+        if seed:
+            store.df = pd.DataFrame(seed).reindex(columns=inp.columns)
+        else:
+            store.df = pd.DataFrame(columns=inp.columns)
+        return f"Created table with columns: {', '.join(inp.columns)} ({len(store.df)} row(s))."
 
     def _describe(self, df: pd.DataFrame) -> str:
         cols = ", ".join(f"{name} ({dtype})" for name, dtype in df.dtypes.items())

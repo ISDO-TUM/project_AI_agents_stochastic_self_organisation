@@ -412,6 +412,30 @@ class TestHintFilesInPrompt:
         result = hint_files_in_prompt("Do task.", ["my-file.txt"])
         assert "my-file.txt" in result
 
+    def test_table_agent_hint_points_at_table_tool_not_files(self) -> None:
+        from server.db import hint_files_in_prompt
+
+        result = hint_files_in_prompt("Do task.", ["data.csv"], ["table"])
+        assert result is not None
+        assert "'table' tool" in result
+        assert "'files' tool" not in result
+
+    def test_files_agent_hint_points_at_files_tool(self) -> None:
+        from server.db import hint_files_in_prompt
+
+        result = hint_files_in_prompt("Do task.", ["doc.txt"], ["files"])
+        assert result is not None
+        assert "'files' tool" in result
+        assert "'table' tool" not in result
+
+    def test_both_tools_get_both_hints(self) -> None:
+        from server.db import hint_files_in_prompt
+
+        result = hint_files_in_prompt("Do task.", ["data.csv"], ["files", "table"])
+        assert result is not None
+        assert "'files' tool" in result
+        assert "'table' tool" in result
+
 
 # ---------------------------------------------------------------------------
 # History: message_type allowlist

@@ -294,7 +294,7 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
 
     tool_names: list[str] = agent["tools"] or []
     files = await load_agent_files(db, agent_id)
-    system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, list(files))
+    system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, list(files), tool_names)
 
     try:
         response, tools_used = await call_agent(
