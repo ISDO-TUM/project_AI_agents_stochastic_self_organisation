@@ -61,6 +61,7 @@ from server.llm import call_agent
 from server.llm.embeddings import cosine_similarity, embed_texts
 from server.schemas import ToolCall
 from server.tools.builtin.registry import RegistryIndex
+from server.tools.builtin.table import TableStore
 
 ConsensusMode = Literal[
     "broadcast_no_consensus",
@@ -130,7 +131,12 @@ async def _call_agent(
         model=agent["model"],
         system_prompt=guarded_system_prompt,
         tool_names=tool_names or None,
-        tool_context={"files": files, "registry": registry, "agent_id": agent["id"]},
+        tool_context={
+            "files": files,
+            "registry": registry,
+            "table": TableStore(),
+            "agent_id": agent["id"],
+        },
     )
     return str(response), tools_used
 

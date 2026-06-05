@@ -61,7 +61,7 @@ export const PROVIDERS: Record<
 };
 
 // Must match tool names registered in api/tools/registry.py
-export const TOOLS: string[] = ["files"];
+export const TOOLS: string[] = ["files", "table"];
 
 export function autoLayout(
   agents: Agent[],
