@@ -40,7 +40,6 @@ from server.schemas import (
     AgentUpdate,
     KnowledgeFileResponse,
 )
-from server.tools.builtin.table import TableStore
 
 logger = logging.getLogger(__name__)
 
@@ -303,7 +302,7 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
             model=agent["model"],
             system_prompt=system_prompt,
             tool_names=tool_names or None,
-            tool_context={"files": files, "table": TableStore()},
+            tool_context={"files": files, "tables": {}},
         )
     except MissingCredentialsError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

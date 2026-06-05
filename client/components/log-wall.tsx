@@ -15,8 +15,7 @@ import { LIcon } from "@/lib/icons";
 const MIN_WIDTH = 220;
 const MAX_WIDTH = 640;
 
-/** Pull the CSV out of a `table` tool `export` step (formatted as a fenced
- *  code block by the backend), or null if this step is not an export result. */
+/** Pull a result table (CSV text) out of a `table` tool `export` step. Null otherwise. */
 function extractExportCsv(step: SimStep): string | null {
   if (step.type !== "tool" || !step.msg.includes("`export`")) return null;
   const fenced = step.msg.match(/```[a-z]*\n([\s\S]*?)\n```/i);

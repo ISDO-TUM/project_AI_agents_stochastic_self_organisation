@@ -1,20 +1,14 @@
-"""Tabular CRUD tool: parse a table and let the agent read/mutate it.
+"""Tabular CRUD tool — lets an agent load, inspect, and mutate a CSV table.
 
-This is the data-handling half of tabular-foundation-model support. A user
-uploads tabular data (a CSV today; Excel later) and the agent uses this tool to
-load it into an in-memory workspace and perform CRUD operations on it. The
-result — typically the original table with a *prediction column* appended — is
-read back out with ``action='export'``.
+The tool manages an in-memory workspace of named ``TableStore`` objects.  A
+``TableStore`` is created on first ``load`` or ``create`` and keyed by the file
+name (or an explicit ``table_name``).  Because the same ``tables`` dict is
+shared across every agent call in a run, mutations made by one agent are
+immediately visible to the next — a predictor can add a column and a reviewer
+downstream can inspect it without re-loading the file.
 
-The actual prediction is produced by a tabular foundation model (the TabPFN
-family expects a pandas ``DataFrame`` / numpy matrix, never a raw file), which
-is wired in separately. This tool only owns the table lifecycle and the
-``add_column`` seam that the model writes its prediction through.
-
-Lifecycle mirrors ``RegistryTool``: a single mutable :class:`TableStore` is
-built per agent run, placed in the tool ``context``, and mutated in place across
-calls. CSV parsing is the only format-specific boundary — swapping in an Excel
-reader later touches nothing else.
+CSV parsing is the only format-specific boundary; an Excel reader would slot in
+alongside ``load_csv`` without touching any CRUD logic.
 """
 
 from __future__ import annotations
@@ -28,24 +22,16 @@ from pydantic import BaseModel, Field
 
 from ..base import Tool
 
-# Cap on rows echoed back to the LLM so a large table never floods the context.
 _MAX_DISPLAY_ROWS = 50
-# Rows shown in the `describe` preview.
 _SAMPLE_ROWS = 5
 
 
 @dataclass
 class TableStore:
-    """In-memory tabular workspace for a single agent run.
-
-    Holds one pandas ``DataFrame``, mutated in place across CRUD tool calls. The
-    CSV parser is the only format-specific boundary; an Excel reader would slot
-    in alongside ``load_csv`` without touching any CRUD logic.
-    """
+    """In-memory workspace for one table, shared across agent calls in a run."""
 
     df: pd.DataFrame | None = None
 
-    # ── ingestion (the only format-specific boundary) ──────────────────────────
     def load_csv(self, text: str) -> None:
         self.df = pd.read_csv(io.StringIO(text))
 
@@ -54,7 +40,6 @@ class TableStore:
 
 
 def _mask(df: pd.DataFrame, where: dict[str, Any]) -> Any:
-    """Boolean row mask for an equality filter ``{column: value}``."""
     selected = pd.Series(True, index=df.index)
     for col, val in where.items():
         if col not in df.columns:
@@ -64,7 +49,6 @@ def _mask(df: pd.DataFrame, where: dict[str, Any]) -> Any:
 
 
 def _format_df(df: pd.DataFrame) -> str:
-    """Render a DataFrame for the LLM, truncating beyond ``_MAX_DISPLAY_ROWS``."""
     total = len(df)
     body = str(df.head(_MAX_DISPLAY_ROWS).to_string(index=False))
     if total > _MAX_DISPLAY_ROWS:
@@ -87,7 +71,7 @@ class TableInput(BaseModel):
         "export",
     ] = Field(
         description=(
-            "'list' shows the attached files you can load as a table. "
+            "'list' shows attached files and currently-loaded tables. "
             "'load' parses tabular data into the workspace (provide 'file_name' or "
             "'csv_text'). 'create' builds a NEW table from scratch with the given "
             "'columns' (optionally seeded with 'values'/'rows'). "
@@ -99,6 +83,15 @@ class TableInput(BaseModel):
             "(e.g. a prediction column) from 'column_values' or a constant "
             "'default'. 'export' returns the whole table as CSV text."
         )
+    )
+    table_name: str | None = Field(
+        default=None,
+        description=(
+            "For 'load': key to store the table under (defaults to the file name). "
+            "For 'create': name of the new table (defaults to 'table'). "
+            "For other actions: which loaded table to operate on (defaults to the "
+            "only loaded table, or the first one when multiple are loaded)."
+        ),
     )
     file_name: str | None = Field(
         default=None,
@@ -163,7 +156,8 @@ class TableTool(Tool):
         "'describe'/'read' to inspect it and "
         "'insert'/'update'/'delete'/'add_column' to modify it. A prediction column "
         "is attached with action='add_column'. Retrieve the final table as CSV with "
-        "action='export'. All changes persist within the current run."
+        "action='export'. All changes persist within the current run and are visible "
+        "to other agents in the same pipeline."
     )
     input_model = TableInput
 
@@ -174,26 +168,29 @@ class TableTool(Tool):
             return "Invalid input."
         inp = validated_input
         ctx = context or {}
-        store: TableStore | None = ctx.get("table")
-        if store is None:
+        tables: dict[str, TableStore] | None = ctx.get("tables")
+        if tables is None:
             return "Table workspace not available."
 
         try:
-            return self._dispatch(inp, store, ctx)
-        except Exception as exc:  # surface failures to the LLM instead of crashing the run
+            return self._dispatch(inp, tables, ctx)
+        except Exception as exc:
             return f"Table operation failed: {exc}"
 
-    def _dispatch(self, inp: TableInput, store: TableStore, ctx: dict[str, Any]) -> str:
+    def _dispatch(self, inp: TableInput, tables: dict[str, TableStore], ctx: dict[str, Any]) -> str:
         if inp.action == "list":
-            return self._list(ctx)
+            return self._list(tables, ctx)
         if inp.action == "load":
-            return self._load(inp, store, ctx)
+            return self._load(inp, tables, ctx)
         if inp.action == "create":
-            return self._create(inp, store)
+            return self._create(inp, tables)
 
+        store = self._resolve(inp.table_name, tables)
+        if store is None:
+            return "No table loaded. Use action='load' or action='create' first."
         df = store.df
         if df is None:
-            return "No table loaded. Use action='load' first."
+            return "No table loaded."
 
         if inp.action == "describe":
             return self._describe(df)
@@ -211,52 +208,78 @@ class TableTool(Tool):
             return store.to_csv()
         return f"Unknown action: {inp.action}"
 
+    # ── helpers ─────────────────────────────────────────────────────────────────
+
+    def _resolve(self, table_name: str | None, tables: dict[str, TableStore]) -> TableStore | None:
+        if not tables:
+            return None
+        if table_name:
+            return tables.get(table_name)
+        return next(iter(tables.values()))
+
     # ── action handlers ─────────────────────────────────────────────────────────
 
-    def _list(self, ctx: dict[str, Any]) -> str:
+    def _list(self, tables: dict[str, TableStore], ctx: dict[str, Any]) -> str:
         files: dict[str, str] = ctx.get("files") or {}
-        if not files:
-            return "No files are attached to this agent."
-        lines = "\n".join(f"- {name}" for name in files)
-        return f"Files you can load as a table (use action='load' with file_name):\n{lines}"
+        lines: list[str] = []
+        if files:
+            lines.append("Files you can load as a table (use action='load' with file_name):")
+            lines.extend(f"  - {name}" for name in files)
+        else:
+            lines.append("No files are attached to this agent.")
+        if tables:
+            lines.append("\nLoaded tables:")
+            for name, store in tables.items():
+                if store.df is not None:
+                    r, c = store.df.shape
+                    lines.append(f"  - {name}: {r} row(s) x {c} column(s)")
+        return "\n".join(lines)
 
-    def _load(self, inp: TableInput, store: TableStore, ctx: dict[str, Any]) -> str:
+    def _load(self, inp: TableInput, tables: dict[str, TableStore], ctx: dict[str, Any]) -> str:
         if inp.csv_text:
             text = inp.csv_text
+            key = inp.table_name or inp.file_name or "csv"
         elif inp.file_name:
             files: dict[str, str] = ctx.get("files") or {}
             if inp.file_name not in files:
                 available = ", ".join(files) if files else "none"
                 return f"File '{inp.file_name}' not found. Available: {available}"
             text = files[inp.file_name]
+            key = inp.table_name or inp.file_name
         else:
             return "action='load' requires 'file_name' or 'csv_text'."
 
+        store = tables.get(key) or TableStore()
         store.load_csv(text)
+        tables[key] = store
         df = store.df
-        if df is None:  # unreachable after a successful parse; keeps the type checker happy
+        if df is None:
             return "Failed to load table."
         rows, cols = df.shape
         return (
-            f"Loaded table: {rows} row(s) x {cols} column(s).\n"
+            f"Loaded '{key}': {rows} row(s) x {cols} column(s).\n"
             f"Columns: {', '.join(map(str, df.columns))}"
         )
 
-    def _create(self, inp: TableInput, store: TableStore) -> str:
+    def _create(self, inp: TableInput, tables: dict[str, TableStore]) -> str:
         if not inp.columns:
             return "action='create' requires 'columns' (the new table's column names)."
+        name = inp.table_name or "table"
         seed: list[dict[str, Any]] = []
         if inp.values:
             seed.append(inp.values)
         if inp.rows:
             seed.extend(inp.rows)
-        # Seed rows are aligned to the declared columns: missing keys become NaN,
-        # extra keys are dropped, so the table's schema is exactly `columns`.
+        store = TableStore()
         if seed:
             store.df = pd.DataFrame(seed).reindex(columns=inp.columns)
         else:
             store.df = pd.DataFrame(columns=inp.columns)
-        return f"Created table with columns: {', '.join(inp.columns)} ({len(store.df)} row(s))."
+        tables[name] = store
+        return (
+            f"Created table '{name}' with columns: {', '.join(inp.columns)} "
+            f"({len(store.df)} row(s))."
+        )
 
     def _describe(self, df: pd.DataFrame) -> str:
         cols = ", ".join(f"{name} ({dtype})" for name, dtype in df.dtypes.items())

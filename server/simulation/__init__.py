@@ -84,6 +84,7 @@ async def _call_agent(
     files: dict[str, str],
     ruleset: str | None = None,
     registry: RegistryIndex | None = None,
+    tables: dict[str, TableStore] | None = None,
 ) -> tuple[str, list[ToolCall]]:
     """Invoke an agent and return (response_text, tools_used).
 
@@ -134,7 +135,7 @@ async def _call_agent(
         tool_context={
             "files": files,
             "registry": registry,
-            "table": TableStore(),
+            "tables": tables if tables is not None else {},
             "agent_id": agent["id"],
         },
     )
@@ -936,9 +937,19 @@ async def run_topology(
     if trial_id is None:
         trial_id = await create_trial(db, prompt, _trial_description(mode), mode)
 
+    # One shared table workspace per run — agents in a pipeline see each other's
+    # mutations (e.g. a predictor adds a column, a reviewer reads it) without
+    # re-loading the file.
+    shared_tables: dict[str, TableStore] = {}
+
     async def call(agent: dict[str, Any], prompt: str) -> tuple[str, list[ToolCall]]:
         return await _call_agent(
-            agent, prompt, files_by_agent.get(agent["id"], {}), ruleset, registry=registry
+            agent,
+            prompt,
+            files_by_agent.get(agent["id"], {}),
+            ruleset,
+            registry=registry,
+            tables=shared_tables,
         )
 
     if mode == "weighted_opinion_pooling":

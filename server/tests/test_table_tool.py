@@ -8,8 +8,14 @@ CSV = "city,population,prediction\nBerlin,3700000,\nMunich,1500000,\nHamburg,190
 
 
 def _ctx(files: dict[str, str] | None = None) -> dict[str, Any]:
-    """A fresh tool context with an empty table workspace, like the simulation builds."""
-    return {"table": TableStore(), "files": files or {}}
+    """A fresh tool context with an empty shared table workspace."""
+    return {"tables": {}, "files": files or {}}
+
+
+def _first_store(ctx: dict[str, Any]) -> TableStore:
+    """Return the first loaded store — used by assertion-heavy tests."""
+    tables: dict[str, TableStore] = ctx["tables"]
+    return next(iter(tables.values()))
 
 
 async def _run(tool: TableTool, ctx: dict[str, Any], **args: Any) -> str:
@@ -35,6 +41,15 @@ async def test_list_without_files() -> None:
     assert "No files" in out
 
 
+@pytest.mark.asyncio
+async def test_list_shows_loaded_tables() -> None:
+    tool, ctx = TableTool(), _ctx({"data.csv": CSV})
+    await _run(tool, ctx, action="load", file_name="data.csv")
+    out = await _run(tool, ctx, action="list")
+    assert "data.csv" in out
+    assert "3 row(s)" in out
+
+
 # ── load ────────────────────────────────────────────────────────────────────────
 
 
@@ -44,7 +59,7 @@ async def test_load_from_inline_csv() -> None:
     out = await _run(tool, ctx, action="load", csv_text=CSV)
     assert "3 row(s)" in out
     assert "city" in out and "population" in out
-    assert ctx["table"].df is not None
+    assert _first_store(ctx).df is not None
 
 
 @pytest.mark.asyncio
@@ -69,6 +84,13 @@ async def test_load_requires_a_source() -> None:
     assert "requires" in out
 
 
+@pytest.mark.asyncio
+async def test_load_keyed_by_file_name() -> None:
+    tool, ctx = TableTool(), _ctx({"data.csv": CSV})
+    await _run(tool, ctx, action="load", file_name="data.csv")
+    assert "data.csv" in ctx["tables"]
+
+
 # ── create ──────────────────────────────────────────────────────────────────────
 
 
@@ -77,7 +99,7 @@ async def test_create_empty_table() -> None:
     tool, ctx = TableTool(), _ctx()
     out = await _run(tool, ctx, action="create", columns=["name", "score"])
     assert "0 row(s)" in out
-    assert list(ctx["table"].df.columns) == ["name", "score"]
+    assert list(_first_store(ctx).df.columns) == ["name", "score"]
 
 
 @pytest.mark.asyncio
@@ -92,13 +114,12 @@ async def test_create_seeded_table_then_read() -> None:
     )
     out = await _run(tool, ctx, action="read")
     assert "a" in out and "b" in out
-    assert len(ctx["table"].df) == 2
+    assert len(_first_store(ctx).df) == 2
 
 
 @pytest.mark.asyncio
 async def test_create_aligns_seed_to_declared_columns() -> None:
     tool, ctx = TableTool(), _ctx()
-    # 'extra' is dropped; missing 'score' becomes NaN — schema is exactly `columns`.
     await _run(
         tool,
         ctx,
@@ -106,7 +127,7 @@ async def test_create_aligns_seed_to_declared_columns() -> None:
         columns=["name", "score"],
         values={"name": "a", "extra": "ignored"},
     )
-    assert list(ctx["table"].df.columns) == ["name", "score"]
+    assert list(_first_store(ctx).df.columns) == ["name", "score"]
 
 
 @pytest.mark.asyncio
@@ -117,13 +138,20 @@ async def test_create_requires_columns() -> None:
 
 
 @pytest.mark.asyncio
+async def test_create_keyed_by_table_name() -> None:
+    tool, ctx = TableTool(), _ctx()
+    await _run(tool, ctx, action="create", columns=["x"], table_name="results")
+    assert "results" in ctx["tables"]
+
+
+@pytest.mark.asyncio
 async def test_create_then_insert_and_add_column() -> None:
     tool, ctx = TableTool(), _ctx()
     await _run(tool, ctx, action="create", columns=["city"])
     await _run(tool, ctx, action="insert", values={"city": "Berlin"})
     out = await _run(tool, ctx, action="add_column", column="prediction", default=0)
     assert "column 'prediction'" in out
-    assert ctx["table"].df["prediction"].tolist() == [0]
+    assert _first_store(ctx).df["prediction"].tolist() == [0]
 
 
 # ── guard: operating before load ────────────────────────────────────────────────
@@ -191,7 +219,7 @@ async def test_insert_appends_row() -> None:
     await _run(tool, ctx, action="load", csv_text=CSV)
     out = await _run(tool, ctx, action="insert", values={"city": "Cologne", "population": 1100000})
     assert "4 row(s)" in out
-    assert len(ctx["table"].df) == 4
+    assert len(_first_store(ctx).df) == 4
 
 
 @pytest.mark.asyncio
@@ -202,7 +230,7 @@ async def test_update_matching_rows() -> None:
         tool, ctx, action="update", where={"city": "Berlin"}, values={"population": 4000000}
     )
     assert "Updated 1 row(s)" in out
-    df = ctx["table"].df
+    df = _first_store(ctx).df
     assert int(df.loc[df["city"] == "Berlin", "population"].iloc[0]) == 4000000
 
 
@@ -221,7 +249,7 @@ async def test_delete_matching_rows() -> None:
     out = await _run(tool, ctx, action="delete", where={"city": "Hamburg"})
     assert "Deleted 1 row(s)" in out
     assert "2 row(s) remain" in out
-    assert "Hamburg" not in ctx["table"].df["city"].tolist()
+    assert "Hamburg" not in _first_store(ctx).df["city"].tolist()
 
 
 @pytest.mark.asyncio
@@ -230,7 +258,7 @@ async def test_delete_refuses_without_where() -> None:
     await _run(tool, ctx, action="load", csv_text=CSV)
     out = await _run(tool, ctx, action="delete")
     assert "refusing" in out
-    assert len(ctx["table"].df) == 3
+    assert len(_first_store(ctx).df) == 3
 
 
 # ── add_column (the prediction seam) / export ────────────────────────────────────
@@ -242,7 +270,7 @@ async def test_add_column_with_values_is_the_prediction_seam() -> None:
     await _run(tool, ctx, action="load", csv_text="city\nBerlin\nMunich\n")
     out = await _run(tool, ctx, action="add_column", column="prediction", column_values=[1.0, 0.0])
     assert "Added column 'prediction'" in out
-    assert ctx["table"].df["prediction"].tolist() == [1.0, 0.0]
+    assert _first_store(ctx).df["prediction"].tolist() == [1.0, 0.0]
 
 
 @pytest.mark.asyncio
@@ -271,7 +299,7 @@ async def test_export_round_trips_mutations() -> None:
     assert "Berlin,1" in out
 
 
-# ── mutations persist across calls (RegistryIndex-style lifecycle) ───────────────
+# ── shared workspace: mutations visible across agent calls ───────────────────────
 
 
 @pytest.mark.asyncio
@@ -283,3 +311,32 @@ async def test_store_persists_across_calls() -> None:
     out = await _run(tool, ctx, action="read")
     assert "Berlin" not in out
     assert "Cologne" in out
+
+
+@pytest.mark.asyncio
+async def test_two_agents_share_workspace() -> None:
+    """Mutations by the first agent call are visible to the second — the shared
+    dict is the cross-agent persistence mechanism."""
+    shared: dict[str, TableStore] = {}
+    ctx_a = {"tables": shared, "files": {"data.csv": CSV}}
+    ctx_b = {"tables": shared, "files": {"data.csv": CSV}}
+    tool = TableTool()
+
+    # Agent A loads and predicts.
+    await _run(tool, ctx_a, action="load", file_name="data.csv")
+    await _run(tool, ctx_a, action="add_column", column="score", default=1)
+
+    # Agent B sees Agent A's prediction column without reloading.
+    out = await _run(tool, ctx_b, action="describe")
+    assert "score" in out
+
+
+@pytest.mark.asyncio
+async def test_table_name_selects_specific_store() -> None:
+    tool, ctx = TableTool(), _ctx()
+    await _run(tool, ctx, action="create", columns=["x"], table_name="alpha")
+    await _run(tool, ctx, action="create", columns=["y"], table_name="beta")
+    out_a = await _run(tool, ctx, action="describe", table_name="alpha")
+    out_b = await _run(tool, ctx, action="describe", table_name="beta")
+    assert "x (object)" in out_a and "y (object)" not in out_a
+    assert "y (object)" in out_b and "x (object)" not in out_b
