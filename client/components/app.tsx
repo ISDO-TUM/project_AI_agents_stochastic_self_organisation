@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   CanvasState,
   ConsensusMode,
@@ -87,7 +88,7 @@ export function App() {
   const [logSidebarWidth, setLogSidebarWidth] = useState(290);
   const prevSidebarWidth = useRef(290);
   const [panAdjust, setPanAdjust] = useState({ dx: 0, seq: 0 });
-  const [view, setView] = useState<"canvas" | "history">("canvas");
+  const [showHistory, setShowHistory] = useState(false);
 
   const handleSidebarWidthChange = useCallback((w: number) => {
     const delta = w - prevSidebarWidth.current;
@@ -420,10 +421,6 @@ export function App() {
   const t = getTheme(dark);
   const hasNodes = agents.length > 0 || sources.length > 0;
 
-  if (view === "history") {
-    return <HistoryPage onBack={() => setView("canvas")} />;
-  }
-
   return (
     <div
       style={{
@@ -516,7 +513,7 @@ export function App() {
           onAutoLayout={onAutoLayout}
           onExport={exportCanvas}
           onImport={importCanvas}
-          onOpenHistory={() => setView("history")}
+          onOpenHistory={() => setShowHistory(true)}
           showTweaks={showTweaks}
           onToggleTweaks={onToggleTweaks}
         />
@@ -621,6 +618,40 @@ export function App() {
           {importError}
         </div>
       )}
+
+      {showHistory &&
+        createPortal(
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 300,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              backdropFilter: "blur(4px)",
+              background: dark ? "rgba(6,5,12,0.65)" : "rgba(240,238,248,0.65)",
+            }}
+            onClick={() => setShowHistory(false)}
+          >
+            <div
+              style={{
+                width: "min(1100px, 92vw)",
+                height: "min(820px, 88vh)",
+                borderRadius: 16,
+                overflow: "hidden",
+                boxShadow: dark
+                  ? "0 24px 72px rgba(0,0,0,0.65)"
+                  : "0 16px 48px rgba(0,0,0,0.18)",
+                border: `1px solid ${t.borderHi}`,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <HistoryPage onBack={() => setShowHistory(false)} />
+            </div>
+          </div>,
+          document.body,
+        )}
 
       {ctx && (
         <ContextMenu
