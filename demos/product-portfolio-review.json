@@ -1,0 +1,187 @@
+{
+  "agents": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "name": "Sales Performance Analyst",
+      "description": "Tabular data specialist. Analyses the quarterly sales-by-SKU table to find under- and over-performing products by margin and revenue.",
+      "systemPrompt": "You are a sales performance analyst and a tabular-data specialist in a peer group of analysts. Use the `files` tool to read your attached quarterly sales table (CSV). Analyse it to rank SKUs by gross margin and revenue. Flag every SKU with negative or low (<20%) gross margin OR very low revenue as a discontinuation candidate, and name the clear keep-performers, citing exact figures (sku, gross_margin_pct, revenue_eur). Share your findings with the group and update your view if a peer raises a legal constraint or market factor you cannot see in your data. Do not invent numbers that are not in your table.",
+      "provider": "ollama",
+      "model": "hf.co/QuantFactory/TableGPT2-7B-GGUF:Q4_K_M",
+      "tools": ["files"],
+      "connections": [
+        "22222222-2222-4222-8222-222222222222",
+        "33333333-3333-4333-8333-333333333333",
+        "44444444-4444-4444-8444-444444444444",
+        "55555555-5555-4555-8555-555555555555"
+      ],
+      "position": { "x": 650, "y": 200 }
+    },
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "name": "Inventory Analyst",
+      "description": "Tabular data specialist. Analyses the inventory table to find overstock and carrying-cost exposure.",
+      "systemPrompt": "You are an inventory analyst and a tabular-data specialist in a peer group of analysts. Use the `files` tool to read your attached inventory status table (CSV). Compute carrying-cost exposure (on_hand_units multiplied by unit_carrying_cost_eur_per_month) and flag overstocked SKUs by days_of_supply, citing exact numbers (sku, days_of_supply, monthly carrying cost). Share your findings with the group and update your view if a peer raises a legal constraint or market factor you cannot see in your data. Do not invent numbers that are not in your table.",
+      "provider": "ollama",
+      "model": "hf.co/QuantFactory/TableGPT2-7B-GGUF:Q4_K_M",
+      "tools": ["files"],
+      "connections": [
+        "11111111-1111-4111-8111-111111111111",
+        "33333333-3333-4333-8333-333333333333",
+        "44444444-4444-4444-8444-444444444444",
+        "55555555-5555-4555-8555-555555555555"
+      ],
+      "position": { "x": 888, "y": 373 }
+    },
+    {
+      "id": "33333333-3333-4333-8333-333333333333",
+      "name": "Market Intelligence Analyst",
+      "description": "Qualitative analyst covering competitive moves and demand outlook per product.",
+      "systemPrompt": "You are a market intelligence analyst in a peer group of analysts. Use the `files` tool to read your attached market briefing. Summarise the competitive and demand outlook for each product, explicitly calling out any SKU with strategic upside (growth, a competitor exiting) or structural decline. Share this with the group so the numbers-focused analysts can factor it in, and push back if they recommend cutting a product that has clear strategic upside. Keep it grounded in the briefing; do not invent figures.",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["files"],
+      "connections": [
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+        "44444444-4444-4444-8444-444444444444",
+        "55555555-5555-4555-8555-555555555555"
+      ],
+      "position": { "x": 797, "y": 653 }
+    },
+    {
+      "id": "44444444-4444-4444-8444-444444444444",
+      "name": "Legal & Compliance Officer",
+      "description": "Reviews supplier contracts and customer SLAs for constraints that block or penalise discontinuation.",
+      "systemPrompt": "You are a legal and compliance officer in a peer group of analysts. Use the `files` tool to read your attached supplier-contract and SLA summary. Identify any constraint that would block or penalise discontinuing a product: minimum-purchase commitments, termination penalties, or customer SLAs. State explicitly which SKUs are NOT free to discontinue (and why) and which are unencumbered, and veto any peer recommendation to cut a product that is contractually locked. Be precise; cite the obligation.",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["files"],
+      "connections": [
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+        "33333333-3333-4333-8333-333333333333",
+        "55555555-5555-4555-8555-555555555555"
+      ],
+      "position": { "x": 503, "y": 653 }
+    },
+    {
+      "id": "55555555-5555-4555-8555-555555555555",
+      "name": "Portfolio Strategy Lead",
+      "description": "Synthesises the peer group's findings into a final per-SKU keep / discontinue / hold recommendation.",
+      "systemPrompt": "You are the portfolio strategy lead in a peer group with a sales analyst, an inventory analyst, a market intelligence analyst, and a legal/compliance officer. Listen to all of them and reconcile their findings into a final recommendation for each SKU: KEEP, DISCONTINUE, or HOLD (cannot act yet due to a constraint). The numbers may favour discontinuing a product, but you must respect legal/contractual constraints and strategic market upside before deciding. For each SKU give a one-line rationale that cites the relevant peer input, then end with a clear, ordered action list.",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["files"],
+      "connections": [
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+        "33333333-3333-4333-8333-333333333333",
+        "44444444-4444-4444-8444-444444444444"
+      ],
+      "position": { "x": 412, "y": 373 }
+    }
+  ],
+  "sources": [
+    {
+      "id": "f1111111-1111-4111-8111-111111111111",
+      "name": "sales_by_sku_q4_2025.csv",
+      "type": "text",
+      "content": "Quarterly Sales by SKU - Q4 2025 (CSV)\nsku,product_name,units_sold,revenue_eur,cogs_eur,gross_margin_pct\nSKU-A,AlphaCore Router,1200,360000,210000,41.7\nSKU-B,BetaLink Adapter,180,18000,21600,-20.0\nSKU-C,GammaSwitch Hub,140,42000,33600,20.0\nSKU-D,DeltaSense Probe,90,27000,22000,18.5\nSKU-E,EpsilonGuard Firewall,560,168000,100800,40.0",
+      "position": { "x": 650, "y": 30 }
+    },
+    {
+      "id": "f2222222-2222-4222-8222-222222222222",
+      "name": "inventory_status_2025-12.csv",
+      "type": "text",
+      "content": "Inventory Status - December 2025 (CSV)\nsku,product_name,on_hand_units,monthly_run_rate,days_of_supply,unit_carrying_cost_eur_per_month,warehouse\nSKU-A,AlphaCore Router,300,400,22,3.5,Rotterdam\nSKU-B,BetaLink Adapter,950,60,475,2.1,Rotterdam\nSKU-C,GammaSwitch Hub,210,47,134,4.0,Hamburg\nSKU-D,DeltaSense Probe,60,30,60,6.5,Hamburg\nSKU-E,EpsilonGuard Firewall,180,187,29,3.0,Rotterdam",
+      "position": { "x": 1160, "y": 360 }
+    },
+    {
+      "id": "f3333333-3333-4333-8333-333333333333",
+      "name": "market_intel_q4_2025.txt",
+      "type": "text",
+      "content": "Market Intelligence Briefing - Q4 2025.\n- Sensor/probe segment (DeltaSense Probe, SKU-D): competitor NorthBridge announced exit from the EU environmental-probe market by mid-2026, leaving an estimated 30% demand gap we are positioned to capture. Outlook: strong growth despite current low volume.\n- USB adapter segment (BetaLink Adapter, SKU-B): being obsoleted industry-wide by USB-C consolidation; demand in structural decline with no recovery expected.\n- Networking (AlphaCore Router SKU-A, EpsilonGuard Firewall SKU-E): stable, healthy demand; no major competitive shifts.\n- Switching (GammaSwitch Hub, SKU-C): commoditising; margins under pressure but steady enterprise demand.",
+      "position": { "x": 1030, "y": 800 }
+    },
+    {
+      "id": "f4444444-4444-4444-8444-444444444444",
+      "name": "supplier_contracts_and_slas_2026.txt",
+      "type": "text",
+      "content": "Supplier Contract & SLA Summary - effective 2026.\n- AlphaCore Router (SKU-A): sourced from NovaParts; no minimum-purchase commitment; terminable with 30 days notice.\n- BetaLink Adapter (SKU-B): supplier agreement with LinkWorks EXPIRED on 30 November 2025. No further obligations; free to discontinue immediately.\n- GammaSwitch Hub (SKU-C): BINDING minimum-purchase agreement with OrbitalNet - we must purchase at least 100 units per quarter through Q3 2026. Early termination incurs a EUR 25,000 penalty. Additionally, SKU-C is a component in 3 active enterprise support contracts (customer SLAs) running until June 2026; discontinuing before then breaches those SLAs.\n- DeltaSense Probe (SKU-D): no supplier commitment.\n- EpsilonGuard Firewall (SKU-E): no supplier commitment.",
+      "position": { "x": 270, "y": 800 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-a-b",
+      "from": "11111111-1111-4111-8111-111111111111",
+      "to": "22222222-2222-4222-8222-222222222222"
+    },
+    {
+      "id": "e-a-c",
+      "from": "11111111-1111-4111-8111-111111111111",
+      "to": "33333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-a-d",
+      "from": "11111111-1111-4111-8111-111111111111",
+      "to": "44444444-4444-4444-8444-444444444444"
+    },
+    {
+      "id": "e-a-e",
+      "from": "11111111-1111-4111-8111-111111111111",
+      "to": "55555555-5555-4555-8555-555555555555"
+    },
+    {
+      "id": "e-b-c",
+      "from": "22222222-2222-4222-8222-222222222222",
+      "to": "33333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-b-d",
+      "from": "22222222-2222-4222-8222-222222222222",
+      "to": "44444444-4444-4444-8444-444444444444"
+    },
+    {
+      "id": "e-b-e",
+      "from": "22222222-2222-4222-8222-222222222222",
+      "to": "55555555-5555-4555-8555-555555555555"
+    },
+    {
+      "id": "e-c-d",
+      "from": "33333333-3333-4333-8333-333333333333",
+      "to": "44444444-4444-4444-8444-444444444444"
+    },
+    {
+      "id": "e-c-e",
+      "from": "33333333-3333-4333-8333-333333333333",
+      "to": "55555555-5555-4555-8555-555555555555"
+    },
+    {
+      "id": "e-d-e",
+      "from": "44444444-4444-4444-8444-444444444444",
+      "to": "55555555-5555-4555-8555-555555555555"
+    },
+    {
+      "id": "e-sales-file",
+      "from": "11111111-1111-4111-8111-111111111111",
+      "to": "f1111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "e-inv-file",
+      "from": "22222222-2222-4222-8222-222222222222",
+      "to": "f2222222-2222-4222-8222-222222222222"
+    },
+    {
+      "id": "e-market-file",
+      "from": "33333333-3333-4333-8333-333333333333",
+      "to": "f3333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-legal-file",
+      "from": "44444444-4444-4444-8444-444444444444",
+      "to": "f4444444-4444-4444-8444-444444444444"
+    }
+  ],
+  "selectedRules": []
+}
