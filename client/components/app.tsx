@@ -566,6 +566,8 @@ export function App() {
           key={panel.id ?? "new-agent"}
           agent={panelAgent}
           agents={agents}
+          sources={sources}
+          edges={edges}
           onSave={async (data) => {
             await saveAgent(data);
             setPanel(null);
