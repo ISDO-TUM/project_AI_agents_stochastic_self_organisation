@@ -70,6 +70,8 @@ export function App() {
     cur,
     setCur,
     simMode,
+    running,
+    turns,
     logExp,
     setLogExp,
     activeNode,
@@ -79,6 +81,7 @@ export function App() {
     runSim,
     stopSim,
     dynamicEdges,
+    resetContext,
   } = useSimulation(agents, edges);
 
   const [logSidebarWidth, setLogSidebarWidth] = useState(290);
@@ -526,8 +529,10 @@ export function App() {
         />
 
         <PromptBar
-          simMode={simMode}
+          running={running}
+          turnCount={turns.length}
           onRun={handleRun}
+          onResetContext={resetContext}
           onOpenKeys={() => setShowTweaks(true)}
         />
       </div>
