@@ -37,7 +37,7 @@ agents = Table(
     Column("connections", Text, nullable=False, server_default=text("'[]'")),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
     CheckConstraint(
-        "provider IN ('openai', 'anthropic', 'groq', 'gemini')",
+        "provider IN ('openai', 'anthropic', 'groq', 'gemini', 'ollama')",
         name="ck_agents_provider",
     ),
 )

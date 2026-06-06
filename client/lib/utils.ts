@@ -58,6 +58,15 @@ export const PROVIDERS: Record<
       { label: "Gemini 2.5 Pro", value: "gemini-2.5-pro-preview-05-06" },
     ],
   },
+  ollama: {
+    label: "Ollama",
+    models: [
+      {
+        label: "TableGPT2 7B (Ollama)",
+        value: "hf.co/QuantFactory/TableGPT2-7B-GGUF:Q4_K_M",
+      },
+    ],
+  },
 };
 
 // Must match tool names registered in api/tools/registry.py

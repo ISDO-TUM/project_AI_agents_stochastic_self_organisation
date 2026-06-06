@@ -54,7 +54,7 @@ def _validate_uuid(v: str | None, field_name: str = "id") -> str | None:
 # Models
 # ---------------------------------------------------------------------------
 
-ProviderType = Literal["openai", "anthropic", "groq", "gemini"]
+ProviderType = Literal["openai", "anthropic", "groq", "gemini", "ollama"]
 ModelType = Literal["chat", "embedding"]
 
 

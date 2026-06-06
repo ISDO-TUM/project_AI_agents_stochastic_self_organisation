@@ -142,6 +142,11 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             " created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL",
             "ALTER TABLE agents ADD COLUMN IF NOT EXISTS"
             " created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL",
+            # agents: widen the provider allow-list (added 'ollama'). Drop + re-add
+            # so pre-existing databases pick up the new CHECK; idempotent per start.
+            "ALTER TABLE agents DROP CONSTRAINT IF EXISTS ck_agents_provider",
+            "ALTER TABLE agents ADD CONSTRAINT ck_agents_provider"
+            " CHECK (provider IN ('openai', 'anthropic', 'groq', 'gemini', 'ollama'))",
             # trials: simulation tracking columns
             "ALTER TABLE trials ADD COLUMN IF NOT EXISTS mode TEXT",
             "ALTER TABLE trials ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'running'",

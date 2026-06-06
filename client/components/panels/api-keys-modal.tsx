@@ -4,7 +4,12 @@ import { useState, useRef, useEffect } from "react";
 import { LIcon } from "@/lib/icons";
 import { BURG, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
-import { useApiKeys, EMPTY_KEYS, type ApiKeys } from "@/lib/api-keys-context";
+import {
+  useApiKeys,
+  EMPTY_KEYS,
+  OLLAMA_DEFAULT_ENDPOINT,
+  type ApiKeys,
+} from "@/lib/api-keys-context";
 import { Checkbox } from "./panel-primitives";
 
 const PROVIDERS = [
@@ -12,8 +17,12 @@ const PROVIDERS = [
   { key: "anthropicKey", label: "Anthropic" },
   { key: "groqKey", label: "Groq" },
   { key: "geminiKey", label: "Gemini" },
+  { key: "ollamaBaseUrl", label: "Ollama" },
   { key: "proxyKey", label: "Custom Proxy" },
 ] as const;
+
+// Ollama is local and keyless: its field is an endpoint URL, not an API key.
+const ENDPOINT_KEYS = new Set<string>(["ollamaBaseUrl"]);
 
 export function ApiKeysModal({ onClose }: { onClose: () => void }) {
   const { keys, setKeys, clearKeys } = useApiKeys();
@@ -38,6 +47,13 @@ export function ApiKeysModal({ onClose }: { onClose: () => void }) {
       else next.add(id);
       return next;
     });
+    // Ollama has no key, so enabling it must seed its endpoint — otherwise there
+    // is nothing to persist and the X-LLM-Ollama-Base-Url header is never sent.
+    if (id === "ollamaBaseUrl") {
+      setDraft((d) =>
+        d.ollamaBaseUrl ? d : { ...d, ollamaBaseUrl: OLLAMA_DEFAULT_ENDPOINT },
+      );
+    }
   };
 
   const update = (key: keyof ApiKeys, value: string) =>
@@ -224,43 +240,50 @@ export function ApiKeysModal({ onClose }: { onClose: () => void }) {
 
         {/* Dynamic Inputs */}
         <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-          {PROVIDERS.filter((p) => activeIds.has(p.key)).map((f) => (
-            <label
-              key={f.key}
-              style={{ display: "flex", flexDirection: "column", gap: 4 }}
-            >
-              <span
-                style={{
-                  fontSize: 10.5,
-                  fontWeight: 600,
-                  letterSpacing: 0.3,
-                  color: t.textSub,
-                  fontFamily: "'JetBrains Mono', monospace",
-                  textTransform: "uppercase",
-                }}
+          {PROVIDERS.filter((p) => activeIds.has(p.key)).map((f) => {
+            const isEndpoint = ENDPOINT_KEYS.has(f.key);
+            return (
+              <label
+                key={f.key}
+                style={{ display: "flex", flexDirection: "column", gap: 4 }}
               >
-                {f.label} API Key
-              </span>
-              <input
-                type="password"
-                value={draft[f.key as keyof ApiKeys]}
-                onChange={(e) => update(f.key as keyof ApiKeys, e.target.value)}
-                autoComplete="off"
-                spellCheck={false}
-                placeholder="sk-…"
-                style={{
-                  background: t.inputBg,
-                  border: `1px solid ${t.border}`,
-                  borderRadius: 8,
-                  color: t.text,
-                  fontSize: 12.5,
-                  padding: "8px 11px",
-                  outline: "none",
-                  fontFamily: "'JetBrains Mono', monospace",
-                }}
-              />
-            </label>
-          ))}
+                <span
+                  style={{
+                    fontSize: 10.5,
+                    fontWeight: 600,
+                    letterSpacing: 0.3,
+                    color: t.textSub,
+                    fontFamily: "'JetBrains Mono', monospace",
+                    textTransform: "uppercase",
+                  }}
+                >
+                  {f.label} {isEndpoint ? "Endpoint" : "API Key"}
+                </span>
+                <input
+                  type={isEndpoint ? "text" : "password"}
+                  value={draft[f.key as keyof ApiKeys]}
+                  onChange={(e) =>
+                    update(f.key as keyof ApiKeys, e.target.value)
+                  }
+                  autoComplete="off"
+                  spellCheck={false}
+                  placeholder={
+                    isEndpoint ? "http://localhost:11434/v1" : "sk-…"
+                  }
+                  style={{
+                    background: t.inputBg,
+                    border: `1px solid ${t.border}`,
+                    borderRadius: 8,
+                    color: t.text,
+                    fontSize: 12.5,
+                    padding: "8px 11px",
+                    outline: "none",
+                    fontFamily: "'JetBrains Mono', monospace",
+                  }}
+                />
+              </label>
+            );
+          })}
 
           {activeIds.size === 0 && (
             <div

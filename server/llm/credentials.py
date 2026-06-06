@@ -29,6 +29,7 @@ _PROVIDER_ENV: dict[str, tuple[str, str]] = {
     "anthropic": ("ANTHROPIC_API_KEY", "ANTHROPIC_BASE_URL"),
     "groq": ("GROQ_API_KEY", "GROQ_BASE_URL"),
     "gemini": ("GEMINI_API_KEY", "GEMINI_BASE_URL"),
+    "ollama": ("OLLAMA_API_KEY", "OLLAMA_BASE_URL"),
 }
 
 
@@ -92,23 +93,27 @@ def _build(
     anthropic_key: str | None,
     groq_key: str | None,
     gemini_key: str | None,
+    ollama_key: str | None,
     proxy_key: str | None,
     openai_base_url: str | None,
     anthropic_base_url: str | None,
     groq_base_url: str | None,
     gemini_base_url: str | None,
+    ollama_base_url: str | None,
 ) -> RequestCredentials:
     raw_keys = {
         "openai": openai_key,
         "anthropic": anthropic_key,
         "groq": groq_key,
         "gemini": gemini_key,
+        "ollama": ollama_key,
     }
     raw_urls = {
         "openai": openai_base_url,
         "anthropic": anthropic_base_url,
         "groq": groq_base_url,
         "gemini": gemini_base_url,
+        "ollama": ollama_base_url,
     }
     keys = {p: SecretStr(v) for p, v in raw_keys.items() if v}
     base_urls = {p: v for p, v in raw_urls.items() if v}
@@ -124,11 +129,13 @@ async def use_credentials(
     x_llm_anthropic_key: Annotated[str | None, Header()] = None,
     x_llm_groq_key: Annotated[str | None, Header()] = None,
     x_llm_gemini_key: Annotated[str | None, Header()] = None,
+    x_llm_ollama_key: Annotated[str | None, Header()] = None,
     x_llm_proxy_key: Annotated[str | None, Header()] = None,
     x_llm_openai_base_url: Annotated[str | None, Header()] = None,
     x_llm_anthropic_base_url: Annotated[str | None, Header()] = None,
     x_llm_groq_base_url: Annotated[str | None, Header()] = None,
     x_llm_gemini_base_url: Annotated[str | None, Header()] = None,
+    x_llm_ollama_base_url: Annotated[str | None, Header()] = None,
 ) -> AsyncIterator[None]:
     """FastAPI dependency: publish per-request credentials on the ContextVar."""
     creds = _build(
@@ -136,11 +143,13 @@ async def use_credentials(
         anthropic_key=x_llm_anthropic_key,
         groq_key=x_llm_groq_key,
         gemini_key=x_llm_gemini_key,
+        ollama_key=x_llm_ollama_key,
         proxy_key=x_llm_proxy_key,
         openai_base_url=x_llm_openai_base_url,
         anthropic_base_url=x_llm_anthropic_base_url,
         groq_base_url=x_llm_groq_base_url,
         gemini_base_url=x_llm_gemini_base_url,
+        ollama_base_url=x_llm_ollama_base_url,
     )
     token = _current.set(creds)
     try:

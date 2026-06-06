@@ -35,7 +35,7 @@ def get_tools_for_provider(provider: str, tool_names: list[str]) -> list[dict[st
         tool = _TOOLS.get(name)
         if tool is None:
             continue
-        if provider in ("openai", "groq"):
+        if provider in ("openai", "groq", "ollama"):
             result.append(tool.to_openai())
         elif provider == "anthropic":
             result.append(tool.to_anthropic())

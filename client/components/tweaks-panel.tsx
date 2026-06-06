@@ -7,15 +7,24 @@ import { BURG, BURG_DIM, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { LIcon } from "@/lib/icons";
 import { Checkbox } from "./panels/panel-primitives";
-import { useApiKeys, EMPTY_KEYS, type ApiKeys } from "@/lib/api-keys-context";
+import {
+  useApiKeys,
+  EMPTY_KEYS,
+  OLLAMA_DEFAULT_ENDPOINT,
+  type ApiKeys,
+} from "@/lib/api-keys-context";
 
 const PROVIDERS = [
   { key: "openaiKey", label: "OpenAI" },
   { key: "anthropicKey", label: "Anthropic" },
   { key: "groqKey", label: "Groq" },
   { key: "geminiKey", label: "Gemini" },
+  { key: "ollamaBaseUrl", label: "Ollama" },
   { key: "proxyKey", label: "Custom Proxy" },
 ] as const;
+
+// Ollama is local and keyless: its field is an endpoint URL, not an API key.
+const ENDPOINT_KEYS = new Set<string>(["ollamaBaseUrl"]);
 
 type SegmentedOption<T extends string> = {
   value: T;
@@ -348,6 +357,13 @@ export function TweaksPanel({
       else next.add(id);
       return next;
     });
+    // Ollama has no key, so enabling it must seed its endpoint — otherwise there
+    // is nothing to persist and the X-LLM-Ollama-Base-Url header is never sent.
+    if (id === "ollamaBaseUrl") {
+      setDraft((d) =>
+        d.ollamaBaseUrl ? d : { ...d, ollamaBaseUrl: OLLAMA_DEFAULT_ENDPOINT },
+      );
+    }
   };
 
   const updateKey = (key: keyof ApiKeys, value: string) =>
@@ -705,45 +721,50 @@ export function TweaksPanel({
 
             {/* Key inputs */}
             <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-              {PROVIDERS.filter((p) => activeIds.has(p.key)).map((f) => (
-                <label
-                  key={f.key}
-                  style={{ display: "flex", flexDirection: "column", gap: 3 }}
-                >
-                  <span
-                    style={{
-                      fontSize: 10,
-                      fontWeight: 600,
-                      letterSpacing: 0.3,
-                      color: t.textSub,
-                      fontFamily: "'JetBrains Mono', monospace",
-                      textTransform: "uppercase",
-                    }}
+              {PROVIDERS.filter((p) => activeIds.has(p.key)).map((f) => {
+                const isEndpoint = ENDPOINT_KEYS.has(f.key);
+                return (
+                  <label
+                    key={f.key}
+                    style={{ display: "flex", flexDirection: "column", gap: 3 }}
                   >
-                    {f.label} API Key
-                  </span>
-                  <input
-                    type="password"
-                    value={draft[f.key as keyof ApiKeys]}
-                    onChange={(e) =>
-                      updateKey(f.key as keyof ApiKeys, e.target.value)
-                    }
-                    autoComplete="off"
-                    spellCheck={false}
-                    placeholder="sk-…"
-                    style={{
-                      background: t.inputBg,
-                      border: `1px solid ${t.border}`,
-                      borderRadius: 7,
-                      color: t.text,
-                      fontSize: 12,
-                      padding: "7px 10px",
-                      outline: "none",
-                      fontFamily: "'JetBrains Mono', monospace",
-                    }}
-                  />
-                </label>
-              ))}
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 600,
+                        letterSpacing: 0.3,
+                        color: t.textSub,
+                        fontFamily: "'JetBrains Mono', monospace",
+                        textTransform: "uppercase",
+                      }}
+                    >
+                      {f.label} {isEndpoint ? "Endpoint" : "API Key"}
+                    </span>
+                    <input
+                      type={isEndpoint ? "text" : "password"}
+                      value={draft[f.key as keyof ApiKeys]}
+                      onChange={(e) =>
+                        updateKey(f.key as keyof ApiKeys, e.target.value)
+                      }
+                      autoComplete="off"
+                      spellCheck={false}
+                      placeholder={
+                        isEndpoint ? OLLAMA_DEFAULT_ENDPOINT : "sk-…"
+                      }
+                      style={{
+                        background: t.inputBg,
+                        border: `1px solid ${t.border}`,
+                        borderRadius: 7,
+                        color: t.text,
+                        fontSize: 12,
+                        padding: "7px 10px",
+                        outline: "none",
+                        fontFamily: "'JetBrains Mono', monospace",
+                      }}
+                    />
+                  </label>
+                );
+              })}
 
               {activeIds.size === 0 && (
                 <div

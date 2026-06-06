@@ -12,6 +12,7 @@ from .anthropic_provider import call_anthropic
 from .embeddings import cosine_similarity, embed_texts
 from .gemini_provider import call_gemini
 from .groq_provider import call_groq
+from .ollama_provider import call_ollama
 from .openai_provider import call_openai
 
 PROVIDERS: dict[str, Callable[..., Coroutine[Any, Any, str]]] = {
@@ -19,6 +20,7 @@ PROVIDERS: dict[str, Callable[..., Coroutine[Any, Any, str]]] = {
     "groq": call_groq,
     "anthropic": call_anthropic,
     "gemini": call_gemini,
+    "ollama": call_ollama,
 }
 
 

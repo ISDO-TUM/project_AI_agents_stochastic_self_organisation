@@ -19,6 +19,9 @@ export interface ApiKeys {
   anthropicBaseUrl: string;
   groqBaseUrl: string;
   geminiBaseUrl: string;
+  // Ollama is local and keyless; only the endpoint is configurable (blank ->
+  // server default of http://localhost:11434/v1).
+  ollamaBaseUrl: string;
 }
 
 export const EMPTY_KEYS: ApiKeys = {
@@ -31,9 +34,14 @@ export const EMPTY_KEYS: ApiKeys = {
   anthropicBaseUrl: "",
   groqBaseUrl: "",
   geminiBaseUrl: "",
+  ollamaBaseUrl: "",
 };
 
 const STORAGE_KEY = "llm-api-keys";
+
+// Ollama runs locally and needs no key, so it is always advertised at this
+// endpoint unless the user overrides it in the keys modal.
+export const OLLAMA_DEFAULT_ENDPOINT = "http://localhost:11434/v1";
 
 // Map ApiKeys -> X-LLM-* headers, omitting empty values.
 export function apiKeyHeaders(keys: ApiKeys): Record<string, string> {
@@ -47,6 +55,7 @@ export function apiKeyHeaders(keys: ApiKeys): Record<string, string> {
     ["X-LLM-Anthropic-Base-Url", keys.anthropicBaseUrl],
     ["X-LLM-Groq-Base-Url", keys.groqBaseUrl],
     ["X-LLM-Gemini-Base-Url", keys.geminiBaseUrl],
+    ["X-LLM-Ollama-Base-Url", keys.ollamaBaseUrl || OLLAMA_DEFAULT_ENDPOINT],
   ];
   return Object.fromEntries(
     pairs.filter(([, v]) => v.trim().length > 0).map(([k, v]) => [k, v.trim()]),

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-ModelProvider = Literal["openai", "anthropic", "groq", "gemini"]
+ModelProvider = Literal["openai", "anthropic", "groq", "gemini", "ollama"]
 ModelType = Literal["chat", "embedding"]
 
 
@@ -84,8 +84,25 @@ PROXY_MODELS: list[_ModelEntry] = [
 ]
 
 # ---------------------------------------------------------------------------
+# Local / self-hosted models served over an Ollama endpoint
+# (OpenAI-compatible API at, by default, http://localhost:11434/v1).
+# Add the exact tag you `ollama pull` / `ollama create` here so it passes the
+# agent ``model`` allow-list. The local Qwen-based tabular model goes here.
+# ---------------------------------------------------------------------------
+
+OLLAMA_MODELS: list[_ModelEntry] = [
+    _ModelEntry(
+        "hf.co/QuantFactory/TableGPT2-7B-GGUF:Q4_K_M",
+        "TableGPT2 7B (Ollama)",
+        "ollama",
+    ),
+]
+
+# ---------------------------------------------------------------------------
 # Derived allow-set — used by schema validators
 # ---------------------------------------------------------------------------
 
 #: Every model ID that may appear in an agent's ``model`` field.
-ALLOWED_MODEL_IDS: frozenset[str] = frozenset(m.id for m in STANDARD_MODELS + PROXY_MODELS)
+ALLOWED_MODEL_IDS: frozenset[str] = frozenset(
+    m.id for m in STANDARD_MODELS + PROXY_MODELS + OLLAMA_MODELS
+)
