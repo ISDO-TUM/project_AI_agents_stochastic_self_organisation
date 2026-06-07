@@ -8,10 +8,8 @@ caller supplies none.
 """
 
 import asyncio
-import ipaddress
 import json
 import re
-import socket
 import uuid
 from typing import Any
 from urllib.parse import urlparse
@@ -29,43 +27,30 @@ _DEFAULT_OLLAMA_BASE_URL = "http://localhost:11434/v1"
 _PLACEHOLDER_KEY = "ollama"
 
 #: How long to wait when probing whether an Ollama server is up (seconds).
-_PROBE_TIMEOUT = 0.3
+#: Generous enough for a LAN host, not just loopback.
+_PROBE_TIMEOUT = 1.5
 
 
-def _is_loopback(base_url: str) -> bool:
-    """True only if ``base_url``'s host resolves to a loopback address.
+def _normalize_base_url(base_url: str) -> str:
+    """Ensure the OpenAI-compatible ``/v1`` path is present.
 
-    Restricting Ollama to loopback keeps it usable for local development while
-    removing it as a server-side request forgery vector in any deployed
-    environment (a forged ``X-LLM-Ollama-Base-Url`` can only ever hit localhost).
+    Ollama serves the OpenAI API under ``/v1``; users often enter just the host
+    and port (e.g. ``http://192.168.0.107:11434``), so append ``/v1`` when no
+    path is given rather than letting the request 404.
     """
-    host = urlparse(base_url).hostname
-    if not host:
-        return False
-    try:
-        # Resolve every address the host maps to; all must be loopback.
-        infos = socket.getaddrinfo(host, None)
-    except socket.gaierror:
-        return False
-    for info in infos:
-        addr = info[4][0]
-        try:
-            if not ipaddress.ip_address(addr).is_loopback:
-                return False
-        except ValueError:
-            return False
-    return bool(infos)
+    trimmed = base_url.rstrip("/")
+    if not urlparse(trimmed).path:
+        return f"{trimmed}/v1"
+    return trimmed
 
 
 async def ollama_available(base_url: str) -> bool:
-    """True if a loopback Ollama server accepts a TCP connection at ``base_url``.
+    """True if an Ollama server accepts a TCP connection at ``base_url``.
 
-    Used to auto-detect availability with zero configuration: present in local
-    dev (``ollama serve`` running) and absent in production (nothing listening on
-    the deployment host's loopback), so no env flag is needed in either place.
+    Used to auto-detect availability with zero configuration: present when an
+    ``ollama serve`` is reachable at the configured endpoint and absent
+    otherwise, so no env flag is needed in any environment.
     """
-    if not _is_loopback(base_url):
-        return False
     parsed = urlparse(base_url)
     host = parsed.hostname or "localhost"
     port = parsed.port or 11434
@@ -88,12 +73,10 @@ def _get_ollama_client() -> AsyncOpenAI:
 
     Base URL and key come from the request/env credentials when present
     (``OLLAMA_BASE_URL`` / ``OLLAMA_API_KEY`` or the ``X-LLM-Ollama-*`` headers),
-    otherwise fall back to the local default and a placeholder key. The endpoint
-    is required to be loopback (see :func:`_is_loopback`).
+    otherwise fall back to the local default and a placeholder key. Any reachable
+    endpoint is allowed (loopback, LAN, or remote).
     """
-    base_url = resolve_base_url("ollama") or _DEFAULT_OLLAMA_BASE_URL
-    if not _is_loopback(base_url):
-        raise ValueError("Ollama is only available on a local (loopback) endpoint.")
+    base_url = _normalize_base_url(resolve_base_url("ollama") or _DEFAULT_OLLAMA_BASE_URL)
     try:
         api_key = resolve_api_key("ollama")
     except MissingCredentialsError:
