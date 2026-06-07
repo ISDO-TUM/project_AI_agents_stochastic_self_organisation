@@ -34,8 +34,9 @@ fi
 
 pnpm install
 cd server
-uv venv
-uv pip install -r requirements-dev.txt
+# uv sync creates server/.venv and installs everything (prod + dev groups)
+# straight from uv.lock — the single source of truth shared with CI and Docker.
+uv sync
 uv run pre-commit install -t pre-commit -t commit-msg
 cd ..
 

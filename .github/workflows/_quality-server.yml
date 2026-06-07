@@ -13,10 +13,12 @@ jobs:
       - uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
-          cache-dependency-glob: "server/requirements-dev.txt"
+          cache-dependency-glob: "server/uv.lock"
 
       - name: Install Python dependencies
-        run: cd server && uv venv && uv pip install -r requirements-dev.txt
+        # `--locked` fails if uv.lock has drifted from pyproject.toml, so CI
+        # catches lockfile drift before it can reach a deployment.
+        run: cd server && uv sync --locked
 
       - name: Cache pre-commit environments
         uses: actions/cache@v5
