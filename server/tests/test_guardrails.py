@@ -412,12 +412,12 @@ class TestHintFilesInPrompt:
         result = hint_files_in_prompt("Do task.", ["my-file.txt"])
         assert "my-file.txt" in result
 
-    def test_table_agent_hint_points_at_table_tool_not_files(self) -> None:
+    def test_table_agent_hint_points_csv_at_table_tools_not_files(self) -> None:
         from server.db import hint_files_in_prompt
 
-        result = hint_files_in_prompt("Do task.", ["data.csv"], ["table"])
+        result = hint_files_in_prompt("Do task.", ["data.csv"], ["table_query", "table_mutate"])
         assert result is not None
-        assert "'table' tool" in result
+        assert "'table_query' tool" in result
         assert "'files' tool" not in result
 
     def test_files_agent_hint_points_at_files_tool(self) -> None:
@@ -426,15 +426,35 @@ class TestHintFilesInPrompt:
         result = hint_files_in_prompt("Do task.", ["doc.txt"], ["files"])
         assert result is not None
         assert "'files' tool" in result
-        assert "'table' tool" not in result
+        assert "'table_query' tool" not in result
 
-    def test_both_tools_get_both_hints(self) -> None:
+    def test_mixed_files_are_partitioned_between_tools(self) -> None:
+        """A CSV must be steered to the table tools and a .txt to the files tool —
+        never the other way round, since handing a CSV to the files tool would
+        leak its content into the prompt as raw, unstructured text."""
         from server.db import hint_files_in_prompt
 
-        result = hint_files_in_prompt("Do task.", ["data.csv"], ["files", "table"])
+        result = hint_files_in_prompt(
+            "Do task.", ["data.csv", "notes.txt"], ["files", "table_query", "table_mutate"]
+        )
         assert result is not None
         assert "'files' tool" in result
-        assert "'table' tool" in result
+        assert "'table_query' tool" in result
+        # The csv must be mentioned alongside the table-tool guidance, not the files one.
+        files_sentence, _, table_sentence = result.partition("tabular data files attached")
+        assert "data.csv" not in files_sentence
+        assert "notes.txt" not in table_sentence
+        assert "data.csv" in table_sentence
+        assert "notes.txt" in files_sentence
+
+    def test_csv_with_only_files_tool_falls_back_to_files(self) -> None:
+        """An agent without any table tool must still be told how to reach a CSV."""
+        from server.db import hint_files_in_prompt
+
+        result = hint_files_in_prompt("Do task.", ["data.csv"], ["files"])
+        assert result is not None
+        assert "'files' tool" in result
+        assert "data.csv" in result
 
 
 # ---------------------------------------------------------------------------

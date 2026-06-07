@@ -9,7 +9,8 @@ export const TOOL_ICON: Record<string, string> = {
   "API Call": "Zap",
   // Keyed by registered tool name (see TOOLS in lib/utils.ts)
   files: "FileText",
-  table: "Table2",
+  table_query: "Table2",
+  table_mutate: "Table2",
 };
 
 interface LIconProps {

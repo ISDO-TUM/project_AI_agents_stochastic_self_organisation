@@ -17,21 +17,18 @@ interface SourcePanelProps {
   onClose: () => void;
 }
 
-const PREVIEW_ROWS = 6;
-const PREVIEW_COLS = 6;
+const PREVIEW_MAX_HEIGHT = 420;
 
-/** Minimal CSV preview — naive split is fine for an at-a-glance grid. */
+/** Minimal CSV preview — naive split is fine for an at-a-glance grid. Shows
+ *  every row and column; the surrounding box scrolls both ways so a wide or
+ *  tall table stays fully reachable (pair with widening the sidebar). */
 function CsvPreview({ text, dark }: { text: string; dark: boolean }) {
   const t = getTheme(dark);
   const lines = text.trim().split(/\r?\n/);
   if (!text.trim()) return null;
 
-  const rows = lines.slice(0, PREVIEW_ROWS + 1).map((r) => r.split(","));
-  const totalCols = Math.max(...rows.map((r) => r.length));
-  const cols = Math.min(PREVIEW_COLS, totalCols);
+  const rows = lines.map((r) => r.split(","));
   const [header, ...body] = rows;
-  const moreRows = lines.length - 1 - body.length;
-  const moreCols = totalCols - cols;
 
   const cell: React.CSSProperties = {
     padding: "4px 8px",
@@ -52,13 +49,13 @@ function CsvPreview({ text, dark }: { text: string; dark: boolean }) {
         border: `1px solid ${t.border}`,
         borderRadius: 8,
         overflow: "auto",
-        maxHeight: 220,
+        maxHeight: PREVIEW_MAX_HEIGHT,
       }}
     >
       <table style={{ borderCollapse: "collapse", width: "100%" }}>
         <thead>
           <tr>
-            {header.slice(0, cols).map((h, i) => (
+            {header.map((h, i) => (
               <th
                 key={i}
                 style={{
@@ -74,38 +71,20 @@ function CsvPreview({ text, dark }: { text: string; dark: boolean }) {
                 {h}
               </th>
             ))}
-            {moreCols > 0 && (
-              <th style={{ ...cell, color: t.textSub, background: t.inputBg }}>
-                +{moreCols}
-              </th>
-            )}
           </tr>
         </thead>
         <tbody>
           {body.map((r, ri) => (
             <tr key={ri}>
-              {r.slice(0, cols).map((c, ci) => (
+              {r.map((c, ci) => (
                 <td key={ci} style={{ ...cell, color: t.textSub }}>
                   {c}
                 </td>
               ))}
-              {moreCols > 0 && <td style={{ ...cell, color: t.textSub }}>…</td>}
             </tr>
           ))}
         </tbody>
       </table>
-      {moreRows > 0 && (
-        <div
-          style={{
-            padding: "5px 8px",
-            fontSize: 11,
-            color: t.textSub,
-            fontFamily: "'JetBrains Mono', monospace",
-          }}
-        >
-          +{moreRows} more row{moreRows === 1 ? "" : "s"}
-        </div>
-      )}
     </div>
   );
 }

@@ -942,10 +942,31 @@ async def run_topology(
     # re-loading the file.
     shared_tables: dict[str, TableStore] = {}
 
+    # Per-agent "last version seen" for each table — lets us nudge an agent to
+    # re-read a table that a sibling mutated since this agent's previous turn,
+    # since nothing else would otherwise tell it the data moved under it.
+    table_versions_seen: dict[str, dict[str, int]] = {}
+
+    def _table_change_notes(agent_id: str) -> str:
+        seen = table_versions_seen.setdefault(agent_id, {})
+        notes: list[str] = []
+        for name, store in shared_tables.items():
+            if store.df is None:
+                continue
+            last = seen.get(name)
+            if last is not None and last != store.version:
+                notes.append(
+                    f"[Table '{name}' changed since your last turn — now at version "
+                    f"{store.version}. Re-read it with 'table_query' before relying "
+                    "on what you remember.]"
+                )
+            seen[name] = store.version
+        return ("\n\n" + "\n".join(notes)) if notes else ""
+
     async def call(agent: dict[str, Any], prompt: str) -> tuple[str, list[ToolCall]]:
         return await _call_agent(
             agent,
-            prompt,
+            prompt + _table_change_notes(agent["id"]),
             files_by_agent.get(agent["id"], {}),
             ruleset,
             registry=registry,

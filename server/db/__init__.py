@@ -310,10 +310,14 @@ def hint_files_in_prompt(
 ) -> str | None:
     """Append an instruction telling the agent how to reach its attached files.
 
-    The instruction is tailored to the tools the agent actually has: the
-    ``files`` tool reads text knowledge files, while the ``table`` tool loads
-    tabular files (CSV) for inspection and editing. When ``tool_names`` is not
-    supplied, the files-oriented hint is used (backwards-compatible default).
+    Files are partitioned by extension: tabular files (``.csv``/``.tsv``) are
+    steered toward the ``table_query``/``table_mutate`` tools and everything
+    else toward the ``files`` tool — whichever of those the agent actually has.
+    This closes the "raw string" leak path where a CSV could be handed to the
+    ``files`` tool and pasted into the prompt as undifferentiated text instead
+    of being loaded into a structured, queryable table. When ``tool_names`` is
+    not supplied, the files-oriented hint is used for everything
+    (backwards-compatible default).
 
     File names are sanitised before interpolation: newlines, quotes and
     angle-brackets are stripped so that a maliciously named file cannot inject
@@ -326,25 +330,41 @@ def hint_files_in_prompt(
         n.replace("\n", " ").replace("\r", " ").replace('"', "'").replace("<", "").replace(">", "")
         for n in file_names
     ]
-    names = ", ".join(f'"{n}"' for n in _safe)
 
     tools = set(tool_names) if tool_names is not None else None
     # Default (no tool info) keeps the files-oriented hint for back-compat.
     use_files = tools is None or "files" in tools
-    use_table = tools is not None and "table" in tools
+    use_table = tools is not None and ("table_query" in tools or "table_mutate" in tools)
 
-    hint = f"\n\nYou have knowledge files attached: {names}."
-    if use_files:
-        hint += (
-            " Use the 'files' tool to read relevant files before answering. "
-            "Always check file contents first, then base your answer on what you find."
-        )
-    if use_table:
-        hint += (
-            " Tabular files (e.g. CSV) can be loaded with the 'table' tool "
-            "(action='load' with the file_name) and then inspected or edited."
-        )
-    return (system_prompt or "") + hint
+    tabular_exts = (".csv", ".tsv")
+    tabular = [n for n in _safe if n.lower().endswith(tabular_exts)]
+    other = [n for n in _safe if not n.lower().endswith(tabular_exts)]
+
+    parts: list[str] = []
+    if other:
+        names = ", ".join(f'"{n}"' for n in other)
+        parts.append(f"You have knowledge files attached: {names}.")
+        if use_files:
+            parts.append(
+                "Use the 'files' tool to read them before answering — always check "
+                "file contents first, then base your answer on what you find."
+            )
+    if tabular:
+        names = ", ".join(f'"{n}"' for n in tabular)
+        parts.append(f"You have tabular data files attached: {names}.")
+        if use_table:
+            parts.append(
+                "Load them with the 'table_query' tool (action='load' with the "
+                "file_name), then inspect with 'table_query' (describe/read/export) "
+                "or modify with 'table_mutate' (insert/update/delete/add_column) — "
+                "do not treat them as raw text."
+            )
+        elif use_files:
+            parts.append("Use the 'files' tool to read them before answering.")
+
+    if not parts:
+        return system_prompt or None
+    return (system_prompt or "") + "\n\n" + " ".join(parts)
 
 
 def _now_iso() -> str:
