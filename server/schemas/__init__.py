@@ -564,6 +564,7 @@ _ConsensusMode = Literal[
     "broadcast_no_consensus",
     "weighted_opinion_pooling",
     "plurality_voting",
+    "bidding",
 ]
 
 _TopologyMode = Literal["static", "dynamic"]
@@ -589,7 +590,8 @@ class SimulationRunRequest(BaseModel):
             "Consensus algorithm. 'broadcast_no_consensus' = discussion without "
             "a final consensus operator. 'weighted_opinion_pooling' = per-agent "
             "trust vector over neighbours. 'plurality_voting' = global plurality "
-            "voting via a coordinator function."
+            "voting via a coordinator function. 'bidding' = bidding-based "
+            "consensus (not yet implemented)."
         ),
     )
     agent_context: dict[str, str] | None = Field(

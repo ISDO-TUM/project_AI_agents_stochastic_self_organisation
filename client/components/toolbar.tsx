@@ -18,6 +18,9 @@ interface ToolbarProps {
   onOpenHistory: () => void;
   showTweaks: boolean;
   onToggleTweaks: () => void;
+  showBiddingBoardToggle?: boolean;
+  biddingBoardOpen?: boolean;
+  onToggleBiddingBoard?: () => void;
 }
 
 function Sep({ t }: { t: ReturnType<typeof getTheme> }) {
@@ -186,6 +189,9 @@ export function Toolbar({
   onOpenHistory,
   showTweaks,
   onToggleTweaks,
+  showBiddingBoardToggle,
+  biddingBoardOpen,
+  onToggleBiddingBoard,
 }: ToolbarProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -327,6 +333,18 @@ export function Toolbar({
               Clear
             </TBtn>
           </>
+        )}
+
+        {simMode && showBiddingBoardToggle && onToggleBiddingBoard && (
+          <TBtn
+            onClick={onToggleBiddingBoard}
+            icon="ClipboardList"
+            title="Bidding board"
+            active={biddingBoardOpen}
+            t={t}
+          >
+            Board
+          </TBtn>
         )}
 
         {simMode && (
