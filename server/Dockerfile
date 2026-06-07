@@ -8,10 +8,16 @@ COPY --from=uv /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# Install production dependencies into /opt/venv (cached layer)
-COPY requirements.txt .
-RUN uv venv /opt/venv && \
-    uv pip install --python /opt/venv --no-cache -r requirements.txt
+# Install production dependencies into /opt/venv straight from the lockfile —
+# uv.lock is the single source of truth. `--locked` fails the build if uv.lock
+# has drifted from pyproject.toml, so a forgotten `uv lock` can never ship a
+# half-resolved dependency set. `--no-install-project` installs only the
+# locked dependencies (the app itself runs via PYTHONPATH, not as a package).
+ENV UV_PROJECT_ENVIRONMENT=/opt/venv \
+    UV_LINK_MODE=copy \
+    UV_NO_CACHE=1
+COPY pyproject.toml uv.lock ./
+RUN uv sync --locked --no-dev --no-install-project
 
 # ---- runtime: minimal image, no build tools ----
 FROM python:3.12-slim AS runtime
