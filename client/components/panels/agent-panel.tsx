@@ -1,25 +1,20 @@
 "use client";
 
 import { useState, useMemo, useEffect } from "react";
-import { Agent, Provider } from "@/lib/types";
-import { uuid, shortId, PROVIDERS, TOOLS } from "@/lib/utils";
+import { Agent, Provider, Source, Edge } from "@/lib/types";
+import { uuid, shortId, PROVIDERS } from "@/lib/utils";
 import { fetchModels, ModelEntry } from "@/lib/api";
-import { BURG, BURG_LT, BURG_DIM, getTheme } from "@/lib/theme";
+import { getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { useApiKeys } from "@/lib/api-keys-context";
-import { LIcon, TOOL_ICON } from "@/lib/icons";
-import {
-  FLabel,
-  FInput,
-  FSelect,
-  FBtn,
-  PanelShell,
-  Checkbox,
-} from "./panel-primitives";
+import { LIcon } from "@/lib/icons";
+import { FLabel, FInput, FSelect, FBtn, PanelShell } from "./panel-primitives";
 
 interface AgentPanelProps {
   agent: Agent | null;
   agents: Agent[];
+  sources: Source[];
+  edges: Edge[];
   onSave: (agent: Agent) => void;
   onDelete: (id: string) => void;
   onClose: () => void;
@@ -31,8 +26,6 @@ interface AgentForm {
   provider: Provider;
   model: string;
   systemPrompt: string;
-  tools: string[];
-  connections: string[];
 }
 
 const defaultForm = (): AgentForm => ({
@@ -41,13 +34,13 @@ const defaultForm = (): AgentForm => ({
   provider: "openai",
   model: PROVIDERS["openai"].models[0].value,
   systemPrompt: "",
-  tools: [],
-  connections: [],
 });
 
 export function AgentPanel({
   agent,
   agents,
+  sources,
+  edges,
   onSave,
   onDelete,
   onClose,
@@ -84,12 +77,9 @@ export function AgentPanel({
           provider: agent.provider,
           model: agent.model,
           systemPrompt: agent.systemPrompt,
-          tools: [...agent.tools],
-          connections: [...agent.connections],
         }
       : defaultForm(),
   );
-  const [connIn, setConnIn] = useState("");
 
   useEffect(() => {
     if (!availableModels.length) return;
@@ -107,30 +97,10 @@ export function AgentPanel({
   const set = <K extends keyof AgentForm>(k: K, v: AgentForm[K]) =>
     setForm((f) => ({ ...f, [k]: v }));
 
-  const toggleTool = (tool: string) =>
-    set(
-      "tools",
-      form.tools.includes(tool)
-        ? form.tools.filter((t) => t !== tool)
-        : [...form.tools, tool],
-    );
-
   const handleProv = (v: string) => {
     const provider = v as Provider;
     const firstModel = providers[provider]?.models[0]?.value ?? "";
-    setForm((f) => ({
-      ...f,
-      provider,
-      model: firstModel,
-    }));
-  };
-
-  const addConn = () => {
-    const val = connIn.trim();
-    if (val && !form.connections.includes(val)) {
-      set("connections", [...form.connections, val]);
-      setConnIn("");
-    }
+    setForm((f) => ({ ...f, provider, model: firstModel }));
   };
 
   const nameById = useMemo(
@@ -139,16 +109,86 @@ export function AgentPanel({
   );
   const getName = (id: string) => nameById.get(id) ?? `${shortId(id)}…`;
 
+  const connectedSources = useMemo(() => {
+    if (!agent) return [];
+    const sourceIds = new Set(
+      edges
+        .filter((e) => e.from === agent.id || e.to === agent.id)
+        .map((e) => (e.from === agent.id ? e.to : e.from)),
+    );
+    return sources.filter((s) => sourceIds.has(s.id));
+  }, [agent, edges, sources]);
+
   const handleSave = () => {
     const position = agent?.position ?? {
       x: 220 + Math.random() * 480,
       y: 200 + Math.random() * 260,
     };
-    onSave({ ...form, id: agent?.id ?? uuid(), position });
+    onSave({
+      ...form,
+      id: agent?.id ?? uuid(),
+      position,
+      tools: agent?.tools ?? [],
+      connections: agent?.connections ?? [],
+    });
   };
+
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [connsOpen, setConnsOpen] = useState(false);
 
   const { dark } = useTheme();
   const t = getTheme(dark);
+
+  const dropdownHeader = (
+    label: string,
+    icon: string,
+    count: number,
+    open: boolean,
+    toggle: () => void,
+  ) => (
+    <button
+      onClick={toggle}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        width: "100%",
+        background: t.inputBg,
+        border: `1.5px solid ${t.border}`,
+        borderRadius: 9,
+        padding: "8px 12px",
+        cursor: "pointer",
+        marginTop: 4,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+        <LIcon name={icon} size={13} color={t.textSub} />
+        <span style={{ fontSize: 13, color: t.text, fontWeight: 500 }}>
+          {label}
+        </span>
+        <span
+          style={{
+            fontSize: 11,
+            color: t.textDim,
+            background: t.border,
+            borderRadius: 5,
+            padding: "1px 6px",
+          }}
+        >
+          {count}
+        </span>
+      </div>
+      <span
+        style={{
+          display: "flex",
+          transform: open ? "rotate(180deg)" : "rotate(0deg)",
+          transition: "transform 0.15s",
+        }}
+      >
+        <LIcon name="ChevronDown" size={14} color={t.textSub} />
+      </span>
+    </button>
+  );
 
   return (
     <PanelShell
@@ -195,142 +235,99 @@ export function AgentPanel({
         rows={5}
       />
 
-      <FLabel>Tools</FLabel>
-      <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
-        {TOOLS.map((tool) => {
-          const active = form.tools.includes(tool);
-          return (
+      {connectedSources.length > 0 && (
+        <>
+          {dropdownHeader(
+            "Tools",
+            "Wrench",
+            connectedSources.length,
+            toolsOpen,
+            () => setToolsOpen((o) => !o),
+          )}
+          {toolsOpen && (
             <div
-              key={tool}
-              role="checkbox"
-              aria-checked={active}
-              tabIndex={0}
-              onClick={() => toggleTool(tool)}
-              onKeyDown={(e) =>
-                (e.key === " " || e.key === "Enter") && toggleTool(tool)
-              }
               style={{
                 display: "flex",
-                alignItems: "center",
-                gap: 11,
-                cursor: "pointer",
-                padding: "9px 12px",
-                borderRadius: 10,
-                border: `1.5px solid ${
-                  active ? "rgba(139,26,47,0.38)" : t.border
-                }`,
-                background: active ? BURG_DIM : t.inputBg,
-                transition: "all 0.15s",
+                flexDirection: "column",
+                gap: 4,
+                marginTop: 4,
               }}
             >
-              <Checkbox checked={active} onChange={() => toggleTool(tool)} />
-              <LIcon
-                name={TOOL_ICON[tool] || "Wrench"}
-                size={14}
-                color={active ? BURG : t.textSub}
-              />
-              <span
-                style={{
-                  fontSize: 13,
-                  color: t.text,
-                  fontWeight: active ? 600 : 400,
-                }}
-              >
-                {tool}
-              </span>
+              {connectedSources.map((src) => (
+                <div
+                  key={src.id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "7px 12px",
+                    borderRadius: 8,
+                    border: `1.5px solid ${t.border}`,
+                    background: t.inputBg,
+                  }}
+                >
+                  <LIcon
+                    name={src.type === "dataset" ? "Table2" : "FileText"}
+                    size={13}
+                    color={t.textSub}
+                  />
+                  <span style={{ fontSize: 12, color: t.text }}>
+                    {src.name}
+                  </span>
+                </div>
+              ))}
             </div>
-          );
-        })}
-      </div>
+          )}
+        </>
+      )}
 
-      <FLabel>Connections</FLabel>
-      <div style={{ display: "flex", gap: 8 }}>
-        <FInput
-          value={connIn}
-          onChange={setConnIn}
-          placeholder="Node ID or name"
-        />
-        <button
-          onClick={addConn}
-          style={{
-            flexShrink: 0,
-            background: BURG,
-            border: "none",
-            color: "#fff",
-            borderRadius: 10,
-            width: 42,
-            height: 42,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            cursor: "pointer",
-            transition: "background 0.15s",
-          }}
-          onMouseEnter={(e) =>
-            ((e.currentTarget as HTMLButtonElement).style.background = BURG_LT)
-          }
-          onMouseLeave={(e) =>
-            ((e.currentTarget as HTMLButtonElement).style.background = BURG)
-          }
-        >
-          <LIcon name="Plus" size={18} color="#fff" />
-        </button>
-      </div>
-      <div
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 6,
-          marginTop: 8,
-        }}
-      >
-        {form.connections.map((id) => (
-          <div
-            key={id}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              background: t.inputBg,
-              border: `1.5px solid ${t.border}`,
-              borderRadius: 9,
-              padding: "8px 12px",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-              <LIcon name="Network" size={12} color={t.textDim} />
-              <span
-                style={{
-                  fontSize: 12,
-                  color: t.textSub,
-                  fontFamily: "'JetBrains Mono', monospace",
-                }}
-              >
-                {getName(id)}
-              </span>
-            </div>
-            <button
-              onClick={() =>
-                set(
-                  "connections",
-                  form.connections.filter((c) => c !== id),
-                )
-              }
+      {agent && agent.connections.length > 0 && (
+        <>
+          {dropdownHeader(
+            "Connections",
+            "Network",
+            agent.connections.length,
+            connsOpen,
+            () => setConnsOpen((o) => !o),
+          )}
+          {connsOpen && (
+            <div
               style={{
-                background: "none",
-                border: "none",
-                color: BURG_LT,
-                cursor: "pointer",
                 display: "flex",
-                padding: 2,
-                borderRadius: 5,
+                flexDirection: "column",
+                gap: 4,
+                marginTop: 4,
               }}
             >
-              <LIcon name="X" size={13} color={BURG_LT} />
-            </button>
-          </div>
-        ))}
-      </div>
+              {agent.connections.map((id) => (
+                <div
+                  key={id}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    background: t.inputBg,
+                    border: `1.5px solid ${t.border}`,
+                    borderRadius: 8,
+                    padding: "7px 12px",
+                  }}
+                >
+                  <LIcon name="Bot" size={12} color={t.textDim} />
+                  <span
+                    style={{
+                      fontSize: 12,
+                      color: t.textSub,
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >
+                    {getName(id)}
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </>
+      )}
 
       <div
         style={{

@@ -589,6 +589,7 @@ async def test_dynamic_broadcast_rewires_persisted_graph(monkeypatch: pytest.Mon
         files: dict[str, str],
         ruleset: str | None = None,
         registry: Any = None,
+        tables: Any = None,
     ) -> tuple[str, list[Any]]:
         # Everyone asks to hear from a3 -> a3 becomes a sender in round 2.
         return "my answer\nCONNECT: a3", []
@@ -632,6 +633,65 @@ async def test_dynamic_broadcast_rewires_persisted_graph(monkeypatch: pytest.Mon
 
 
 @pytest.mark.asyncio
+async def test_single_agent_skips_consensus(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A lone agent has no one to reconcile with, so a requested voting run is
+    silently downgraded to broadcast — no empty 'No valid votes' tally appears."""
+    from unittest.mock import AsyncMock
+
+    from sqlalchemy import select as _sa_select
+    from sqlalchemy.ext.asyncio import create_async_engine
+    from sqlalchemy.pool import StaticPool
+
+    from server.db.tables import agents as agents_table
+    from server.db.tables import messages, metadata, trials
+
+    engine = create_async_engine(
+        "sqlite+aiosqlite:///:memory:",
+        connect_args={"check_same_thread": False},
+        poolclass=StaticPool,
+    )
+    async with engine.begin() as conn:
+        await conn.run_sync(metadata.create_all)
+
+    async def fake_call_agent(
+        agent: dict[str, Any],
+        prompt: str,
+        files: dict[str, str],
+        ruleset: str | None = None,
+        registry: Any = None,
+        tables: Any = None,
+    ) -> tuple[str, list[Any]]:
+        return "REASON: because\nVOTE: yes", []
+
+    monkeypatch.setattr(sim, "_call_agent", fake_call_agent)
+    monkeypatch.setattr(sim, "load_files_by_agent", AsyncMock(return_value={}))
+
+    async with engine.connect() as conn:
+        await conn.execute(
+            agents_table.insert().values(
+                id="solo",
+                name="SOLO",
+                description="x",
+                system_prompt="",
+                provider="openai",
+                model="m",
+                tools="[]",
+                connections="[]",
+            )
+        )
+        await conn.commit()
+
+        await sim.run_topology("q", conn, rounds=2, mode="plurality_voting", topology="static")
+
+        trial_rows = (await conn.execute(_sa_select(trials))).mappings().all()
+        msg_rows = (await conn.execute(_sa_select(messages))).mappings().all()
+
+    assert trial_rows and all(r["mode"] == "broadcast_no_consensus" for r in trial_rows)
+    assert not any("No valid votes" in (r["message"] or "") for r in msg_rows)
+    assert not any(r["message_type"] in ("vote_tally", "voting_tally") for r in msg_rows)
+
+
+@pytest.mark.asyncio
 async def test_dynamic_broadcast_bootstraps_from_empty_seed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -659,6 +719,7 @@ async def test_dynamic_broadcast_bootstraps_from_empty_seed(
         files: dict[str, str],
         ruleset: str | None = None,
         registry: Any = None,
+        tables: Any = None,
     ) -> tuple[str, list[Any]]:
         return "my answer\nCONNECT: a3", []
 
@@ -744,6 +805,7 @@ async def test_dynamic_voting_rewires_persisted_graph(monkeypatch: pytest.Monkey
         files: dict[str, str],
         ruleset: str | None = None,
         registry: Any = None,
+        tables: Any = None,
     ) -> tuple[str, list[Any]]:
         # No stable plurality (no VOTE line) so voting never short-circuits before
         # the graph has a chance to rewire toward a3.
@@ -796,6 +858,7 @@ async def test_dynamic_weighted_runs_end_to_end(monkeypatch: pytest.MonkeyPatch)
         files: dict[str, str],
         ruleset: str | None = None,
         registry: Any = None,
+        tables: Any = None,
     ) -> tuple[str, list[Any]]:
         return f"ANSWER: {agent['id']}\nSOURCE: none\nREASONING: x\nCONNECT: a3", []
 
@@ -853,6 +916,7 @@ async def test_dynamic_voting_rewires_even_when_consensus_stable(
         files: dict[str, str],
         ruleset: str | None = None,
         registry: Any = None,
+        tables: Any = None,
     ) -> tuple[str, list[Any]]:
         # Stable plurality across all rounds (everyone votes "x") yet everyone
         # also asks to hear from a3 next round.
@@ -912,6 +976,7 @@ async def test_dynamic_voting_isolated_agent_uses_registry_not_global_tally(
         files: dict[str, str],
         ruleset: str | None = None,
         registry: Any = None,
+        tables: Any = None,
     ) -> tuple[str, list[Any]]:
         seen_prompts.append((agent["id"], prompt))
         return "REASON: because\nVOTE: x", []
@@ -972,6 +1037,7 @@ async def test_dynamic_weighted_rewires_even_when_trust_stable(
         files: dict[str, str],
         ruleset: str | None = None,
         registry: Any = None,
+        tables: Any = None,
     ) -> tuple[str, list[Any]]:
         # Identical answer everywhere → trust stabilises immediately, yet all
         # agents request a3 as their next-round source.

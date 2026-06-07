@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
+import { createPortal } from "react-dom";
 import {
   CanvasState,
   ConsensusMode,
@@ -87,7 +88,7 @@ export function App() {
   const [logSidebarWidth, setLogSidebarWidth] = useState(290);
   const prevSidebarWidth = useRef(290);
   const [panAdjust, setPanAdjust] = useState({ dx: 0, seq: 0 });
-  const [view, setView] = useState<"canvas" | "history">("canvas");
+  const [showHistory, setShowHistory] = useState(false);
 
   const handleSidebarWidthChange = useCallback((w: number) => {
     const delta = w - prevSidebarWidth.current;
@@ -393,6 +394,11 @@ export function App() {
     setSelNode(null);
   }, [setPanel, setSelNode]);
 
+  const onAddDataset = useCallback(() => {
+    setPanel({ type: "source", id: null, sourceType: "dataset" });
+    setSelNode(null);
+  }, [setPanel, setSelNode]);
+
   const onClear = useCallback(async () => {
     await clearAll().catch(() => {});
     dispatch({ type: "CLEAR" });
@@ -416,10 +422,6 @@ export function App() {
       : null;
   const t = getTheme(dark);
   const hasNodes = agents.length > 0 || sources.length > 0;
-
-  if (view === "history") {
-    return <HistoryPage onBack={() => setView("canvas")} />;
-  }
 
   return (
     <div
@@ -515,12 +517,13 @@ export function App() {
           onToggleTheme={toggleTheme}
           onAddAgent={onAddAgent}
           onAddFile={onAddFile}
+          onAddDataset={onAddDataset}
           onClear={onClear}
           onStop={stopSim}
           onAutoLayout={onAutoLayout}
           onExport={exportCanvas}
           onImport={importCanvas}
-          onOpenHistory={() => setView("history")}
+          onOpenHistory={() => setShowHistory(true)}
           showTweaks={showTweaks}
           onToggleTweaks={onToggleTweaks}
           showBiddingBoardToggle={consensusMode === "bidding"}
@@ -558,6 +561,7 @@ export function App() {
           onToggleRule={toggleRule}
           consensusMode={consensusMode}
           onConsensusModeChange={setConsensusMode}
+          consensusLocked={agents.length < 2}
           topology={topology}
           onTopologyChange={setTopology}
           fanout={fanout}
@@ -572,6 +576,8 @@ export function App() {
           key={panel.id ?? "new-agent"}
           agent={panelAgent}
           agents={agents}
+          sources={sources}
+          edges={edges}
           onSave={async (data) => {
             await saveAgent(data);
             setPanel(null);
@@ -589,6 +595,7 @@ export function App() {
         <SourcePanel
           key={panel.id ?? "new-source"}
           source={panelSource}
+          initialType={panel.sourceType}
           onSave={(data) => {
             saveSource(data);
             setPanel(null);
@@ -624,6 +631,40 @@ export function App() {
           {importError}
         </div>
       )}
+
+      {showHistory &&
+        createPortal(
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 300,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              backdropFilter: "blur(4px)",
+              background: dark ? "rgba(6,5,12,0.65)" : "rgba(240,238,248,0.65)",
+            }}
+            onClick={() => setShowHistory(false)}
+          >
+            <div
+              style={{
+                width: "min(1100px, 92vw)",
+                height: "min(820px, 88vh)",
+                borderRadius: 16,
+                overflow: "hidden",
+                boxShadow: dark
+                  ? "0 24px 72px rgba(0,0,0,0.65)"
+                  : "0 16px 48px rgba(0,0,0,0.18)",
+                border: `1px solid ${t.borderHi}`,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <HistoryPage onBack={() => setShowHistory(false)} />
+            </div>
+          </div>,
+          document.body,
+        )}
 
       {ctx && (
         <ContextMenu

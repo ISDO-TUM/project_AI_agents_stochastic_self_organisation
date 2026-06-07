@@ -448,29 +448,12 @@ export function Canvas({
           }}
         >
           <div style={{ animation: "emptyFloat 4s ease-in-out infinite" }}>
-            <svg width="84" height="84" viewBox="0 0 84 84" fill="none">
-              <polygon
-                points="42,6 76,24 76,60 42,78 8,60 8,24"
-                fill="none"
-                stroke={accent}
-                strokeWidth="1.5"
-                opacity={0.7}
-              />
-              <polygon
-                points="42,18 64,29 64,55 42,66 20,55 20,29"
-                fill="none"
-                stroke={accent}
-                strokeWidth="1"
-                opacity={0.4}
-              />
-              <polygon
-                points="42,30 53,36 53,48 42,54 31,48 31,36"
-                fill={accent}
-                opacity={0.15}
-              />
-              <circle cx="42" cy="42" r="5" fill={accent} opacity={0.7} />
-              <circle cx="42" cy="42" r="2.5" fill={accent} />
-            </svg>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={dark ? "/logo_dark.png" : "/logo_light.png"}
+              alt="Stochastic Agents"
+              style={{ height: 160, width: "auto" }}
+            />
           </div>
           <div
             style={{
