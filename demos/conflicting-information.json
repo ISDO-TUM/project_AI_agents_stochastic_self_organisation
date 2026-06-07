@@ -1,54 +1,54 @@
 {
   "agents": [
     {
-      "id": "18a93e82-0550-4a4d-b9ff-0209b8e274cb",
-      "name": "1",
-      "description": "",
-      "systemPrompt": "",
-      "provider": "openai",
-      "model": "gpt-4o-mini",
-      "tools": ["files"],
-      "connections": [
-        "c418c7bd-61fd-4274-ad1c-c1e521f7ad51",
-        "c02ea75f-c8fa-40ca-bda3-ed2bb1de4f69"
-      ],
-      "position": {
-        "x": 552.8372177257722,
-        "y": 176.81071724245507
-      }
-    },
-    {
       "id": "c418c7bd-61fd-4274-ad1c-c1e521f7ad51",
-      "name": "2",
+      "name": "Agent Bob",
       "description": "",
       "systemPrompt": "",
-      "provider": "openai",
-      "model": "gpt-4o-mini",
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5-20251001",
       "tools": ["files"],
       "connections": [
         "18a93e82-0550-4a4d-b9ff-0209b8e274cb",
         "c02ea75f-c8fa-40ca-bda3-ed2bb1de4f69"
       ],
       "position": {
-        "x": 452.48808886003485,
-        "y": 362.9226031633949
+        "x": 180,
+        "y": 160
+      }
+    },
+    {
+      "id": "18a93e82-0550-4a4d-b9ff-0209b8e274cb",
+      "name": "Agent Alice",
+      "description": "",
+      "systemPrompt": "",
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5-20251001",
+      "tools": ["files"],
+      "connections": [
+        "c418c7bd-61fd-4274-ad1c-c1e521f7ad51",
+        "c02ea75f-c8fa-40ca-bda3-ed2bb1de4f69"
+      ],
+      "position": {
+        "x": 385,
+        "y": 252
       }
     },
     {
       "id": "c02ea75f-c8fa-40ca-bda3-ed2bb1de4f69",
-      "name": "3",
+      "name": "Agent Charlie",
       "description": "",
       "systemPrompt": "",
-      "provider": "openai",
-      "model": "gpt-4o-mini",
+      "provider": "anthropic",
+      "model": "claude-haiku-4-5-20251001",
       "tools": ["files"],
       "connections": [
-        "c418c7bd-61fd-4274-ad1c-c1e521f7ad51",
-        "18a93e82-0550-4a4d-b9ff-0209b8e274cb"
+        "18a93e82-0550-4a4d-b9ff-0209b8e274cb",
+        "c418c7bd-61fd-4274-ad1c-c1e521f7ad51"
       ],
       "position": {
-        "x": 655.9571100316573,
-        "y": 360.95278543301765
+        "x": 620,
+        "y": 160
       }
     }
   ],
@@ -59,8 +59,8 @@
       "type": "text",
       "content": "Date: 2023-04-10\n\nNexora Technologies — Internal Fact Sheet\n\nHeadquarters: Austin, Texas\nCEO: Margaret Hollis (appointed 2019)\nAnnual Revenue: $42 million (FY2022)\nEmployees: 310\nCore Product: NexoCloud — an enterprise data pipeline platform\nStrategic Focus: European market expansion\nFunding Stage: Series B, $18 million raised",
       "position": {
-        "x": 326.2809907717693,
-        "y": 175.7540819157383
+        "x": 596,
+        "y": 371
       }
     },
     {
@@ -69,56 +69,57 @@
       "type": "text",
       "content": "Date: 2024-09-01\n\nNexora Technologies — Internal Fact Sheet\n\nHeadquarters: Austin, Texas\nCEO: Daniel Park (appointed September 2024)\nAnnual Revenue: $67 million (FY2024)\nEmployees: 480\nCore Product: NexoCloud — an enterprise data pipeline platform\nStrategic Focus: Asia-Pacific expansion and AI-native features\nFunding Stage: Series C, $55 million raised",
       "position": {
-        "x": 651.7342496659364,
-        "y": 543.5900912684083
+        "x": 180,
+        "y": 393
       }
     }
   ],
   "edges": [
     {
-      "id": "a7c8d256-cb08-4595-976f-7deb4fbaefed",
-      "from": "18a93e82-0550-4a4d-b9ff-0209b8e274cb",
-      "to": "c418c7bd-61fd-4274-ad1c-c1e521f7ad51"
+      "id": "b861641b-d160-4d49-a0f1-458cdefa8c6a",
+      "from": "c418c7bd-61fd-4274-ad1c-c1e521f7ad51",
+      "to": "18a93e82-0550-4a4d-b9ff-0209b8e274cb"
     },
     {
-      "id": "461f6779-f2a6-405b-941b-473acd23b7f0",
+      "id": "10e8225a-6418-4fc0-9a6f-acb8a81e717e",
       "from": "c418c7bd-61fd-4274-ad1c-c1e521f7ad51",
       "to": "c02ea75f-c8fa-40ca-bda3-ed2bb1de4f69"
     },
     {
-      "id": "10f58ead-4916-490c-9785-01bb9c6ef2ad",
+      "id": "0baa5010-ed93-4cd2-bf04-3fe3f9e929fb",
+      "from": "18a93e82-0550-4a4d-b9ff-0209b8e274cb",
+      "to": "c418c7bd-61fd-4274-ad1c-c1e521f7ad51"
+    },
+    {
+      "id": "dc4fa06a-87f2-4806-bc80-72bc26deb255",
       "from": "18a93e82-0550-4a4d-b9ff-0209b8e274cb",
       "to": "c02ea75f-c8fa-40ca-bda3-ed2bb1de4f69"
     },
     {
-      "id": "1b2d6d2e-5594-4f6d-ace3-470fbee82bfc",
+      "id": "e56af4d0-ecdb-4f4d-8ae8-50836dde6f81",
       "from": "c02ea75f-c8fa-40ca-bda3-ed2bb1de4f69",
+      "to": "18a93e82-0550-4a4d-b9ff-0209b8e274cb"
+    },
+    {
+      "id": "84093cd0-e2d3-406e-8b28-d5294b4ad1b2",
+      "from": "c02ea75f-c8fa-40ca-bda3-ed2bb1de4f69",
+      "to": "c418c7bd-61fd-4274-ad1c-c1e521f7ad51"
+    },
+    {
+      "id": "1dca0ac7-71fb-493f-b90c-44326e6968cf",
+      "from": "c418c7bd-61fd-4274-ad1c-c1e521f7ad51",
       "to": "f6aed766-18f3-4869-b8ff-3f4f3020aac8"
     },
     {
-      "id": "09b3cafb-ba7f-4f34-95fd-0e8f44a7df7c",
-      "from": "c418c7bd-61fd-4274-ad1c-c1e521f7ad51",
-      "to": "febf0337-d00c-4c30-b20e-c6ebb5e5e354"
-    },
-    {
-      "id": "045f94c8-7012-435d-bdbe-6a429c951120",
+      "id": "6b6f105a-0b86-4e4e-abd6-b286394ef3a3",
       "from": "18a93e82-0550-4a4d-b9ff-0209b8e274cb",
       "to": "febf0337-d00c-4c30-b20e-c6ebb5e5e354"
     },
     {
-      "id": "7da5d2cb-a17d-420f-8568-7daee23ac73b",
-      "from": "c418c7bd-61fd-4274-ad1c-c1e521f7ad51",
-      "to": "18a93e82-0550-4a4d-b9ff-0209b8e274cb"
-    },
-    {
-      "id": "f95fb195-8ec7-4a24-ad67-5a060ab5f707",
+      "id": "a82c2bf9-0f0a-4f01-b165-f19e22971566",
       "from": "c02ea75f-c8fa-40ca-bda3-ed2bb1de4f69",
-      "to": "c418c7bd-61fd-4274-ad1c-c1e521f7ad51"
-    },
-    {
-      "id": "9d4b454a-010f-4f5c-a044-0946859679d3",
-      "from": "c02ea75f-c8fa-40ca-bda3-ed2bb1de4f69",
-      "to": "18a93e82-0550-4a4d-b9ff-0209b8e274cb"
+      "to": "febf0337-d00c-4c30-b20e-c6ebb5e5e354"
     }
-  ]
+  ],
+  "selectedRules": ["temporal"]
 }

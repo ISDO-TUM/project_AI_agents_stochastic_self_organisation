@@ -34,6 +34,9 @@ const IMPORTANT_SYSTEM_LABELS = new Set([
   "Converged",
   "Topology settled",
   "Trust update",
+  "Gap board",
+  "Bidding Board updated",
+  "Final answer",
 ]);
 
 const REGISTRY_TOOL_HINTS = [

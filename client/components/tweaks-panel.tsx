@@ -42,6 +42,12 @@ const CONSENSUS_OPTIONS: SegmentedOption<ConsensusMode>[] = [
     tooltip:
       "The answer with the most votes wins, even without an absolute majority.",
   },
+  {
+    value: "bidding",
+    label: "Bidding",
+    tooltip:
+      "Agents bid on the sub-tasks they can contribute to, then assemble a verified collaboration set from the winning bids.",
+  },
 ];
 
 const TOPOLOGY_OPTIONS: SegmentedOption<TopologyMode>[] = [
