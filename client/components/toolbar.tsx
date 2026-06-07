@@ -1,6 +1,12 @@
 "use client";
 
-import { useRef, useState, useCallback, useEffect } from "react";
+import {
+  useRef,
+  useState,
+  useCallback,
+  useEffect,
+  useSyncExternalStore,
+} from "react";
 import { createPortal } from "react-dom";
 import { LIcon } from "@/lib/icons";
 import { BURG, BURG_LT, getTheme } from "@/lib/theme";
@@ -372,9 +378,14 @@ function JsonPasteModal({
 }) {
   const [value, setValue] = useState("");
   const [toast, setToast] = useState<string | null>(null);
-  const [mounted, setMounted] = useState(false);
+  // createPortal needs `document`, which doesn't exist during SSR — render
+  // null on the server snapshot and the portal once mounted on the client.
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
   const preRef = useRef<HTMLPreElement>(null);
-  useEffect(() => setMounted(true), []);
 
   const tryFormat = useCallback((raw: string) => {
     try {
