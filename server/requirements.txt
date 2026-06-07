@@ -7,3 +7,4 @@ openai==2.38.0
 anthropic==0.105.2
 groq==1.4.0
 python-dotenv==1.2.2
+pandas==3.0.3
