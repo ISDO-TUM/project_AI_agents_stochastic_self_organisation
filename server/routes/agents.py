@@ -293,7 +293,7 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
 
     tool_names: list[str] = agent["tools"] or []
     files = await load_agent_files(db, agent_id)
-    system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, list(files))
+    system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, list(files), tool_names)
 
     try:
         response, tools_used = await call_agent(
@@ -302,7 +302,7 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
             model=agent["model"],
             system_prompt=system_prompt,
             tool_names=tool_names or None,
-            tool_context={"files": files},
+            tool_context={"files": files, "tables": {}},
         )
     except MissingCredentialsError as exc:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc)) from exc

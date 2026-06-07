@@ -9,6 +9,7 @@ from server.schemas import ToolCall
 from server.tools.base import Tool
 from server.tools.builtin.files import FilesTool
 from server.tools.builtin.registry import RegistryTool
+from server.tools.builtin.table import TableMutateTool, TableQueryTool
 
 # ── registry ───────────────────────────────────────────────────────
 
@@ -25,6 +26,8 @@ def get_tool(name: str) -> Tool | None:
 
 register(FilesTool())
 register(RegistryTool())
+register(TableQueryTool())
+register(TableMutateTool())
 
 # ── provider format builders ───────────────────────────────────────
 

@@ -61,6 +61,7 @@ from server.llm import call_agent
 from server.llm.embeddings import cosine_similarity, embed_texts
 from server.schemas import ToolCall
 from server.tools.builtin.registry import RegistryIndex
+from server.tools.builtin.table import TableStore
 
 ConsensusMode = Literal[
     "broadcast_no_consensus",
@@ -84,6 +85,7 @@ async def _call_agent(
     files: dict[str, str],
     ruleset: str | None = None,
     registry: RegistryIndex | None = None,
+    tables: dict[str, TableStore] | None = None,
 ) -> tuple[str, list[ToolCall]]:
     """Invoke an agent and return (response_text, tools_used).
 
@@ -104,8 +106,12 @@ async def _call_agent(
     except PromptInjectionError as exc:
         return f"[GUARDRAIL BLOCKED] {exc}", []
 
+    tool_names = list(agent["tools"] or [])
+    if registry is not None and "registry" not in tool_names:
+        tool_names.append("registry")
+
     file_names = list(files.keys())
-    raw_system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, file_names)
+    raw_system_prompt = hint_files_in_prompt(agent["system_prompt"] or None, file_names, tool_names)
 
     # Wrap with anti-hallucination guardrails
     guarded_system_prompt = build_guarded_system_prompt(raw_system_prompt)
@@ -121,17 +127,18 @@ async def _call_agent(
         f"## CURRENT DATE\n{date.today().isoformat()}\n\n{guarded_system_prompt}"
     )
 
-    tool_names = list(agent["tools"] or [])
-    if registry is not None and "registry" not in tool_names:
-        tool_names.append("registry")
-
     response, tools_used = await call_agent(
         prompt,
         provider=agent["provider"],
         model=agent["model"],
         system_prompt=guarded_system_prompt,
         tool_names=tool_names or None,
-        tool_context={"files": files, "registry": registry, "agent_id": agent["id"]},
+        tool_context={
+            "files": files,
+            "registry": registry,
+            "tables": tables if tables is not None else {},
+            "agent_id": agent["id"],
+        },
     )
     return str(response), tools_used
 
@@ -916,6 +923,12 @@ async def run_topology(
     if not agents:
         return
 
+    # Consensus is only meaningful with at least two communicating agents; a lone
+    # agent has nothing to reconcile. Skip voting/pooling entirely so no empty
+    # "no valid votes" tally is ever generated for a single-agent run.
+    if len(agents) < 2:
+        mode = "broadcast_no_consensus"
+
     files_by_agent = await load_files_by_agent(db)
     incoming = _build_incoming(agents)
     controller = TopologyController.create(topology, fanout, agents, incoming)
@@ -925,9 +938,40 @@ async def run_topology(
     if trial_id is None:
         trial_id = await create_trial(db, prompt, _trial_description(mode), mode)
 
+    # One shared table workspace per run — agents in a pipeline see each other's
+    # mutations (e.g. a predictor adds a column, a reviewer reads it) without
+    # re-loading the file.
+    shared_tables: dict[str, TableStore] = {}
+
+    # Per-agent "last version seen" for each table — lets us nudge an agent to
+    # re-read a table that a sibling mutated since this agent's previous turn,
+    # since nothing else would otherwise tell it the data moved under it.
+    table_versions_seen: dict[str, dict[str, int]] = {}
+
+    def _table_change_notes(agent_id: str) -> str:
+        seen = table_versions_seen.setdefault(agent_id, {})
+        notes: list[str] = []
+        for name, store in shared_tables.items():
+            if store.df is None:
+                continue
+            last = seen.get(name)
+            if last is not None and last != store.version:
+                notes.append(
+                    f"[Table '{name}' changed since your last turn — now at version "
+                    f"{store.version}. Re-read it with 'table_query' before relying "
+                    "on what you remember.]"
+                )
+            seen[name] = store.version
+        return ("\n\n" + "\n".join(notes)) if notes else ""
+
     async def call(agent: dict[str, Any], prompt: str) -> tuple[str, list[ToolCall]]:
         return await _call_agent(
-            agent, prompt, files_by_agent.get(agent["id"], {}), ruleset, registry=registry
+            agent,
+            prompt + _table_change_notes(agent["id"]),
+            files_by_agent.get(agent["id"], {}),
+            ruleset,
+            registry=registry,
+            tables=shared_tables,
         )
 
     if mode == "weighted_opinion_pooling":

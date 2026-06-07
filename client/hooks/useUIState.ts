@@ -1,10 +1,13 @@
 "use client";
 
 import { useState } from "react";
+import { SourceType } from "@/lib/types";
 
 interface PanelState {
   type: "agent" | "source";
   id: string | null;
+  // For a new source (id === null): which source type to pre-select.
+  sourceType?: SourceType;
 }
 
 interface CtxState {
