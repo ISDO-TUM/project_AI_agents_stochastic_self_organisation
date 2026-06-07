@@ -42,7 +42,7 @@ _RULES: list[Rule] = [
             "Combine your evidence with other agents' evidence to propose a better answer, "
             "especially when pieces from multiple sources resolve a conflict."
         ),
-        default=True,
+        default=False,
     ),
     Rule(
         id="propose_partial",
@@ -51,7 +51,16 @@ _RULES: list[Rule] = [
             "If your information is incomplete, share a partial finding so other agents can "
             "build on it and refine the final answer."
         ),
-        default=True,
+        default=False,
+    ),
+    Rule(
+        id="concise_answers",
+        label="Provide Concise Answers",
+        instruction=(
+            "When responding to questions, aim to be as concise as possible while still "
+            "providing all necessary information."
+        ),
+        default=False,
     ),
 ]
 

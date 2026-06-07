@@ -9,7 +9,8 @@ export type SimStepType =
 export type ConsensusMode =
   | "broadcast_no_consensus"
   | "weighted_opinion_pooling"
-  | "plurality_voting";
+  | "plurality_voting"
+  | "bidding";
 
 export type TopologyMode = "static" | "dynamic";
 
@@ -56,6 +57,9 @@ export interface SimStep {
   label: string;
   msg: string;
   type: SimStepType;
+  /** Raw server-side message_type (e.g. "bidding_bid"). Used by views that
+   *  need to parse the message body (bidding board) rather than render a label. */
+  messageType?: string;
   roundIndex?: number;
   target?: string;
   nodeId?: string;

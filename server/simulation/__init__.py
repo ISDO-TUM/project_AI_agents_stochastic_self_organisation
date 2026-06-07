@@ -66,6 +66,7 @@ ConsensusMode = Literal[
     "broadcast_no_consensus",
     "weighted_opinion_pooling",
     "plurality_voting",
+    "bidding",
 ]
 
 # Callable type for the bound agent-call closure passed into runner functions.
@@ -937,6 +938,19 @@ async def run_topology(
     if mode == "plurality_voting":
         await _run_voting(prompt, agents, controller, call, db, rounds, agent_context, trial_id)
         return
+    if mode == "bidding":
+        await _run_bidding(
+            prompt,
+            agents,
+            incoming,
+            call,
+            db,
+            rounds,
+            agent_context,
+            trial_id,
+            files_by_agent,
+        )
+        return
     await _run_broadcast_no_consensus(
         prompt, agents, controller, call, db, rounds, agent_context, trial_id
     )
@@ -1658,3 +1672,1078 @@ async def _run_voting(
             )
             await _persist_system_self_message(db, round_id, "topology_converged", note)
             break
+
+
+# ── mode 4: bidding ───────────────────────────────────────────────────────────
+
+_BIDDING_INSTRUCTION = (
+    "\n\n## BIDDING TASK\n"
+    "You are participating in a bidding consensus. Before any work begins, "
+    "you must produce *verifiable* evidence that you can contribute to the "
+    "task above.\n\n"
+    "REQUIRED steps:\n"
+    "1. If you have a `files` tool, call it with action='list' to see your "
+    "attached knowledge files.\n"
+    "2. For EVERY file you intend to cite under `relevant_files`, you MUST "
+    "first call `files` with action='read' to inspect its contents. "
+    "Citations to files you have not actually read this turn will be "
+    "REJECTED and stripped by the system.\n"
+    "3. Respond with ONLY a single JSON object (no prose, no markdown "
+    "fences) matching this schema exactly:\n\n"
+    "{\n"
+    '  "estimated_completeness": "full" | "partial" | "none",\n'
+    '  "evidence": {\n'
+    '    "relevant_tools": [<names of YOUR available tools that help>],\n'
+    '    "relevant_files": [\n'
+    "      {\n"
+    '        "file_name": "<exact name of a file you actually read>",\n'
+    '        "file_type": "<e.g. csv, md, txt>",\n'
+    '        "relevance": "<one sentence: what in the file supports the task>"\n'
+    "      }\n"
+    "    ]\n"
+    "  },\n"
+    '  "gaps": [\n'
+    "    {\n"
+    '      "reason": "<what is missing for full completion>",\n'
+    '      "expects": "<what information or other agent would close this gap>"\n'
+    "    }\n"
+    "  ],\n"
+    '  "contribution": [\n'
+    "    {\n"
+    '      "data": "<information or tools you have that is relevant for the task>",\n'
+    '      "citation": "<the source backing this statement: file name plus '
+    "the file's date if present'>\"\n"
+    "    }\n"
+    "  ]\n"
+    "}\n\n"
+    "Rules:\n"
+    "- Cite only tools you have been granted; fabricated tool names will "
+    "be removed.\n"
+    "- Cite only files you actually read this turn; the system verifies "
+    "every file citation against your tool-call log.\n"
+    "- `evidence.relevant_files[*].relevance` should quote or paraphrase "
+    "the specific line(s) from the file that support your contribution — "
+    "vague descriptions like 'discusses the company' are weak signals.\n"
+    '- Use "none" for `estimated_completeness` if nothing in your evidence '
+    "applies to the task; in that case set `contribution` to an empty array.\n"
+)
+
+_BIDDING_MATCHING_INSTRUCTION = (
+    "\n\n## GAP MATCHING\n"
+    "The BLACKBOARD below lists gaps posted by OTHER agents. YOUR FINDINGS "
+    "below are your own bid findings, each with a stable id (F0, F1, …).\n\n"
+    "Go through every gap. Add one entry to `gap_coverage` for each gap you "
+    "can help answer, and omit the gaps you cannot. Two ways to contribute, "
+    "usable together:\n"
+    "- `reuses_finding`: ids of YOUR FINDINGS that already answer the gap "
+    '(e.g. ["F0"]); the system links them, so you need not retype the data.\n'
+    "- `contribution`: NEW facts you find by reading a file this turn, each "
+    "with a citation.\n"
+    "Partial or complementary information still counts — contribute it.\n\n"
+    "Rules:\n"
+    "- Cite only tools you were granted.\n"
+    "- Every NEW contribution must come from a file you actually read this "
+    "turn (`files` action='read'); un-read citations are rejected.\n"
+    "- `reuses_finding` ids must appear in YOUR FINDINGS.\n\n"
+    "Respond with ONLY this JSON (no prose, no fences). If you can help with "
+    'no gap, return `{"gap_coverage": []}`:\n\n'
+    "{\n"
+    '  "gap_coverage": [\n'
+    "    {\n"
+    '      "gap_id": "<exact gap_id from the blackboard>",\n'
+    '      "can_contribute": true,\n'
+    '      "reuses_finding": ["F0"],\n'
+    '      "evidence": {\n'
+    '        "relevant_tools": [...],\n'
+    '        "relevant_files": [\n'
+    '          {"file_name": "...", "file_type": "...", "relevance": "..."}\n'
+    "        ]\n"
+    "      },\n"
+    '      "contribution": [\n'
+    '        {"data": "<a new fact answering this gap>",\n'
+    '         "citation": "<file name + date, e.g. '
+    'nexora_overview_2024 (2024-09-01)>"}\n'
+    "      ],\n"
+    '      "rationale": "<one sentence: why this fills the gap>"\n'
+    "    }\n"
+    "  ]\n"
+    "}\n\n"
+    "Each entry must set `can_contribute: true` and carry a non-empty "
+    "`reuses_finding` OR `contribution` (or both).\n\n"
+)
+
+
+def _extract_bid_json(text: str) -> dict[str, Any] | None:
+    """Parse the agent's bidding response into a dict. Tolerates ``` fences."""
+    s = text.strip()
+    fence_match = re.match(r"^```(?:json|JSON)?\s*\n?(.*?)\n?```\s*$", s, re.DOTALL)
+    if fence_match:
+        s = fence_match.group(1).strip()
+    try:
+        parsed = json.loads(s)
+        return parsed if isinstance(parsed, dict) else None
+    except json.JSONDecodeError:
+        pass
+    # Fallback: find the first balanced {...} object in the text
+    depth = 0
+    start = -1
+    for i, c in enumerate(s):
+        if c == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif c == "}" and depth > 0:
+            depth -= 1
+            if depth == 0 and start >= 0:
+                try:
+                    obj = json.loads(s[start : i + 1])
+                    return obj if isinstance(obj, dict) else None
+                except json.JSONDecodeError:
+                    start = -1
+    return None
+
+
+def _validate_evidence_block(
+    raw_evidence: Any,
+    available_tools: set[str],
+    available_files: set[str],
+    files_actually_read: set[str],
+    tools_actually_used: set[str],
+) -> tuple[dict[str, Any], dict[str, list[Any]]]:
+    """Strip fabricated tool/file citations from a single evidence block.
+
+    Two unfakeable checks:
+    - A cited tool is accepted only when it was granted to the agent AND was
+      actually invoked during this turn (proven by the tool-call log). The
+      LLM cannot fabricate a tool-call record.
+    - A cited file is accepted only when it is attached to the agent AND the
+      agent invoked ``files.read`` on it this turn — so the bid is grounded
+      in the file's real contents, not in a name the LLM saw in the prompt.
+    """
+    rejections: dict[str, list[Any]] = {"tools": [], "files": []}
+    evidence = raw_evidence if isinstance(raw_evidence, dict) else {}
+
+    raw_tools = evidence.get("relevant_tools") or []
+    valid_tools: list[str] = []
+    if isinstance(raw_tools, list):
+        for t in raw_tools:
+            if not isinstance(t, str):
+                rejections["tools"].append({"tool": t, "reason": "not a string"})
+                continue
+            # Strip provider-side display prefixes (e.g. Gemini's "functions.")
+            # so the model can echo back whichever form it saw in its schema.
+            normalised = t.split(".", 1)[1] if t.startswith("functions.") else t
+            if normalised not in available_tools:
+                rejections["tools"].append({"tool": t, "reason": "tool not granted to agent"})
+                continue
+            if normalised not in tools_actually_used:
+                rejections["tools"].append({"tool": t, "reason": "tool was not invoked this turn"})
+                continue
+            valid_tools.append(normalised)
+
+    raw_files = evidence.get("relevant_files") or []
+    valid_files: list[dict[str, Any]] = []
+    if isinstance(raw_files, list):
+        for f in raw_files:
+            if not isinstance(f, dict):
+                rejections["files"].append({"value": f, "reason": "not an object"})
+                continue
+            name = f.get("file_name")
+            if not isinstance(name, str) or not name:
+                rejections["files"].append({"file_name": name, "reason": "missing file_name"})
+                continue
+            if name not in available_files:
+                rejections["files"].append(
+                    {"file_name": name, "reason": "file not attached to agent"}
+                )
+                continue
+            if name not in files_actually_read:
+                rejections["files"].append(
+                    {"file_name": name, "reason": "file was not read via files.read this turn"}
+                )
+                continue
+            valid_files.append(f)
+
+    return {"relevant_tools": valid_tools, "relevant_files": valid_files}, rejections
+
+
+def _has_evidence(bid: dict[str, Any]) -> bool:
+    """True iff the (validated) bid contains any tool or file evidence."""
+    ev = bid.get("evidence")
+    if not isinstance(ev, dict):
+        return False
+    return bool(ev.get("relevant_tools") or ev.get("relevant_files"))
+
+
+def _normalise_contribution(raw: Any) -> list[dict[str, str]]:
+    """Coerce the LLM's `contribution` field to a list of ``{data, citation}``.
+
+    Accepts:
+    - a list of dicts → kept, with empty data entries dropped
+    - a single string (legacy bids) → wrapped as one entry with no citation
+    - anything else → empty list
+    """
+    if isinstance(raw, list):
+        out: list[dict[str, str]] = []
+        for item in raw:
+            if not isinstance(item, dict):
+                continue
+            data = item.get("data")
+            data_str = data.strip() if isinstance(data, str) else ""
+            if not data_str:
+                continue
+            citation = item.get("citation")
+            citation_str = citation.strip() if isinstance(citation, str) else ""
+            out.append({"data": data_str, "citation": citation_str})
+        return out
+    if isinstance(raw, str) and raw.strip():
+        return [{"data": raw.strip(), "citation": ""}]
+    return []
+
+
+def _validate_bid(
+    raw_bid: dict[str, Any],
+    available_tools: list[str],
+    available_files: set[str],
+    files_actually_read: set[str],
+    tools_actually_used: set[str],
+) -> tuple[dict[str, Any], dict[str, list[Any]]]:
+    """Strip fabricated citations and return (validated_bid, rejections).
+
+    Without any validated evidence the agent cannot contribute, so its gaps
+    are dropped — it cannot post unmet needs to the blackboard if it has
+    nothing to offer in return.
+    """
+    valid_evidence, rejections = _validate_evidence_block(
+        raw_bid.get("evidence"),
+        set(available_tools or []),
+        available_files,
+        files_actually_read,
+        tools_actually_used,
+    )
+    contribution = _normalise_contribution(raw_bid.get("contribution"))
+    validated = {
+        "estimated_completeness": raw_bid.get("estimated_completeness"),
+        "evidence": valid_evidence,
+        "gaps": raw_bid.get("gaps") or [],
+        "contribution": contribution,
+    }
+    # An agent that has cited evidence but produced no actionable contribution
+    # is treated as non-participating — same as if it had no evidence at all.
+    if not _has_evidence(validated) or not contribution:
+        validated["gaps"] = []
+        validated["contribution"] = []
+        validated["yielded"] = True
+    return validated, rejections
+
+
+def _validate_coverage(
+    raw_response: dict[str, Any],
+    available_tools: list[str],
+    available_files: set[str],
+    files_actually_read: set[str],
+    tools_actually_used: set[str],
+    known_gap_ids: set[str],
+    known_finding_ids: set[str],
+) -> tuple[list[dict[str, Any]], dict[str, list[Any]]]:
+    """Validate an agent's round-2 ``gap_coverage`` claims.
+
+    Same unfakeable evidence checks as :func:`_validate_bid`, plus a gap-id
+    existence check against the blackboard the agent was actually shown and a
+    finding-id existence check on any ``reuses_finding`` references (which must
+    name one of the agent's own bid findings, F0/F1/…).
+    """
+    tools_set = set(available_tools or [])
+    rejections: dict[str, list[Any]] = {
+        "unknown_gap_ids": [],
+        "unknown_finding_ids": [],
+        "tools": [],
+        "files": [],
+    }
+    valid_entries: list[dict[str, Any]] = []
+
+    raw_entries = raw_response.get("gap_coverage")
+    if not isinstance(raw_entries, list):
+        return [], rejections
+
+    seen_gap_ids: set[str] = set()
+    for entry in raw_entries:
+        if not isinstance(entry, dict):
+            continue
+        gap_id = entry.get("gap_id")
+        if not isinstance(gap_id, str) or gap_id not in known_gap_ids:
+            rejections["unknown_gap_ids"].append(gap_id)
+            continue
+        if gap_id in seen_gap_ids:
+            continue
+        seen_gap_ids.add(gap_id)
+
+        # Accept `can_contribute` (current) or `can_cover` (legacy) as the
+        # affirmative flag.
+        can_contribute = bool(entry.get("can_contribute", entry.get("can_cover")))
+        if not can_contribute:
+            valid_entries.append({"gap_id": gap_id, "can_contribute": False})
+            continue
+
+        valid_ev, ev_rej = _validate_evidence_block(
+            entry.get("evidence"),
+            tools_set,
+            available_files,
+            files_actually_read,
+            tools_actually_used,
+        )
+        rejections["tools"].extend(ev_rej["tools"])
+        rejections["files"].extend(ev_rej["files"])
+
+        # Validate reuses_finding references against the agent's own findings.
+        raw_reuses = entry.get("reuses_finding")
+        reuse_candidates: list[str] = []
+        if isinstance(raw_reuses, str) and raw_reuses.strip():
+            reuse_candidates = [raw_reuses.strip()]
+        elif isinstance(raw_reuses, list):
+            reuse_candidates = [r.strip() for r in raw_reuses if isinstance(r, str) and r.strip()]
+        valid_reuses: list[str] = []
+        for r in reuse_candidates:
+            if r in known_finding_ids:
+                valid_reuses.append(r)
+            else:
+                rejections["unknown_finding_ids"].append(r)
+
+        contribution = _normalise_contribution(entry.get("contribution"))
+        if not contribution and not valid_reuses:
+            # Claimed to contribute but added no new data and reused nothing
+            # real — downgrade.
+            valid_entries.append({"gap_id": gap_id, "can_contribute": False})
+            continue
+        valid_entries.append(
+            {
+                "gap_id": gap_id,
+                "can_contribute": True,
+                "reuses_finding": valid_reuses,
+                "evidence": valid_ev,
+                "contribution": contribution,
+                "rationale": entry.get("rationale"),
+            }
+        )
+    return valid_entries, rejections
+
+
+def _build_gap_blackboard(
+    bids: dict[str, dict[str, Any]],
+    agents: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Flatten validated bids into a blackboard list with stable gap ids."""
+    name_by_id = {str(a["id"]): a.get("name") or str(a["id"]) for a in agents}
+    blackboard: list[dict[str, Any]] = []
+    for agent_id, bid in bids.items():
+        gaps = bid.get("gaps") or []
+        if not isinstance(gaps, list):
+            continue
+        for idx, gap in enumerate(gaps):
+            blackboard.append(
+                {
+                    "gap_id": f"{agent_id}/g{idx}",
+                    "agent_id": agent_id,
+                    "agent_name": name_by_id.get(agent_id, agent_id),
+                    "gap": gap,
+                }
+            )
+    return blackboard
+
+
+def _format_blackboard(entries: list[dict[str, Any]]) -> str:
+    """Render blackboard entries as text for an agent prompt."""
+    if not entries:
+        return "(no gaps to match)"
+    lines: list[str] = []
+    for e in entries:
+        gap = e.get("gap") or {}
+        if isinstance(gap, dict):
+            lines.append(
+                f"- gap_id: {e['gap_id']}\n"
+                f"  posted_by: {e['agent_name']}\n"
+                f"  reason: {gap.get('reason', '')}\n"
+                f"  expects: {gap.get('expects', '')}"
+            )
+        else:
+            lines.append(f"- gap_id: {e['gap_id']}\n  posted_by: {e['agent_name']}\n  gap: {gap}")
+    return "\n".join(lines)
+
+
+def _format_own_findings(contribution: list[dict[str, Any]]) -> str:
+    """Render the agent's own validated bid findings with stable F-ids."""
+    if not contribution:
+        return "(you declared no findings in your bid)"
+    lines: list[str] = []
+    for i, item in enumerate(contribution):
+        if not isinstance(item, dict):
+            continue
+        data = str(item.get("data") or "").strip()
+        if not data:
+            continue
+        cite = str(item.get("citation") or "").strip() or "unspecified"
+        lines.append(f"- F{i}: {data}  [source: {cite}]")
+    return "\n".join(lines) or "(you declared no findings in your bid)"
+
+
+_FINDING_ID_RE = re.compile(r"^F(\d+)$")
+
+
+def _finding_index(fid: str) -> int | None:
+    """Parse a finding id like ``F3`` into its integer index, or None."""
+    m = _FINDING_ID_RE.match(fid.strip()) if isinstance(fid, str) else None
+    return int(m.group(1)) if m else None
+
+
+def _select_collaborators(
+    bids: dict[str, dict[str, Any]],
+    coverage: dict[str, list[dict[str, Any]]],
+    blackboard: list[dict[str, Any]],
+    agents: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    """Pick the collaboration set and list any uncovered gaps.
+
+    An agent is selected iff it produced an actual *contribution* — a direct
+    finding in its round-1 bid OR added data on a gap during round-2 matching.
+    Agents that only cited evidence but yielded without an actionable
+    contribution are excluded, so only agents with something to say take part
+    in answer generation. Order is the agents-table order for determinism.
+    Each collaborator is returned as ``{id, name, contribution, covers}`` where
+    each cover entry includes the ``added_data`` the agent posted to that gap.
+    """
+    collaborator_ids: set[str] = set()
+
+    for agent_id, bid in bids.items():
+        if bid.get("contribution"):
+            collaborator_ids.add(agent_id)
+
+    for covers in coverage.values():
+        for entry in covers:
+            if entry.get("contribution"):
+                collaborator_ids.add(str(entry.get("agent_id") or ""))
+
+    gap_lookup = {e["gap_id"]: e for e in blackboard}
+
+    uncovered: list[dict[str, Any]] = []
+    covers_by_agent: dict[str, list[dict[str, Any]]] = {}
+    for gid, entries in coverage.items():
+        gap_entry = gap_lookup.get(gid)
+        any_valid_cover = False
+        for entry in entries:
+            if not entry.get("contribution"):
+                continue
+            any_valid_cover = True
+            aid = str(entry.get("agent_id") or "")
+            covers_by_agent.setdefault(aid, []).append(
+                {
+                    "gap_id": gid,
+                    "posted_by": gap_entry["agent_name"] if gap_entry else None,
+                    "gap": gap_entry["gap"] if gap_entry else None,
+                    "added_data": entry.get("contribution") or [],
+                }
+            )
+        if gap_entry is not None and not any_valid_cover:
+            uncovered.append(
+                {
+                    "gap_id": gid,
+                    "posted_by": gap_entry["agent_name"],
+                    "gap": gap_entry["gap"],
+                }
+            )
+
+    # Gaps that had no coverage attempts at all are also uncovered.
+    for entry in blackboard:
+        gid = entry["gap_id"]
+        if gid in coverage:
+            continue
+        uncovered.append({"gap_id": gid, "posted_by": entry["agent_name"], "gap": entry["gap"]})
+
+    ordered = [
+        {
+            "id": str(a["id"]),
+            "name": str(a.get("name") or a["id"]),
+            "contribution": (bids.get(str(a["id"])) or {}).get("contribution") or [],
+            "covers": covers_by_agent.get(str(a["id"]), []),
+        }
+        for a in agents
+        if str(a["id"]) in collaborator_ids
+    ]
+    return ordered, uncovered
+
+
+def _format_findings(
+    collaborators: list[dict[str, Any]],
+    bids: dict[str, dict[str, Any]],
+    coverage: dict[str, list[dict[str, Any]]] | None = None,
+    blackboard: list[dict[str, Any]] | None = None,
+) -> str:
+    """Render every collaborator's contribution entries with their citations.
+
+    When ``coverage`` and ``blackboard`` are provided, also render a "Gap
+    board" section showing each gap (posted by whom, what was expected) and
+    the data each contributing agent added to it.
+    """
+    lines: list[str] = ["### Direct findings (from bidding):"]
+    has_direct = False
+    for c in collaborators:
+        cid = str(c.get("id", ""))
+        bid = bids.get(cid) or {}
+        if bid.get("yielded"):
+            continue
+        contribution = bid.get("contribution") or []
+        if not isinstance(contribution, list) or not contribution:
+            continue
+        has_direct = True
+        name = c.get("name") or cid
+        lines.append(f"- {name}:")
+        for item in contribution:
+            if not isinstance(item, dict):
+                continue
+            data = str(item.get("data") or "").strip()
+            citation = str(item.get("citation") or "").strip()
+            if not data:
+                continue
+            cite_str = citation or "unspecified"
+            lines.append(f"    - {data}  [source: {cite_str}]")
+    if not has_direct:
+        lines.append("(none declared)")
+
+    if blackboard:
+        name_by_id = {str(c.get("id")): c.get("name") or str(c.get("id")) for c in collaborators}
+        gap_lookup = {e["gap_id"]: e for e in blackboard}
+        coverage = coverage or {}
+
+        lines.append("")
+        lines.append("### Gap board (data added during matching):")
+        any_filled = False
+        for gid, entries in coverage.items():
+            gap_entry = gap_lookup.get(gid)
+            if gap_entry is None:
+                continue
+            valid_items: list[tuple[str, list[dict[str, Any]]]] = []
+            for entry in entries:
+                ev = entry.get("evidence") or {}
+                if not (ev.get("relevant_tools") or ev.get("relevant_files")):
+                    continue
+                aid = str(entry.get("agent_id") or "")
+                contrib = entry.get("contribution") or []
+                if isinstance(contrib, list) and contrib:
+                    valid_items.append((name_by_id.get(aid, aid), contrib))
+            if not valid_items:
+                continue
+            any_filled = True
+            gap_dict = gap_entry["gap"] if isinstance(gap_entry["gap"], dict) else {}
+            gap_summary = str(gap_dict.get("reason") or gap_dict.get("expects") or gid)
+            lines.append(f"- Gap from {gap_entry['agent_name']} ({gap_summary}):")
+            for ag_name, contrib in valid_items:
+                for item in contrib:
+                    if not isinstance(item, dict):
+                        continue
+                    data = str(item.get("data") or "").strip()
+                    citation = str(item.get("citation") or "").strip()
+                    if not data:
+                        continue
+                    cite_str = citation or "unspecified"
+                    lines.append(f"    - {ag_name}: {data}  [source: {cite_str}]")
+        if not any_filled:
+            lines.append("(no gap-coverage data added)")
+
+        uncovered_summary = [
+            e
+            for e in blackboard
+            if e["gap_id"] not in coverage
+            or not any(
+                (c.get("evidence") or {}).get("relevant_tools")
+                or (c.get("evidence") or {}).get("relevant_files")
+                for c in coverage[e["gap_id"]]
+            )
+        ]
+        if uncovered_summary:
+            lines.append("")
+            lines.append("### Uncovered gaps (no agent supplied data):")
+            for e in uncovered_summary:
+                gap_dict = e["gap"] if isinstance(e["gap"], dict) else {}
+                summary = str(gap_dict.get("reason") or gap_dict.get("expects") or e["gap_id"])
+                lines.append(f"- from {e['agent_name']}: {summary}")
+
+    return "\n".join(lines)
+
+
+async def _answer_consensus(
+    answers: dict[str, str],
+) -> tuple[float, str | None]:
+    """Measure how strongly a set of agent answers agree.
+
+    Returns ``(mean_pairwise_similarity, medoid_agent_id)``:
+
+    - ``mean_pairwise_similarity`` — the average similarity over every unique
+      pair of answers, in ``[0, 1]``. This is the convergence signal.
+    - ``medoid_agent_id`` — the agent whose answer is, on average, most similar
+      to all the others: the single best representative of the group.
+
+    Similarity is semantic (OpenAI embeddings + cosine), falling back to
+    entity-aware Jaccard when the embedding backend is unavailable. Fewer than
+    two non-empty answers is trivially converged (similarity ``1.0``).
+    """
+    items = [(aid, text) for aid, text in answers.items() if text and text.strip()]
+    if not items:
+        return 1.0, None
+    if len(items) == 1:
+        return 1.0, items[0][0]
+
+    ids = [aid for aid, _ in items]
+    texts = [text for _, text in items]
+    n = len(items)
+
+    vectors = await embed_texts(texts)
+    if vectors is None or len(vectors) != n:
+        vectors = None  # embedding backend unavailable — use lexical fallback
+
+    summed = [0.0] * n
+    total = 0.0
+    pairs = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            sim = (
+                cosine_similarity(vectors[i], vectors[j])
+                if vectors is not None
+                else _entity_aware_similarity(texts[i], texts[j])
+            )
+            total += sim
+            pairs += 1
+            summed[i] += sim
+            summed[j] += sim
+
+    mean = total / pairs if pairs else 1.0
+    medoid = max(range(n), key=lambda i: summed[i])
+    return max(0.0, min(1.0, mean)), ids[medoid]
+
+
+async def _run_parallel_consensus(
+    prompt: str,
+    collaborators: list[dict[str, Any]],
+    agents_by_id: dict[str, dict[str, Any]],
+    bids: dict[str, dict[str, Any]],
+    coverage: dict[str, list[dict[str, Any]]],
+    blackboard: list[dict[str, Any]],
+    call: _AgentCall,
+    db: AsyncConnection,
+    trial_id: str,
+    round_index: int,
+    agent_context: dict[str, str] | None,
+    convergence_threshold: float = 0.85,
+    max_rounds: int = 5,
+) -> str | None:
+    """Parallel convergence on a shared answer.
+
+    Round 1 — every collaborator drafts an answer independently from the
+    bidding board (in parallel). The system then measures the semantic
+    similarity across those answers (mean pairwise cosine over embeddings).
+    If they already agree closely enough (``>= convergence_threshold``) the
+    consensus is reached. Otherwise every agent reads ALL the other agents'
+    answers and redrafts, and the loop repeats. It terminates on convergence
+    or after ``max_rounds`` (safety cap), returning the medoid — the answer
+    most representative of the group.
+    """
+    if not collaborators:
+        return None
+
+    valid = [c for c in collaborators if str(c["id"]) in agents_by_id]
+    if not valid:
+        return None
+
+    round_id = int(await create_round(db, trial_id, round_index, "bidding_collaboration"))
+    findings_block = _format_findings(collaborators, bids, coverage, blackboard)
+    findings_prelude = (
+        "\n\n## THE BIDDING BOARD\n"
+        "Below is the bidding board. It contains ALL existing information "
+        "gathered during the bidding phase that provides value to the user's "
+        "question. Every citation below has been independently verified by the "
+        "system: the cited file exists, was attached to the cited agent, and "
+        "was actually read by that agent during the bidding phase. Treat each "
+        "cited finding as an ESTABLISHED FACT — you do NOT need to "
+        'disclaim "I don\'t have access to that file" or hedge with '
+        '"reportedly" / "according to other agents". The findings are part '
+        "of the shared knowledge of this collaboration; cite them the same "
+        "way you would cite a file you read yourself.\n\n"
+        f"{findings_block}\n\n"
+        "Base your answer on ALL of the information on this board, not only on "
+        "what you personally found or already believe. Do not omit or "
+        "down-weight a finding just because another agent contributed it. "
+        "When findings disagree, reconcile by comparing the sources and let "
+        "the user get the whole context, especially if any conflicts arise."
+    )
+
+    async def _draft(
+        agent: dict[str, Any],
+        prior: dict[str, str] | None,
+        round_num: int,
+    ) -> tuple[str, str, list[ToolCall]]:
+        agent_id = str(agent["id"])
+        if prior is None:
+            instruction = (
+                f"\n\n## CRAFT YOUR ANSWER (round {round_num})\n"
+                "This is the bidding board containing all existing information "
+                "that provides value to the user's question. Based on ALL of "
+                "this information — not just your own findings — craft a "
+                "complete answer to the user's question. Write polished, "
+                "user-facing prose."
+            )
+        else:
+            others = "\n\n".join(
+                f"### Answer from {agents_by_id.get(oid, {}).get('name', oid)}\n{ans}"
+                for oid, ans in prior.items()
+                if oid != agent_id and ans.strip()
+            )
+            instruction = (
+                f"\n\n## THE OTHER AGENTS' ANSWERS (round {round_num})\n"
+                f"{others}\n\n"
+                "## REVISE TOWARD CONSENSUS\n"
+                "The agents have NOT yet converged on a single shared answer. "
+                "Read the other agents' answers above together with the "
+                "bidding board, then write a revised answer: adopt every "
+                "well-supported claim the others surfaced that you missed, "
+                "drop any claim of yours the board does not support, and move "
+                "toward one shared answer. Where the board shows a genuine "
+                "conflict, keep it and explain it rather than papering over "
+                "it. Output the FULL revised answer as polished, user-facing "
+                "prose."
+            )
+        turn_prompt = (
+            _with_context(prompt, agent_id, agent_context) + findings_prelude + instruction
+        )
+        try:
+            response, tools_used = await call(agent, turn_prompt)
+        except Exception as exc:
+            return agent_id, f"[error: {exc}]", []
+        return agent_id, response, tools_used
+
+    answers: dict[str, str] = {}
+    similarity = 0.0
+    medoid_id: str | None = None
+    converged = False
+    rounds_run = 0
+
+    for round_num in range(1, max(1, max_rounds) + 1):
+        prior = None if round_num == 1 else dict(answers)
+        results = await asyncio.gather(
+            *[_draft(agents_by_id[str(c["id"])], prior, round_num) for c in valid]
+        )
+
+        answers = {}
+        for agent_id, response, tools_used in results:
+            self_messages: list[SelfMessage] = [
+                ("tool", _format_tool_message(tool)) for tool in _last_tool_calls(tools_used)
+            ]
+            self_messages.append(("agent_output", response))
+            await _persist_self_messages(db, round_id, agent_id, self_messages)
+            answers[agent_id] = response
+
+        rounds_run = round_num
+        similarity, medoid_id = await _answer_consensus(answers)
+        await _persist_system_self_message(
+            db,
+            round_id,
+            "bidding_convergence",
+            f"Round {round_num}: mean pairwise answer similarity "
+            f"{similarity:.3f} (threshold {convergence_threshold:.2f}).",
+        )
+        if similarity >= convergence_threshold:
+            converged = True
+            break
+
+    summary = (
+        f"Converged after {rounds_run} round(s): answers agree at "
+        f"{similarity:.3f} >= {convergence_threshold:.2f}."
+        if converged
+        else f"Did not converge after {rounds_run} round(s) "
+        f"(cap: {max_rounds}; best similarity {similarity:.3f} "
+        f"< {convergence_threshold:.2f}). Returning the most representative answer."
+    )
+    await _persist_system_self_message(db, round_id, "bidding_convergence", summary)
+
+    if medoid_id is not None and medoid_id in answers:
+        return answers[medoid_id]
+    return next((ans for ans in answers.values() if ans.strip()), None)
+
+
+def _fenced_json(obj: Any) -> str:
+    """Render *obj* as a fenced ```json``` code block for the markdown UI."""
+    return f"```json\n{json.dumps(obj, indent=2, default=str)}\n```"
+
+
+def _files_read_from_tool_calls(tools_used: list[ToolCall]) -> set[str]:
+    """Return the set of file names the agent actually read via files.read."""
+    read: set[str] = set()
+    for tc in tools_used:
+        if tc.name != "files" or tc.input.get("action") != "read":
+            continue
+        name = tc.input.get("file_name")
+        if isinstance(name, str) and name:
+            read.add(name)
+    return read
+
+
+async def _run_bidding(
+    prompt: str,
+    agents: list[dict[str, Any]],
+    incoming: dict[str, list[str]],
+    call: _AgentCall,
+    db: AsyncConnection,
+    rounds: int,
+    agent_context: dict[str, str] | None,
+    trial_id: str,
+    files_by_agent: dict[str, dict[str, str]] | None = None,
+) -> None:
+    """Two-round bidding consensus producing a verified collaboration set.
+
+    Round 1 — each agent submits a *proof bid* declaring which of its tools and
+    knowledge files support the task, plus the gaps it cannot fill alone.
+    Round 2 — each agent reads the other agents' gaps from a blackboard and
+    declares which it can cover, again with verifiable evidence.
+    Selection — agents with non-empty validated evidence in either round form
+    the collaboration set. Uncovered gaps are reported.
+
+    Every citation in either round is cross-checked against the agent's actual
+    tool grants and tool-call log, so the proof cannot be faked.
+    """
+    files_by_agent = files_by_agent or {}
+    await _persist_system_broadcast(db, trial_id, agents, prompt, "bidding_broadcast")
+    bids_round_id = await _create_self_message_round(db, trial_id, 2, "bidding_bids")
+
+    async def _bid(
+        agent: dict[str, Any],
+    ) -> tuple[str, list[SelfMessage], dict[str, Any] | None]:
+        agent_id = str(agent["id"])
+        full_prompt = _with_context(prompt, agent_id, agent_context) + _BIDDING_INSTRUCTION
+        try:
+            response, tools_used = await call(agent, full_prompt)
+        except Exception as exc:
+            err = f"[error: {exc}]"
+            return agent_id, [("agent_error", err)], None
+
+        files_actually_read = _files_read_from_tool_calls(tools_used)
+        tools_actually_used = {tc.name for tc in tools_used}
+        available_files = set(files_by_agent.get(agent["id"], {}).keys())
+        # Only keep tool-call self-messages — the agent's raw JSON is shown
+        # below as a formatted `bidding_bid` (no need to duplicate it).
+        self_messages: list[SelfMessage] = [
+            ("tool", _format_tool_message(tool)) for tool in _last_tool_calls(tools_used)
+        ]
+
+        raw_bid = _extract_bid_json(response)
+        if raw_bid is None:
+            # Parsing failed — surface the raw response so the user can debug.
+            self_messages.append(("agent_output", response))
+            self_messages.append(
+                (
+                    "bidding_rejection",
+                    "Bid rejected: response did not contain a valid JSON object.",
+                )
+            )
+            return agent_id, self_messages, None
+
+        validated, rejections = _validate_bid(
+            raw_bid,
+            agent.get("tools") or [],
+            available_files,
+            files_actually_read,
+            tools_actually_used,
+        )
+        self_messages.append(("bidding_bid", _fenced_json(validated)))
+        if rejections["tools"] or rejections["files"]:
+            self_messages.append(("bidding_rejection", _fenced_json(rejections)))
+        if validated.get("yielded"):
+            self_messages.append(
+                (
+                    "bidding_yield",
+                    "Agent has no validated evidence — yielding (no gaps posted, "
+                    "excluded from gap matching).",
+                )
+            )
+        return agent_id, self_messages, validated
+
+    bid_results = await asyncio.gather(*[_bid(a) for a in agents])
+    bids: dict[str, dict[str, Any]] = {}
+    for agent_id, self_messages, validated_bid in bid_results:
+        await _persist_self_messages(db, bids_round_id, agent_id, self_messages)
+        if validated_bid is not None:
+            bids[agent_id] = validated_bid
+
+    # ── Round 2: gap matching on a per-agent blackboard ──────────────────────
+    blackboard = _build_gap_blackboard(bids, agents)
+    coverage: dict[str, list[dict[str, Any]]] = {}
+
+    if blackboard:
+        per_agent_board: dict[str, list[dict[str, Any]]] = {
+            str(a["id"]): [e for e in blackboard if e["agent_id"] != str(a["id"])] for a in agents
+        }
+        blackboard_round_id = int(await create_round(db, trial_id, 3, "bidding_blackboard"))
+        # Emit a single consolidated SYSTEM message listing every gap, rather
+        # than one personalised broadcast per agent. Per-agent filtering still
+        # happens inside the matching prompt (`_match` uses `per_agent_board`)
+        # so agents only see other agents' gaps in their own prompt; the
+        # audit log shows the complete board once.
+        await record_message(
+            db,
+            blackboard_round_id,
+            None,
+            None,
+            "system_blackboard",
+            _format_blackboard(blackboard),
+        )
+
+        matching_round_id = await _create_self_message_round(db, trial_id, 4, "bidding_matching")
+
+        async def _match(
+            agent: dict[str, Any],
+        ) -> tuple[str, list[SelfMessage], dict[str, dict[str, Any]]]:
+            agent_id = str(agent["id"])
+            # Yielders (no validated evidence in round 1) are excluded from matching.
+            agent_bid = bids.get(agent_id)
+            if agent_bid is None or agent_bid.get("yielded"):
+                return agent_id, [], {}
+            others = per_agent_board[agent_id]
+            if not others:
+                return agent_id, [], {}
+
+            known_ids = {e["gap_id"] for e in others}
+            own_findings = agent_bid.get("contribution") or []
+            known_finding_ids = {f"F{i}" for i in range(len(own_findings))}
+            match_prompt = (
+                _with_context(prompt, agent_id, agent_context)
+                + _BIDDING_MATCHING_INSTRUCTION
+                + "## YOUR FINDINGS\n"
+                + _format_own_findings(own_findings)
+                + "\n\n## BLACKBOARD\n"
+                + _format_blackboard(others)
+            )
+            try:
+                response, tools_used = await call(agent, match_prompt)
+            except Exception as exc:
+                err = f"[error: {exc}]"
+                return agent_id, [("agent_error", err)], {}
+
+            files_actually_read = _files_read_from_tool_calls(tools_used)
+            tools_actually_used = {tc.name for tc in tools_used}
+            available_files = set(files_by_agent.get(agent["id"], {}).keys())
+            # Tool-call messages only — `bidding_match` carries the formatted
+            # response below, no need to duplicate the raw text.
+            self_messages: list[SelfMessage] = [
+                ("tool", _format_tool_message(tool)) for tool in _last_tool_calls(tools_used)
+            ]
+
+            raw = _extract_bid_json(response)
+            if raw is None:
+                self_messages.append(("agent_output", response))
+                self_messages.append(
+                    (
+                        "bidding_rejection",
+                        "Matching rejected: response did not contain a valid JSON object.",
+                    )
+                )
+                return agent_id, self_messages, {}
+
+            valid_entries, rejections = _validate_coverage(
+                raw,
+                agent.get("tools") or [],
+                available_files,
+                files_actually_read,
+                tools_actually_used,
+                known_ids,
+                known_finding_ids,
+            )
+            # Persist the validated entries verbatim — they carry only the NEW
+            # contributions plus `reuses_finding` references, so the board can
+            # wire reused bid findings to gaps without duplicating their text.
+            self_messages.append(("bidding_match", _fenced_json({"gap_coverage": valid_entries})))
+            if (
+                rejections["unknown_gap_ids"]
+                or rejections["unknown_finding_ids"]
+                or rejections["tools"]
+                or rejections["files"]
+            ):
+                self_messages.append(("bidding_rejection", _fenced_json(rejections)))
+
+            # Resolve reuses into concrete data + inherited evidence so the
+            # selection/findings phase sees the reused finding as real coverage.
+            agent_evidence = agent_bid.get("evidence") or {}
+            agent_coverage: dict[str, dict[str, Any]] = {}
+            for entry in valid_entries:
+                if not entry.get("can_contribute"):
+                    continue
+                contribution = list(entry.get("contribution") or [])
+                evidence = entry.get("evidence") or {}
+                reuses = entry.get("reuses_finding") or []
+                if reuses:
+                    # A reused finding carries no fresh evidence block; inherit
+                    # the bid's (those files were proven read in round 1).
+                    if not (evidence.get("relevant_tools") or evidence.get("relevant_files")):
+                        evidence = agent_evidence
+                    seen = {str(c.get("data", "")).strip().lower() for c in contribution}
+                    for fid in reuses:
+                        idx = _finding_index(fid)
+                        if idx is None or idx >= len(own_findings):
+                            continue
+                        f = own_findings[idx]
+                        data = str(f.get("data") or "").strip()
+                        if not data or data.lower() in seen:
+                            continue
+                        seen.add(data.lower())
+                        contribution.append({"data": data, "citation": f.get("citation", "")})
+                if not contribution:
+                    continue
+                agent_coverage[entry["gap_id"]] = {
+                    "evidence": evidence,
+                    "contribution": contribution,
+                }
+            return agent_id, self_messages, agent_coverage
+
+        match_results = await asyncio.gather(*[_match(a) for a in agents])
+        for agent_id, self_messages, agent_coverage in match_results:
+            if self_messages:
+                await _persist_self_messages(db, matching_round_id, agent_id, self_messages)
+            for gap_id, payload in agent_coverage.items():
+                coverage.setdefault(gap_id, []).append(
+                    {
+                        "agent_id": agent_id,
+                        "evidence": payload["evidence"],
+                        "contribution": payload["contribution"],
+                    }
+                )
+
+    # ── Selection ────────────────────────────────────────────────────────────
+    collaborators, uncovered = _select_collaborators(bids, coverage, blackboard, agents)
+    selection_round_id = await _create_self_message_round(db, trial_id, 5, "bidding_selection")
+    await _persist_system_self_message(
+        db,
+        selection_round_id,
+        "bidding_collaborators",
+        _fenced_json({"collaborators": collaborators, "uncovered_gaps": uncovered}),
+    )
+
+    # ── Parallel consensus: collaborators draft in parallel, then converge ───
+    if collaborators:
+        agents_by_id = {str(a["id"]): a for a in agents}
+        final_output = await _run_parallel_consensus(
+            prompt,
+            collaborators,
+            agents_by_id,
+            bids,
+            coverage,
+            blackboard,
+            call,
+            db,
+            trial_id,
+            round_index=6,
+            agent_context=agent_context,
+            convergence_threshold=0.85,
+            max_rounds=5,
+        )
+        if final_output is not None:
+            final_round_id = await _create_self_message_round(
+                db, trial_id, 7, "bidding_final_output"
+            )
+            await _persist_system_self_message(
+                db, final_round_id, "bidding_final_output", final_output
+            )
