@@ -37,11 +37,14 @@ async def test_other_owner_cannot_read_or_mutate_agent(client: AsyncClient) -> N
     agent_id = created["id"]
 
     # Bob sees Alice's agent as non-existent for every verb.
-    assert (await client.get(f"/api/agents/{agent_id}", headers=_BOB)).status_code == 404
-    assert (
-        await client.patch(f"/api/agents/{agent_id}", json={"name": "Hijacked"}, headers=_BOB)
-    ).status_code == 404
-    assert (await client.delete(f"/api/agents/{agent_id}", headers=_BOB)).status_code == 404
+    bob_get = await client.get(f"/api/agents/{agent_id}", headers=_BOB)
+    bob_patch = await client.patch(
+        f"/api/agents/{agent_id}", json={"name": "Hijacked"}, headers=_BOB
+    )
+    bob_delete = await client.delete(f"/api/agents/{agent_id}", headers=_BOB)
+    assert bob_get.status_code == 404
+    assert bob_patch.status_code == 404
+    assert bob_delete.status_code == 404
 
     # Alice's agent is untouched.
     alice_view = (await client.get(f"/api/agents/{agent_id}", headers=_ALICE)).json()
@@ -51,8 +54,10 @@ async def test_other_owner_cannot_read_or_mutate_agent(client: AsyncClient) -> N
 async def test_knowledge_files_are_scoped_to_owner(client: AsyncClient) -> None:
     await client.post("/api/files", json={"name": "secret.txt", "content": "hi"}, headers=_ALICE)
 
-    assert len((await client.get("/api/files", headers=_ALICE)).json()) == 1
-    assert (await client.get("/api/files", headers=_BOB)).json() == []
+    alice_files = (await client.get("/api/files", headers=_ALICE)).json()
+    bob_files = (await client.get("/api/files", headers=_BOB)).json()
+    assert len(alice_files) == 1
+    assert bob_files == []
 
 
 async def test_clear_all_only_wipes_caller_data(client: AsyncClient) -> None:
@@ -60,13 +65,17 @@ async def test_clear_all_only_wipes_caller_data(client: AsyncClient) -> None:
     await client.post("/api/agents", json={**_AGENT_PAYLOAD, "name": "BobBot"}, headers=_BOB)
 
     # Alice clears all of *her* data.
-    assert (await client.delete("/api/agents", headers=_ALICE)).status_code == 204
+    clear_resp = await client.delete("/api/agents", headers=_ALICE)
+    assert clear_resp.status_code == 204
 
-    assert (await client.get("/api/agents", headers=_ALICE)).json() == []
-    assert len((await client.get("/api/agents", headers=_BOB)).json()) == 1
+    alice_agents = (await client.get("/api/agents", headers=_ALICE)).json()
+    bob_agents = (await client.get("/api/agents", headers=_BOB)).json()
+    assert alice_agents == []
+    assert len(bob_agents) == 1
 
 
 async def test_missing_header_uses_shared_bucket(client: AsyncClient) -> None:
     # No header → shared NULL bucket; an owned agent stays invisible to it.
     await client.post("/api/agents", json=_AGENT_PAYLOAD, headers=_ALICE)
-    assert (await client.get("/api/agents")).json() == []
+    shared_agents = (await client.get("/api/agents")).json()
+    assert shared_agents == []
