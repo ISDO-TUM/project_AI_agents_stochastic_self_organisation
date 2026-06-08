@@ -5,6 +5,7 @@
  * No NEXT_PUBLIC_ env var needed — the proxy handles both dev and Docker.
  */
 
+import { getOwnerId } from "./owner";
 import type {
   Agent,
   ConsensusMode,
@@ -87,6 +88,8 @@ async function request<T>(
   body?: unknown,
 ): Promise<T> {
   const headers: Record<string, string> = { ...llmHeaders };
+  const ownerId = getOwnerId();
+  if (ownerId) headers["X-Owner-Id"] = ownerId;
   if (body) headers["Content-Type"] = "application/json";
   const res = await fetch(path, {
     method,

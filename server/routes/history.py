@@ -15,6 +15,7 @@ from server.db import (
     get_db,
 )
 from server.db.tables import agents, connections, messages, rounds, trials
+from server.owner import OwnerDep, owner_match
 from server.schemas import (
     ConnectionResponse,
     MessageTraceResponse,
@@ -28,16 +29,20 @@ DBDep = Annotated[AsyncConnection, Depends(get_db)]
 
 
 @router.get("/trials", response_model=list[TrialResponse])
-async def list_trials(db: DBDep) -> list[TrialResponse]:
+async def list_trials(db: DBDep, owner: OwnerDep) -> list[TrialResponse]:
     result = await db.execute(
-        select(trials).order_by(trials.c.created_at.desc(), trials.c.id.desc())
+        select(trials)
+        .where(owner_match(trials.c.owner_id, owner))
+        .order_by(trials.c.created_at.desc(), trials.c.id.desc())
     )
     return [TrialResponse(**deserialise_trial_row(row)) for row in result.mappings().all()]
 
 
 @router.get("/trials/{trial_id}", response_model=TrialResponse)
-async def get_trial(trial_id: str, db: DBDep) -> TrialResponse:
-    result = await db.execute(select(trials).where(trials.c.id == trial_id))
+async def get_trial(trial_id: str, db: DBDep, owner: OwnerDep) -> TrialResponse:
+    result = await db.execute(
+        select(trials).where(trials.c.id == trial_id, owner_match(trials.c.owner_id, owner))
+    )
     row = result.mappings().first()
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Trial not found.")
@@ -45,20 +50,28 @@ async def get_trial(trial_id: str, db: DBDep) -> TrialResponse:
 
 
 @router.get("/trials/{trial_id}/rounds", response_model=list[RoundResponse])
-async def list_rounds(trial_id: str, db: DBDep) -> list[RoundResponse]:
+async def list_rounds(trial_id: str, db: DBDep, owner: OwnerDep) -> list[RoundResponse]:
+    # Join trials so a round is only visible to the owner of its trial.
     result = await db.execute(
         select(rounds)
-        .where(rounds.c.trial_id == trial_id)
+        .select_from(rounds.join(trials, trials.c.id == rounds.c.trial_id))
+        .where(rounds.c.trial_id == trial_id, owner_match(trials.c.owner_id, owner))
         .order_by(rounds.c.round_index.asc(), rounds.c.id.asc())
     )
     return [RoundResponse(**deserialise_round_row(row)) for row in result.mappings().all()]
 
 
 @router.get("/rounds/{round_id}/connections", response_model=list[ConnectionResponse])
-async def list_connections(round_id: int, db: DBDep) -> list[ConnectionResponse]:
+async def list_connections(round_id: int, db: DBDep, owner: OwnerDep) -> list[ConnectionResponse]:
+    # connection → round → trial → owner; only the trial owner may read these.
     result = await db.execute(
         select(connections)
-        .where(connections.c.round_id == round_id)
+        .select_from(
+            connections.join(rounds, rounds.c.id == connections.c.round_id).join(
+                trials, trials.c.id == rounds.c.trial_id
+            )
+        )
+        .where(connections.c.round_id == round_id, owner_match(trials.c.owner_id, owner))
         .order_by(connections.c.id.asc())
     )
     return [
@@ -89,6 +102,7 @@ _MAX_MESSAGES_LIMIT = 2000
 @router.get("/messages", response_model=list[MessageTraceResponse])
 async def list_messages(
     db: DBDep,
+    owner: OwnerDep,
     trial_id: str | None = None,
     round_id: int | None = None,
     agent_id: str | None = None,
@@ -131,6 +145,7 @@ async def list_messages(
             .outerjoin(to_agent, to_agent.c.id == messages.c.to_agent_id)
         )
         .order_by(trials.c.created_at.desc(), rounds.c.round_index.asc(), messages.c.id.asc())
+        .where(owner_match(trials.c.owner_id, owner))
     )
 
     if trial_id is not None:

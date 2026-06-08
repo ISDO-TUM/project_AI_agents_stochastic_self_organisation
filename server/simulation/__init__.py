@@ -59,6 +59,7 @@ from server.guardrails import build_guarded_system_prompt, sanitize_prompt
 from server.guardrails.input_sanitizer import PromptInjectionError
 from server.llm import call_agent
 from server.llm.embeddings import cosine_similarity, embed_texts
+from server.owner import owner_match
 from server.schemas import ToolCall
 from server.tools.builtin.registry import RegistryIndex
 from server.tools.builtin.table import TableStore
@@ -904,6 +905,7 @@ async def run_topology(
     ruleset: str | None = None,
     topology: str = "static",
     fanout: int = 3,
+    owner: str | None = None,
 ) -> None:
     """Run a topology simulation under the chosen consensus mode.
 
@@ -916,8 +918,13 @@ async def run_topology(
     lets agents rebuild it each round by discovering peers through the registry
     tool and emitting CONNECT lines. ``fanout`` caps how many neighbours an agent
     may pick per round in dynamic mode.
+
+    ``owner`` scopes the run to one data owner (the ``X-Owner-Id`` header): only
+    that owner's agents take part, and the trial is recorded under them.
     """
-    result = await db.execute(select(agents_table))
+    result = await db.execute(
+        select(agents_table).where(owner_match(agents_table.c.owner_id, owner))
+    )
     agents: list[dict[str, Any]] = [deserialise_agent_row(row) for row in result.mappings().all()]
 
     if not agents:
@@ -936,7 +943,7 @@ async def run_topology(
     # runs pay no embedding cost and offer no registry tool (registry is None).
     registry = await RegistryIndex.build(agents, files_by_agent) if topology == "dynamic" else None
     if trial_id is None:
-        trial_id = await create_trial(db, prompt, _trial_description(mode), mode)
+        trial_id = await create_trial(db, prompt, _trial_description(mode), mode, owner=owner)
 
     # One shared table workspace per run — agents in a pipeline see each other's
     # mutations (e.g. a predictor adds a column, a reviewer reads it) without

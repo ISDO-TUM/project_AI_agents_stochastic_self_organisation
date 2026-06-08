@@ -137,6 +137,10 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
     dialect = conn.dialect.name
     if dialect == "postgresql":
         for stmt in (
+            # Per-user data ownership (X-Owner-Id header); NULL = shared bucket.
+            "ALTER TABLE agents ADD COLUMN IF NOT EXISTS owner_id TEXT",
+            "ALTER TABLE knowledge_files ADD COLUMN IF NOT EXISTS owner_id TEXT",
+            "ALTER TABLE trials ADD COLUMN IF NOT EXISTS owner_id TEXT",
             # Pre-existing migrations
             "ALTER TABLE knowledge_files ADD COLUMN IF NOT EXISTS"
             " created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL",
@@ -168,6 +172,9 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
         # metadata.create_all, so migrations only cover the pre-existing
         # knowledge_files/agents columns that may be missing on older DBs.
         for table, col, definition in (
+            ("agents", "owner_id", "TEXT"),
+            ("knowledge_files", "owner_id", "TEXT"),
+            ("trials", "owner_id", "TEXT"),
             ("knowledge_files", "created_at", "DATETIME DEFAULT (datetime('now'))"),
             ("agents", "created_at", "DATETIME DEFAULT (datetime('now'))"),
             ("trials", "mode", "TEXT"),
@@ -402,12 +409,14 @@ async def create_trial(
     user_prompt: str,
     description: str,
     mode: str,
+    owner: str | None = None,
 ) -> str:
     """Create a trial row for one simulation run and return its id."""
     trial_id = str(uuid.uuid4())
     await conn.execute(
         trials.insert().values(
             id=trial_id,
+            owner_id=owner,
             user_prompt=user_prompt,
             description=description,
             mode=mode,

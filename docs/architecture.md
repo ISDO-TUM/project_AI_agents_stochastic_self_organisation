@@ -217,6 +217,41 @@ flowchart LR
 | Predictability        | higher                | adaptive                            |
 | Best fit              | controlled comparison | self-organization experiments       |
 
+### 7.3 Phone Registry (Dynamic) vs. Fully-Connected (Static)
+
+In dynamic mode, instead of wiring every agent to every other agent, each agent
+uses a **phone registry** to look up peers on demand: it searches a per-run index
+(by meaning, using embeddings) for the agents most relevant to what it needs, then
+names them in a `CONNECT:` line. The controller rebuilds the graph from those
+choices each round, keeps the most useful peers (a reputation score), and caps how
+many each agent may pick (fan-out). Static simply connects everyone, all the time.
+
+**Pros of the registry approach:**
+
+- **Scales better:** each agent talks to a few relevant peers, not all N, so cost
+  and context size stay manageable as the number of agents grows.
+- **Less noise:** agents hear from peers that actually match their topic, which
+  helps reach a clean answer.
+- **Self-improving routing:** agents that give well-grounded, agreed-upon answers
+  get heard more; weak or off-topic agents drop out over rounds.
+- **Can start from nothing:** agents with no initial connections can still find
+  peers and organize themselves.
+
+**Cons of the registry approach:**
+
+- **Extra cost and complexity:** it builds an embedding index and makes lookup
+  calls each round; static does none of this.
+- **Can over-prune:** the graph may split into cliques, so a correct-but-unpopular
+  agent might never be heard. Fully-connected guarantees everyone is always heard.
+- **Less predictable / slower to settle:** the graph keeps changing until it
+  stabilizes, often taking more rounds than static.
+- **Depends on good agent descriptions:** discovery is only as good as each
+  agent's name, description, and files; thin profiles weaken the matching.
+
+**Rule of thumb:** use the registry/dynamic setup when there are many agents or
+noisy context; use static fully-connected for small, controlled runs where you
+want every agent heard and results easy to compare.
+
 ---
 
 ## 8) Consensus Modes

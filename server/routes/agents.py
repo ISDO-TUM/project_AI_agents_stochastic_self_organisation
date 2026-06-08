@@ -21,10 +21,7 @@ from server.db import (
 from server.db.tables import (
     agent_files,
     agents,
-    connections,
     knowledge_files,
-    messages,
-    rounds,
     trials,
 )
 from server.guardrails import sanitize_prompt, validate_llm_output
@@ -32,6 +29,7 @@ from server.guardrails.input_sanitizer import PromptInjectionError
 from server.guardrails.output_validator import InjectionEchoError, LLMRefusalError
 from server.llm import call_agent
 from server.llm.credentials import MissingCredentialsError, use_credentials
+from server.owner import OwnerDep, owner_match
 from server.schemas import (
     AgentCreate,
     AgentResponse,
@@ -56,7 +54,7 @@ _PATCHABLE_COLUMNS: frozenset[str] = frozenset(AgentUpdate.model_fields.keys())
     summary="Create a new agent",
     description="Persist a new agent and return it with its generated UUID.",
 )
-async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
+async def create_agent(body: AgentCreate, db: DBDep, owner: OwnerDep) -> AgentResponse:
     """Create a new agent and persist it to the database.
 
     Honours an optional caller-supplied ``id`` so canvas imports can preserve
@@ -65,11 +63,13 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
     Args:
         body: Agent creation payload.
         db: Shared database connection injected by FastAPI.
+        owner: Data owner resolved from the ``X-Owner-Id`` header.
 
     Returns:
         The newly created agent including its UUID.
     """
     agent_id = body.id or str(uuid.uuid4())
+    # The id is the global primary key, so the collision check stays unscoped.
     existing = await db.execute(select(agents.c.id).where(agents.c.id == agent_id))
     if existing.first() is not None:
         raise HTTPException(
@@ -79,6 +79,7 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
     await db.execute(
         insert(agents).values(
             id=agent_id,
+            owner_id=owner,
             name=body.name,
             description=body.description,
             system_prompt=body.system_prompt,
@@ -101,16 +102,17 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
     response_model=list[AgentResponse],
     summary="List all agents",
 )
-async def list_agents(db: DBDep) -> list[AgentResponse]:
-    """Return all agents in the database.
+async def list_agents(db: DBDep, owner: OwnerDep) -> list[AgentResponse]:
+    """Return the current owner's agents.
 
     Args:
         db: Shared database connection injected by FastAPI.
+        owner: Data owner resolved from the ``X-Owner-Id`` header.
 
     Returns:
-        A list of all agents, possibly empty.
+        A list of the owner's agents, possibly empty.
     """
-    result = await db.execute(select(agents))
+    result = await db.execute(select(agents).where(owner_match(agents.c.owner_id, owner)))
     rows = result.mappings().all()
     return [AgentResponse(**deserialise_agent_row(row)) for row in rows]
 
@@ -120,20 +122,23 @@ async def list_agents(db: DBDep) -> list[AgentResponse]:
     response_model=AgentResponse,
     summary="Get an agent by ID",
 )
-async def get_agent(agent_id: str, db: DBDep) -> AgentResponse:
-    """Fetch a single agent by its UUID.
+async def get_agent(agent_id: str, db: DBDep, owner: OwnerDep) -> AgentResponse:
+    """Fetch a single agent owned by the current owner.
 
     Args:
         agent_id: UUID of the agent.
         db: Shared database connection injected by FastAPI.
+        owner: Data owner resolved from the ``X-Owner-Id`` header.
 
     Returns:
         The requested agent.
 
     Raises:
-        HTTPException: 404 if no agent with the given ID exists.
+        HTTPException: 404 if the owner has no agent with the given ID.
     """
-    result = await db.execute(select(agents).where(agents.c.id == agent_id))
+    result = await db.execute(
+        select(agents).where(agents.c.id == agent_id, owner_match(agents.c.owner_id, owner))
+    )
     row = result.mappings().first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
@@ -146,26 +151,31 @@ async def get_agent(agent_id: str, db: DBDep) -> AgentResponse:
     summary="Replace an agent",
     description="Fully replace all fields of an existing agent.",
 )
-async def replace_agent(agent_id: str, body: AgentCreate, db: DBDep) -> AgentResponse:
-    """Fully replace all fields of an existing agent.
+async def replace_agent(
+    agent_id: str, body: AgentCreate, db: DBDep, owner: OwnerDep
+) -> AgentResponse:
+    """Fully replace all fields of an existing agent owned by the current owner.
 
     Args:
         agent_id: UUID of the agent to replace.
         body: New agent payload; all fields are required.
         db: Shared database connection injected by FastAPI.
+        owner: Data owner resolved from the ``X-Owner-Id`` header.
 
     Returns:
         The updated agent.
 
     Raises:
-        HTTPException: 404 if no agent with the given ID exists.
+        HTTPException: 404 if the owner has no agent with the given ID.
     """
-    existing = await db.execute(select(agents.c.id).where(agents.c.id == agent_id))
+    existing = await db.execute(
+        select(agents.c.id).where(agents.c.id == agent_id, owner_match(agents.c.owner_id, owner))
+    )
     if existing.first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     await db.execute(
         update(agents)
-        .where(agents.c.id == agent_id)
+        .where(agents.c.id == agent_id, owner_match(agents.c.owner_id, owner))
         .values(
             name=body.name,
             description=body.description,
@@ -190,21 +200,25 @@ async def replace_agent(agent_id: str, body: AgentCreate, db: DBDep) -> AgentRes
     summary="Partially update an agent",
     description="Update only the supplied fields; all other fields remain unchanged.",
 )
-async def update_agent(agent_id: str, body: AgentUpdate, db: DBDep) -> AgentResponse:
+async def update_agent(
+    agent_id: str, body: AgentUpdate, db: DBDep, owner: OwnerDep
+) -> AgentResponse:
     """Partially update an agent; only supplied fields are written.
 
     Args:
         agent_id: UUID of the agent to update.
         body: Partial update payload; omitted fields are left unchanged.
         db: Shared database connection injected by FastAPI.
+        owner: Data owner resolved from the ``X-Owner-Id`` header.
 
     Returns:
         The updated agent.
 
     Raises:
-        HTTPException: 404 if no agent with the given ID exists.
+        HTTPException: 404 if the owner has no agent with the given ID.
     """
-    result = await db.execute(select(agents).where(agents.c.id == agent_id))
+    scope = (agents.c.id == agent_id, owner_match(agents.c.owner_id, owner))
+    result = await db.execute(select(agents).where(*scope))
     row = result.mappings().first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
@@ -216,10 +230,10 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: DBDep) -> AgentResp
     }
 
     if updates:
-        await db.execute(update(agents).where(agents.c.id == agent_id).values(**updates))
+        await db.execute(update(agents).where(*scope).values(**updates))
         await db.commit()
 
-    result = await db.execute(select(agents).where(agents.c.id == agent_id))
+    result = await db.execute(select(agents).where(*scope))
     row = result.mappings().first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
@@ -229,16 +243,18 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: DBDep) -> AgentResp
 @router.delete(
     "",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete all agents, knowledge files, and simulation history",
+    summary="Delete the current owner's agents, knowledge files, and simulation history",
 )
-async def delete_all(db: DBDep) -> None:
-    """Wipe every agent, knowledge file, and simulation record from the database.
+async def delete_all(db: DBDep, owner: OwnerDep) -> None:
+    """Wipe every agent, knowledge file, and simulation record owned by the caller.
 
-    Deletion order respects foreign-key constraints:
-    messages → connections → rounds → trials → agents (cascades agent_files) → knowledge_files.
+    Only the current owner's data is removed. Deleting each owning row cascades
+    to its children: trials → rounds → connections → messages, and agents /
+    knowledge_files → agent_files.
     """
-    for table in (messages, connections, rounds, trials, agents, knowledge_files):
-        await db.execute(delete(table))
+    await db.execute(delete(trials).where(owner_match(trials.c.owner_id, owner)))
+    await db.execute(delete(agents).where(owner_match(agents.c.owner_id, owner)))
+    await db.execute(delete(knowledge_files).where(owner_match(knowledge_files.c.owner_id, owner)))
     await db.commit()
 
 
@@ -247,20 +263,22 @@ async def delete_all(db: DBDep) -> None:
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete an agent",
 )
-async def delete_agent(agent_id: str, db: DBDep) -> None:
-    """Delete an agent from the database.
+async def delete_agent(agent_id: str, db: DBDep, owner: OwnerDep) -> None:
+    """Delete one of the current owner's agents.
 
     Args:
         agent_id: UUID of the agent to delete.
         db: Shared database connection injected by FastAPI.
+        owner: Data owner resolved from the ``X-Owner-Id`` header.
 
     Raises:
-        HTTPException: 404 if no agent with the given ID exists.
+        HTTPException: 404 if the owner has no agent with the given ID.
     """
-    existing = await db.execute(select(agents.c.id).where(agents.c.id == agent_id))
+    scope = (agents.c.id == agent_id, owner_match(agents.c.owner_id, owner))
+    existing = await db.execute(select(agents.c.id).where(*scope))
     if existing.first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
-    await db.execute(delete(agents).where(agents.c.id == agent_id))
+    await db.execute(delete(agents).where(*scope))
     await db.commit()
 
 
@@ -275,7 +293,9 @@ async def delete_agent(agent_id: str, db: DBDep) -> None:
     ),
     dependencies=[Depends(use_credentials)],
 )
-async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRunResponse:
+async def run_agent(
+    agent_id: str, body: AgentRunRequest, db: DBDep, owner: OwnerDep
+) -> AgentRunResponse:
     # ── Guardrail 1: sanitise incoming prompt ─────────────────────────────────
     try:
         sanitize_prompt(body.prompt, field_name="prompt")
@@ -284,7 +304,9 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
 
-    result = await db.execute(select(agents).where(agents.c.id == agent_id))
+    result = await db.execute(
+        select(agents).where(agents.c.id == agent_id, owner_match(agents.c.owner_id, owner))
+    )
     row = result.mappings().first()
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
@@ -338,8 +360,12 @@ async def run_agent(agent_id: str, body: AgentRunRequest, db: DBDep) -> AgentRun
     response_model=list[KnowledgeFileResponse],
     summary="List files attached to an agent",
 )
-async def list_agent_files(agent_id: str, db: DBDep) -> list[KnowledgeFileResponse]:
-    existing = await db.execute(select(agents.c.id).where(agents.c.id == agent_id))
+async def list_agent_files(
+    agent_id: str, db: DBDep, owner: OwnerDep
+) -> list[KnowledgeFileResponse]:
+    existing = await db.execute(
+        select(agents.c.id).where(agents.c.id == agent_id, owner_match(agents.c.owner_id, owner))
+    )
     if existing.first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     result = await db.execute(
@@ -358,12 +384,16 @@ async def list_agent_files(agent_id: str, db: DBDep) -> list[KnowledgeFileRespon
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Attach a file to an agent",
 )
-async def attach_file_to_agent(agent_id: str, file_id: str, db: DBDep) -> None:
-    agent_exists = await db.execute(select(agents.c.id).where(agents.c.id == agent_id))
+async def attach_file_to_agent(agent_id: str, file_id: str, db: DBDep, owner: OwnerDep) -> None:
+    agent_exists = await db.execute(
+        select(agents.c.id).where(agents.c.id == agent_id, owner_match(agents.c.owner_id, owner))
+    )
     if agent_exists.first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     file_exists = await db.execute(
-        select(knowledge_files.c.id).where(knowledge_files.c.id == file_id)
+        select(knowledge_files.c.id).where(
+            knowledge_files.c.id == file_id, owner_match(knowledge_files.c.owner_id, owner)
+        )
     )
     if file_exists.first() is None:
         raise HTTPException(
@@ -384,8 +414,10 @@ async def attach_file_to_agent(agent_id: str, file_id: str, db: DBDep) -> None:
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Detach a file from an agent",
 )
-async def detach_file_from_agent(agent_id: str, file_id: str, db: DBDep) -> None:
-    existing = await db.execute(select(agents.c.id).where(agents.c.id == agent_id))
+async def detach_file_from_agent(agent_id: str, file_id: str, db: DBDep, owner: OwnerDep) -> None:
+    existing = await db.execute(
+        select(agents.c.id).where(agents.c.id == agent_id, owner_match(agents.c.owner_id, owner))
+    )
     if existing.first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     await db.execute(

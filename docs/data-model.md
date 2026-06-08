@@ -20,6 +20,7 @@ Agents are a separate, reusable concept that are referenced by connections but e
 erDiagram
     agents {
         text id PK
+        text owner_id
         text name
         text description
         text system_prompt
@@ -30,6 +31,7 @@ erDiagram
     }
     knowledge_files {
         text id PK
+        text owner_id
         text name
         text content
     }
@@ -39,6 +41,7 @@ erDiagram
     }
     trials {
         text id PK
+        text owner_id
         text user_prompt
         text description
     }
@@ -110,6 +113,29 @@ A message stores the **payload transmitted along a connection** in a round. This
 Messages are intentionally schema-free (`TEXT`) to stay flexible as the communication protocol evolves.
 
 ---
+
+## Data ownership (per-user scoping)
+
+Authentication is out of scope, but multiple users share one deployment, so data
+must not leak between them. Each of the three **root** tables — `agents`,
+`knowledge_files`, and `trials` — carries a nullable `owner_id`. Child tables
+(`rounds`, `connections`, `messages`, `agent_files`) inherit their scope through
+their parent's foreign key and need no column of their own.
+
+The owner id is **client-generated**: the browser creates a random UUID on first
+use, persists it in `localStorage`, and sends it on every request as the
+`X-Owner-Id` header. The server reads it via the `current_owner` dependency
+(`server/owner.py`) and filters every read/write/delete by it, so one browser
+never sees another's data. A request without the header falls into the shared
+`NULL` bucket, used only by the test suite and non-browser tooling.
+
+This is **isolation, not authentication** — the id is chosen by the client and is
+not a security boundary against a determined attacker. It is sufficient here
+because collaboration/sharing is not a feature and the ids are unguessable random
+UUIDs that never appear in any response. `DELETE /api/agents` ("clear all") is
+likewise scoped: it wipes only the calling owner's data, relying on the existing
+`ON DELETE CASCADE` foreign keys to remove the dependent rounds/connections/
+messages/attachments.
 
 ## Design Decisions
 

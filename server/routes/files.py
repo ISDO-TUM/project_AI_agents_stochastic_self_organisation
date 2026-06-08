@@ -12,6 +12,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from server.db import deserialise_knowledge_file_row, get_db
 from server.db.tables import knowledge_files
 from server.guardrails import PromptInjectionError, sanitize_prompt
+from server.owner import OwnerDep, owner_match
 from server.schemas import KnowledgeFileCreate, KnowledgeFileResponse, KnowledgeFileUpdate
 
 router = APIRouter(prefix="/api/files", tags=["Knowledge Files"])
@@ -27,7 +28,9 @@ _PATCHABLE_COLUMNS: frozenset[str] = frozenset(KnowledgeFileUpdate.model_fields.
     summary="Create a new knowledge file",
     description="Persist a new knowledge file and return it with its generated UUID.",
 )
-async def create_knowledge_file(body: KnowledgeFileCreate, db: DBDep) -> KnowledgeFileResponse:
+async def create_knowledge_file(
+    body: KnowledgeFileCreate, db: DBDep, owner: OwnerDep
+) -> KnowledgeFileResponse:
     # Sanitise content to prevent stored prompt injection
     try:
         sanitize_prompt(body.content, field_name="knowledge file content")
@@ -37,7 +40,9 @@ async def create_knowledge_file(body: KnowledgeFileCreate, db: DBDep) -> Knowled
         ) from exc
     file_id = body.id or str(uuid.uuid4())
     await db.execute(
-        insert(knowledge_files).values(id=file_id, name=body.name, content=body.content)
+        insert(knowledge_files).values(
+            id=file_id, owner_id=owner, name=body.name, content=body.content
+        )
     )
     await db.commit()
     result = await db.execute(select(knowledge_files).where(knowledge_files.c.id == file_id))
@@ -54,8 +59,10 @@ async def create_knowledge_file(body: KnowledgeFileCreate, db: DBDep) -> Knowled
     response_model=list[KnowledgeFileResponse],
     summary="List all knowledge files",
 )
-async def list_knowledge_files(db: DBDep) -> list[KnowledgeFileResponse]:
-    result = await db.execute(select(knowledge_files))
+async def list_knowledge_files(db: DBDep, owner: OwnerDep) -> list[KnowledgeFileResponse]:
+    result = await db.execute(
+        select(knowledge_files).where(owner_match(knowledge_files.c.owner_id, owner))
+    )
     rows = result.mappings().all()
     return [KnowledgeFileResponse(**deserialise_knowledge_file_row(row)) for row in rows]
 
@@ -65,8 +72,12 @@ async def list_knowledge_files(db: DBDep) -> list[KnowledgeFileResponse]:
     response_model=KnowledgeFileResponse,
     summary="Get a knowledge file by ID",
 )
-async def get_knowledge_file(file_id: str, db: DBDep) -> KnowledgeFileResponse:
-    result = await db.execute(select(knowledge_files).where(knowledge_files.c.id == file_id))
+async def get_knowledge_file(file_id: str, db: DBDep, owner: OwnerDep) -> KnowledgeFileResponse:
+    result = await db.execute(
+        select(knowledge_files).where(
+            knowledge_files.c.id == file_id, owner_match(knowledge_files.c.owner_id, owner)
+        )
+    )
     row = result.mappings().first()
     if row is None:
         raise HTTPException(
@@ -82,7 +93,7 @@ async def get_knowledge_file(file_id: str, db: DBDep) -> KnowledgeFileResponse:
     description="Fully replace all fields of an existing knowledge file.",
 )
 async def replace_knowledge_file(
-    file_id: str, body: KnowledgeFileCreate, db: DBDep
+    file_id: str, body: KnowledgeFileCreate, db: DBDep, owner: OwnerDep
 ) -> KnowledgeFileResponse:
     # Sanitise content to prevent stored prompt injection
     try:
@@ -91,18 +102,17 @@ async def replace_knowledge_file(
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
         ) from exc
-    existing = await db.execute(select(knowledge_files.c.id).where(knowledge_files.c.id == file_id))
+    scope = (knowledge_files.c.id == file_id, owner_match(knowledge_files.c.owner_id, owner))
+    existing = await db.execute(select(knowledge_files.c.id).where(*scope))
     if existing.first() is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found."
         )
     await db.execute(
-        update(knowledge_files)
-        .where(knowledge_files.c.id == file_id)
-        .values(name=body.name, content=body.content)
+        update(knowledge_files).where(*scope).values(name=body.name, content=body.content)
     )
     await db.commit()
-    result = await db.execute(select(knowledge_files).where(knowledge_files.c.id == file_id))
+    result = await db.execute(select(knowledge_files).where(*scope))
     row = result.mappings().first()
     if row is None:
         raise HTTPException(
@@ -118,9 +128,10 @@ async def replace_knowledge_file(
     description="Update only the supplied fields; all other fields remain unchanged.",
 )
 async def update_knowledge_file(
-    file_id: str, body: KnowledgeFileUpdate, db: DBDep
+    file_id: str, body: KnowledgeFileUpdate, db: DBDep, owner: OwnerDep
 ) -> KnowledgeFileResponse:
-    result = await db.execute(select(knowledge_files).where(knowledge_files.c.id == file_id))
+    scope = (knowledge_files.c.id == file_id, owner_match(knowledge_files.c.owner_id, owner))
+    result = await db.execute(select(knowledge_files).where(*scope))
     row = result.mappings().first()
     if row is None:
         raise HTTPException(
@@ -143,12 +154,10 @@ async def update_knowledge_file(
     }
 
     if updates:
-        await db.execute(
-            update(knowledge_files).where(knowledge_files.c.id == file_id).values(**updates)
-        )
+        await db.execute(update(knowledge_files).where(*scope).values(**updates))
         await db.commit()
 
-    result = await db.execute(select(knowledge_files).where(knowledge_files.c.id == file_id))
+    result = await db.execute(select(knowledge_files).where(*scope))
     row = result.mappings().first()
     if row is None:
         raise HTTPException(
@@ -163,11 +172,12 @@ async def update_knowledge_file(
     summary="Delete a knowledge file",
     description="Delete a knowledge file and all its agent associations.",
 )
-async def delete_knowledge_file(file_id: str, db: DBDep) -> None:
-    existing = await db.execute(select(knowledge_files.c.id).where(knowledge_files.c.id == file_id))
+async def delete_knowledge_file(file_id: str, db: DBDep, owner: OwnerDep) -> None:
+    scope = (knowledge_files.c.id == file_id, owner_match(knowledge_files.c.owner_id, owner))
+    existing = await db.execute(select(knowledge_files.c.id).where(*scope))
     if existing.first() is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND, detail="Knowledge file not found."
         )
-    await db.execute(delete(knowledge_files).where(knowledge_files.c.id == file_id))
+    await db.execute(delete(knowledge_files).where(*scope))
     await db.commit()

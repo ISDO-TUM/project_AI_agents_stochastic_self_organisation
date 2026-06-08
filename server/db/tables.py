@@ -28,6 +28,9 @@ agents = Table(
     "agents",
     metadata,
     Column("id", Text, primary_key=True),
+    # Client-supplied data owner (X-Owner-Id header). NULL is the shared bucket
+    # used by the test suite and non-browser tooling. See server/owner.py.
+    Column("owner_id", Text),
     Column("name", Text, nullable=False),
     Column("description", Text, nullable=False),
     Column("system_prompt", Text, nullable=False),
@@ -46,6 +49,7 @@ knowledge_files = Table(
     "knowledge_files",
     metadata,
     Column("id", Text, primary_key=True),
+    Column("owner_id", Text),
     Column("name", Text, nullable=False),
     Column("content", Text, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
@@ -67,6 +71,7 @@ trials = Table(
     "trials",
     metadata,
     Column("id", Text, primary_key=True),
+    Column("owner_id", Text),
     Column("user_prompt", Text, nullable=False),
     Column("description", Text, nullable=False),
     Column("mode", Text),
