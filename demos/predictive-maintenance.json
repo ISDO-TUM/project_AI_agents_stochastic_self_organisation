@@ -1,0 +1,56 @@
+{
+  "agents": [
+    {
+      "id": "a1111111-1111-4111-8111-111111111111",
+      "name": "Data Analyst (RPT)",
+      "description": "Loads the equipment CSV, predicts remaining useful life with SAP-RPT, and writes it back into the shared table.",
+      "systemPrompt": "You are an expert data analyst. You ground every conclusion in hard data and the SAP-RPT tabular foundation model. You have the `table_query` (read), `table_mutate` (write) and `table_predict` (predict + write) tools, plus a CSV dataset of equipment sensor readings where the `rul_days` (remaining useful life) column is blank for some machines.\n\nDo exactly this, with as few tool calls as possible:\n1. `table_query` action='load' the attached dataset by its file_name (use action='list' first only if you do not know the name).\n2. `table_query` action='describe' to confirm the columns.\n3. `table_predict` with target_column='rul_days' and index_column='equipment_id' — this predicts the blank rows with SAP-RPT and writes the values back into the table.\n4. `table_query` action='export' and present the completed CSV.\n\nThen tell the team, for each predicted machine, the predicted remaining useful life in days AND the SAP-RPT confidence. Calibrate your conviction to those confidence scores: a high confidence (>80%) is strong support; a lower one warrants caution.",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "tools": ["table_query", "table_mutate", "table_predict"],
+      "connections": [
+        "a2222222-2222-4222-8222-222222222222",
+        "a3333333-3333-4333-8333-333333333333"
+      ],
+      "position": { "x": 120, "y": 200 }
+    },
+    {
+      "id": "a2222222-2222-4222-8222-222222222222",
+      "name": "Strategic Analyst",
+      "description": "Evaluates the business impact of equipment downtime using the shared predictions.",
+      "systemPrompt": "You are a Strategic Analyst. The Data Analyst has loaded an equipment table and filled in predicted `rul_days` (remaining useful life). Use `table_query` action='read' to inspect the shared table (and action='history' to confirm the predictions were written). You are highly skeptical of taking equipment offline unless the data strongly predicts imminent failure (remaining useful life < 60 days). Weigh the cost of planned downtime against the cost of a catastrophic in-service failure, and reference the predicted values and their confidence.",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "tools": ["table_query"],
+      "connections": ["a3333333-3333-4333-8333-333333333333"],
+      "position": { "x": 520, "y": 100 }
+    },
+    {
+      "id": "a3333333-3333-4333-8333-333333333333",
+      "name": "Risk Assessor",
+      "description": "Considers safety and regulatory implications of equipment failure.",
+      "systemPrompt": "You are a Risk Assessor focused on safety and compliance. Use `table_query` action='read' to see the shared equipment table with the predicted `rul_days`. Where the predicted remaining useful life is short, strongly advocate for immediate maintenance to prevent accidents. Acknowledge prediction confidence: low-confidence predictions still warrant a precautionary stance when safety is at stake.",
+      "provider": "openai",
+      "model": "gpt-4o",
+      "tools": ["table_query"],
+      "connections": [],
+      "position": { "x": 900, "y": 200 }
+    }
+  ],
+  "sources": [
+    {
+      "id": "d1111111-1111-4111-8111-111111111111",
+      "name": "equipment-maintenance.csv",
+      "type": "dataset",
+      "content": "equipment_id,operating_hours,temperature_c,vibration_mm_s,pressure_bar,rul_days\nE001,8500,72.5,2.1,30.2,120\nE002,12000,88.0,4.8,28.5,30\nE003,6200,65.0,1.5,31.0,210\nE004,15000,92.0,5.5,27.0,15\nE005,9800,78.0,3.2,29.8,90\nE006,4300,60.0,1.1,31.5,260\nE007,11200,85.0,4.1,28.0,55\nE008,9200,80.0,3.5,29.0,\nE009,13500,90.0,5.0,27.5,\nE010,7000,68.0,1.9,30.8,\n",
+      "position": { "x": 120, "y": 480 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-analyst-dataset",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "d1111111-1111-4111-8111-111111111111"
+    }
+  ]
+}
