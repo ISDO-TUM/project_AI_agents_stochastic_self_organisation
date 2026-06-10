@@ -3,7 +3,7 @@ from typing import Any
 from groq import AsyncGroq
 
 from .credentials import resolve_api_key, resolve_base_url
-from .langfuse_setup import langfuse_context, observe
+from .langfuse_setup import observe, update_current_generation
 from .normalizer import NormalizedToolCall
 from .openai_provider import OpenAIProvider
 
@@ -42,7 +42,7 @@ class GroqProvider(OpenAIProvider):
     async def _send(self, kwargs: dict[str, Any]) -> Any:
         response = await self._get_client().chat.completions.create(**kwargs)
         usage = getattr(response, "usage", None)
-        langfuse_context.update_current_observation(
+        update_current_generation(
             model=kwargs.get("model"),
             input=kwargs.get("messages"),
             usage={

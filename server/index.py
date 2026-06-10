@@ -21,6 +21,7 @@ from server.routes import (
     models_router,
     rules_router,
     simulation_router,
+    statistics_router,
     test_router,
 )
 
@@ -128,6 +129,7 @@ app.include_router(models_router)
 app.include_router(benchmark_router)
 app.include_router(rules_router)
 app.include_router(simulation_router)
+app.include_router(statistics_router)
 app.include_router(test_router)
 
 

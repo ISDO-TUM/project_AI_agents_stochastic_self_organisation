@@ -4,7 +4,7 @@ from openai import AsyncOpenAI
 
 from .base_provider import BaseLLMProvider
 from .credentials import resolve_api_key, resolve_base_url
-from .langfuse_setup import langfuse_context, observe
+from .langfuse_setup import observe, update_current_generation
 from .normalizer import NormalizedToolCall, extract_openai_tool_calls
 
 # GPT-5 and GPT-5.4 families require max_completion_tokens (not max_tokens)
@@ -59,7 +59,7 @@ class OpenAIProvider(BaseLLMProvider):
     async def _send(self, kwargs: dict[str, Any]) -> Any:
         response = await self._get_client().chat.completions.create(**kwargs)
         usage = getattr(response, "usage", None)
-        langfuse_context.update_current_observation(
+        update_current_generation(
             model=kwargs.get("model"),
             input=kwargs.get("messages"),
             usage={

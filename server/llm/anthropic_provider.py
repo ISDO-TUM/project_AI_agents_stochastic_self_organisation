@@ -4,7 +4,7 @@ from anthropic import AsyncAnthropic
 
 from .base_provider import BaseLLMProvider
 from .credentials import resolve_api_key, resolve_base_url
-from .langfuse_setup import langfuse_context, observe
+from .langfuse_setup import observe, update_current_generation
 from .normalizer import NormalizedToolCall, extract_anthropic_tool_calls
 
 # max_tokens is required by the Anthropic API (no server-side default).
@@ -82,7 +82,7 @@ class AnthropicProvider(BaseLLMProvider):
     async def _send(self, kwargs: dict[str, Any]) -> Any:
         response = await self._get_client().messages.create(**kwargs)
         usage = getattr(response, "usage", None)
-        langfuse_context.update_current_observation(
+        update_current_generation(
             model=kwargs.get("model"),
             input=kwargs.get("messages"),
             usage={

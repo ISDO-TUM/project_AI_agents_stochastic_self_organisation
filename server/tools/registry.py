@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
-from server.schemas import ToolCall
 from server.tools.base import Tool
 from server.tools.builtin.files import FilesTool
+
+if TYPE_CHECKING:
+    from server.schemas import ToolCall
 
 # ── registry ───────────────────────────────────────────────────────
 
@@ -70,6 +72,8 @@ def create_tool_handler(
             return f"Unknown tool: {tool_name}"
         output: str = await tool.safe_execute(arguments, context)
         if used_tools is not None:
+            from server.schemas import ToolCall
+
             used_tools.append(ToolCall(name=tool_name, input=arguments, output=output))
         return output
 

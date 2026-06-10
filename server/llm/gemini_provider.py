@@ -22,7 +22,7 @@ import httpx
 
 from .base_provider import BaseLLMProvider
 from .credentials import resolve_api_key, resolve_base_url
-from .langfuse_setup import langfuse_context, observe
+from .langfuse_setup import observe, update_current_generation
 from .normalizer import NormalizedToolCall, extract_gemini_tool_calls
 
 _DEFAULT_MAX_TOKENS = 1024
@@ -82,7 +82,7 @@ class GeminiProvider(BaseLLMProvider):
                 raise RuntimeError(f"Gemini {response.status_code}: {response.text}")
             data = cast(dict[str, Any], response.json())
         usage_meta = data.get("usageMetadata", {})
-        langfuse_context.update_current_observation(
+        update_current_generation(
             model=model,
             input=body.get("contents"),
             usage={
