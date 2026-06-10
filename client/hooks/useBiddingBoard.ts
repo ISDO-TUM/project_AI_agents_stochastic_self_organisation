@@ -75,11 +75,13 @@ function parseBoard(steps: SimStep[]): BiddingBoardState {
     contributionById.set(c.id, c);
   };
 
-  // Wire a contribution to a gap (both directions), deduped.
   const link = (contribId: string, gapId: string) => {
     const c = contributionById.get(contribId);
     const gap = gapById.get(gapId);
-    if (c && !c.coversGapIds.includes(gapId)) c.coversGapIds.push(gapId);
+    const canonicalId = gap ? gap.id : gapId;
+    if (c && !c.coversGapIds.includes(canonicalId)) {
+      c.coversGapIds.push(canonicalId);
+    }
     if (gap && !gap.coveredByContributionIds.includes(contribId)) {
       gap.coveredByContributionIds.push(contribId);
     }
@@ -98,7 +100,13 @@ function parseBoard(steps: SimStep[]): BiddingBoardState {
       asArray(payload.gaps).forEach((raw, idx) => {
         const g = asObject(raw);
         const id = `${agentId}/g${idx}`;
-        if (gapById.has(id)) return;
+        const existing = gapById.get(id);
+        if (existing) {
+          // Re-bid from the same agent: refresh content, keep the stable card.
+          existing.reason = asString(g.reason);
+          existing.expects = asString(g.expects);
+          return;
+        }
         const entry: BoardGap = {
           id,
           postedById: agentId,
@@ -118,8 +126,16 @@ function parseBoard(steps: SimStep[]): BiddingBoardState {
         if (!data) return;
         // Stable id `${agentId}/c${idx}` mirrors the server's F{idx} finding
         // ids, so reuses_finding references resolve directly to this card.
+        const id = `${agentId}/c${idx}`;
+        const existing = contributionById.get(id);
+        if (existing) {
+          // Re-bid from the same agent: refresh content, keep the stable card.
+          existing.data = data;
+          existing.citation = asString(c.citation);
+          return;
+        }
         addContribution({
-          id: `${agentId}/c${idx}`,
+          id,
           agentId,
           agentName,
           data,
@@ -128,6 +144,39 @@ function parseBoard(steps: SimStep[]): BiddingBoardState {
           coversGapIds: [],
         });
       });
+    } else if (mt === "system_blackboard") {
+      // The gap board carries the server's canonical gap ids (`g0`,
+      // `r0g0`, …) alongside the verbatim reason/expects text. Alias those
+      // ids onto the gaps parsed from bids so that bidding_match and
+      // bidding_collaborators references — which use the server ids —
+      // resolve regardless of the server's id scheme.
+      const entryRe =
+        /^- gap_id: (.+)\n\s+posted_by: (.+)\n\s+reason: ([\s\S]*?)\n\s+expects: ([\s\S]*?)(?=\n- gap_id: |$)/gm;
+      for (const m of step.msg.matchAll(entryRe)) {
+        const [, rawId, postedByName, rawReason, rawExpects] = m;
+        const id = rawId.trim();
+        if (gapById.has(id)) continue;
+        const postedById = id.split("/")[0];
+        const reason = rawReason.trim();
+        const existing = gaps.find(
+          (g) => g.postedById === postedById && g.reason.trim() === reason,
+        );
+        if (existing) {
+          gapById.set(id, existing);
+          continue;
+        }
+        const entry: BoardGap = {
+          id,
+          postedById,
+          postedByName: postedByName.trim(),
+          reason,
+          expects: rawExpects.trim(),
+          coveredByContributionIds: [],
+          finalUncovered: null,
+        };
+        gapById.set(id, entry);
+        gaps.push(entry);
+      }
     } else if (mt === "bidding_match") {
       const payload = asObject(parseFencedJson(step.msg));
       const agentId = step.fromId ?? "";
@@ -153,6 +202,10 @@ function parseBoard(steps: SimStep[]): BiddingBoardState {
           const data = asString(c.data);
           if (!data) return;
           const cid = `${step.id}/${gapId}/${idx}/${jdx}`;
+          if (contributionById.has(cid)) {
+            link(cid, gapId);
+            return;
+          }
           addContribution({
             id: cid,
             agentId,
@@ -173,13 +226,15 @@ function parseBoard(steps: SimStep[]): BiddingBoardState {
         const id = asString(c.id);
         if (id) collaboratorIds.add(id);
       });
-      const uncoveredIds = new Set(
-        asArray<unknown>(payload.uncovered_gaps)
-          .map((raw) => asString(asObject(raw).gap_id))
-          .filter(Boolean),
-      );
+      // Resolve uncovered gap ids through gapById — the server's ids may be
+      // aliases of client-side gaps rather than their primary id.
+      const uncoveredGaps = new Set<BoardGap>();
+      asArray<unknown>(payload.uncovered_gaps).forEach((raw) => {
+        const g = gapById.get(asString(asObject(raw).gap_id));
+        if (g) uncoveredGaps.add(g);
+      });
       gaps.forEach((g) => {
-        g.finalUncovered = uncoveredIds.has(g.id);
+        g.finalUncovered = uncoveredGaps.has(g);
       });
     }
   }

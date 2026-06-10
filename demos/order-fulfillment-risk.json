@@ -1,0 +1,147 @@
+{
+  "agents": [
+    {
+      "id": "11111111-1111-4111-8111-111111111111",
+      "name": "Purchase Order Analyst",
+      "description": "Owns the purchase orders. Knows what each customer ordered and in what quantity.",
+      "systemPrompt": "You are the Purchase Order Analyst in a peer group reviewing order fulfilment. Your ONLY data source is the attached company_purchase_orders.csv (columns: order_id, order_date, customer_name, product_details, label). Use the `table_query` tool: action='load' the file by name, then action='read' the rows. In product_details each line item looks like '<no> <product name> <quantity> <prices...>' (e.g. '38 côte de blaye 49 210 8' = product 'côte de blaye', quantity 49). For each order_id under discussion, extract and SHARE the product names and ordered quantities, because the Inventory analyst needs them to check stock and the group needs them to assess fulfilment. You cannot see revenue, shipping, or stock — rely on your peers for those.",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["table_query"],
+      "connections": [
+        "22222222-2222-4222-8222-222222222222",
+        "33333333-3333-4333-8333-333333333333",
+        "44444444-4444-4444-8444-444444444444"
+      ],
+      "position": { "x": 320, "y": 200 }
+    },
+    {
+      "id": "22222222-2222-4222-8222-222222222222",
+      "name": "Invoicing & Finance Analyst",
+      "description": "Owns the invoices. Knows the billed total (revenue) and destination per order.",
+      "systemPrompt": "You are the Invoicing & Finance Analyst in a peer group reviewing order fulfilment. Your ONLY data source is the attached company_invoices.csv (columns: order_id, customer_id, order_date, contact_name, city, country, product_details, label). Use the `table_query` tool: action='load' then action='read'. The invoice total is embedded in product_details after the word 'totalprice' (e.g. 'totalprice 11493 2' means 11493.2 EUR). For each order_id, report the invoice total and the destination country, and call out the highest-revenue orders so the group can prioritise. You cannot see what was physically ordered, shipping status, or stock — rely on your peers for those.",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["table_query"],
+      "connections": [
+        "11111111-1111-4111-8111-111111111111",
+        "33333333-3333-4333-8333-333333333333",
+        "44444444-4444-4444-8444-444444444444"
+      ],
+      "position": { "x": 760, "y": 200 }
+    },
+    {
+      "id": "33333333-3333-4333-8333-333333333333",
+      "name": "Logistics Analyst",
+      "description": "Owns the shipping orders. Knows ship dates, carriers, and delivery lead times.",
+      "systemPrompt": "You are the Logistics Analyst in a peer group reviewing order fulfilment. Your ONLY data source is the attached company_shipping_orders.csv (columns: order_id, ship_city, ship_country, shipper_name, order_date, shipped_date, total_price, label). Use the `table_query` tool: action='load' then action='read'. For each order_id, compute the fulfilment lead time in days (shipped_date minus order_date), state which shipper handled it, and FLAG late shipments (lead time greater than 7 days). Share these lead times so the group can judge delivery risk. You cannot see what was ordered, revenue, or stock — rely on your peers for those.",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["table_query"],
+      "connections": [
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+        "44444444-4444-4444-8444-444444444444"
+      ],
+      "position": { "x": 320, "y": 560 }
+    },
+    {
+      "id": "44444444-4444-4444-8444-444444444444",
+      "name": "Inventory & Demand Analyst",
+      "description": "Owns the monthly category reports. Knows stock-on-hand and demand per product.",
+      "systemPrompt": "You are the Inventory & Demand Analyst in a peer group reviewing order fulfilment. Your ONLY data source is the attached company_reports.csv (monthly category reports; columns: report_month, category_id, category, product_details, label). Use the `table_query` tool: action='load' then action='read'. In product_details each product appears as '<name> <units_sold> <stock_on_hand> <price>' (e.g. 'côte de blaye 25 17 263 5' means 25 sold, 17 in stock, price 263.5). When the Purchase Order analyst names the products and quantities for an order, look up each product's most recent stock_on_hand and judge whether stock covers the ordered quantity; FLAG shortfalls explicitly (which product, ordered vs in stock). You cannot see orders, revenue, or shipping — ASK the Purchase Order analyst for the products and quantities you need.",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["table_query"],
+      "connections": [
+        "11111111-1111-4111-8111-111111111111",
+        "22222222-2222-4222-8222-222222222222",
+        "33333333-3333-4333-8333-333333333333"
+      ],
+      "position": { "x": 760, "y": 560 }
+    }
+  ],
+  "sources": [
+    {
+      "id": "a1111111-1111-4111-8111-111111111111",
+      "name": "company_purchase_orders.csv",
+      "type": "dataset",
+      "content": "order_id,order_date,customer_name,product_details,label\n10424,2017-01-23,jean fresnière,35 steeleye stout 60 14 4 38 côte de blaye 49 210 8 68 scottish longbreads 30 10 page 1,purchase Order\n10561,2017-06-06,maria larsson,44 gula malacca 10 19 45 51 manjimup dried apples 50 53 page 1,purchase Order\n10641,2017-08-22,carlos hernández,2 chang 50 19 40 boston crab meat 60 18 4 page 1,purchase Order\n10817,2018-01-06,philip cramer,26 gumbär gummibärchen 40 31 23 38 côte de blaye 30 263 5 40 boston crab meat 60 18 4 62 tarte au sucre 25 49 3 page 1,purchase Order\n10977,2018-03-26,maria larsson,39 chartreuse verte 30 18 47 zaanse koeken 30 9 5 51 manjimup dried apples 10 53 63 vegie-spread 20 43 9 page 1,purchase Order\n",
+      "position": { "x": 80, "y": 380 }
+    },
+    {
+      "id": "a2222222-2222-4222-8222-222222222222",
+      "name": "company_invoices.csv",
+      "type": "dataset",
+      "content": "order_id,customer_id,order_date,contact_name,city,country,product_details,label\n10424,merep,2017-01-23,jean fresnière,montréal,canada,35 steeleye stout 60 14 4 38 côte de blaye 49 210 8 68 scottish longbreads 30 10 0 totalprice 11493 2 page 1,invoice\n10561,folko,2017-06-06,maria larsson,bräcke,sweden,44 gula malacca 10 19 45 51 manjimup dried apples 50 53 0 totalprice 2844 5 page 1,invoice\n10641,hilaa,2017-08-22,carlos hernández,san cristóbal,venezuela,2 chang 50 19 0 40 boston crab meat 60 18 4 totalprice 2054 0 page 1,invoice\n10817,koene,2018-01-06,philip cramer,brandenburg,germany,26 gumbär gummibärchen 40 31 23 38 côte de blaye 30 263 5 40 boston crab meat 60 18 4 62 tarte au sucre 25 49 3 totalprice 11490 7 page 1,invoice\n10977,folko,2018-03-26,maria larsson,bräcke,sweden,39 chartreuse verte 30 18 0 47 zaanse koeken 30 9 5 51 manjimup dried apples 10 53 0 63 vegie-spread 20 43 9 totalprice 2233 0 page 1,invoice\n",
+      "position": { "x": 1000, "y": 380 }
+    },
+    {
+      "id": "a3333333-3333-4333-8333-333333333333",
+      "name": "company_shipping_orders.csv",
+      "type": "dataset",
+      "content": "order_id,ship_city,ship_country,shipper_name,order_date,shipped_date,total_price,label\n10424,montréal,canada,united package,2017-01-23,2017-01-27,11493 2,ShippingOrder\n10561,bräcke,sweden,united package,2017-06-06,2017-06-09,2844 5,ShippingOrder\n10641,san cristóbal,venezuela,united package,2017-08-22,2017-08-26,2054 0,ShippingOrder\n10817,brandenburg,germany,united package,2018-01-06,2018-01-13,11490 7,ShippingOrder\n10977,bräcke,sweden,federal shipping,2018-03-26,2018-04-10,2233 0,ShippingOrder\n",
+      "position": { "x": 80, "y": 740 }
+    },
+    {
+      "id": "a4444444-4444-4444-8444-444444444444",
+      "name": "company_reports.csv",
+      "type": "dataset",
+      "content": "report_month,category_id,category,product_details,label\n2018-01,1,beverages,chai 84 39 18 chang 62 17 19 côte de blaye 70 17 263 5 chartreuse verte 59 69 18,report\n2018-04,1,beverages,chang 201 17 19 côte de blaye 25 17 263 5 chartreuse verte 22 69 18 ipoh coffee 60 17 46,report\n2018-04,7,produce,uncle bob s organic dried pears 124 15 30 rössle sauerkraut 90 26 45 6 manjimup dried apples 133 20 53 longlife tofu 20 4 10,report\n2018-02,8,seafood,ikura 80 31 31 konbu 73 24 6 boston crab meat 103 123 18 4 nord-ost matjeshering 126 10 25 89,report\n2018-03,3,confections,pavlova 173 29 17 45 tarte au sucre 156 17 49 3 zaanse koeken 49 36 9 5 scottish longbreads 80 6 12 5,report\n",
+      "position": { "x": 1000, "y": 740 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-po-inv",
+      "from": "11111111-1111-4111-8111-111111111111",
+      "to": "22222222-2222-4222-8222-222222222222"
+    },
+    {
+      "id": "e-po-ship",
+      "from": "11111111-1111-4111-8111-111111111111",
+      "to": "33333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-po-inv2",
+      "from": "11111111-1111-4111-8111-111111111111",
+      "to": "44444444-4444-4444-8444-444444444444"
+    },
+    {
+      "id": "e-inv-ship",
+      "from": "22222222-2222-4222-8222-222222222222",
+      "to": "33333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-inv-inv2",
+      "from": "22222222-2222-4222-8222-222222222222",
+      "to": "44444444-4444-4444-8444-444444444444"
+    },
+    {
+      "id": "e-ship-inv2",
+      "from": "33333333-3333-4333-8333-333333333333",
+      "to": "44444444-4444-4444-8444-444444444444"
+    },
+    {
+      "id": "e-po-data",
+      "from": "11111111-1111-4111-8111-111111111111",
+      "to": "a1111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "e-inv-data",
+      "from": "22222222-2222-4222-8222-222222222222",
+      "to": "a2222222-2222-4222-8222-222222222222"
+    },
+    {
+      "id": "e-ship-data",
+      "from": "33333333-3333-4333-8333-333333333333",
+      "to": "a3333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-rep-data",
+      "from": "44444444-4444-4444-8444-444444444444",
+      "to": "a4444444-4444-4444-8444-444444444444"
+    }
+  ],
+  "selectedRules": []
+}
