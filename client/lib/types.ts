@@ -1,5 +1,5 @@
 export type Provider = "openai" | "anthropic" | "groq" | "gemini";
-export type SourceType = "text" | "document";
+export type SourceType = "text" | "document" | "dataset";
 export type SimStepType =
   | "system"
   | "agent-to-agent"
@@ -9,7 +9,10 @@ export type SimStepType =
 export type ConsensusMode =
   | "broadcast_no_consensus"
   | "weighted_opinion_pooling"
-  | "plurality_voting";
+  | "plurality_voting"
+  | "bidding";
+
+export type TopologyMode = "static" | "dynamic";
 
 export interface Position {
   x: number;
@@ -54,11 +57,19 @@ export interface SimStep {
   label: string;
   msg: string;
   type: SimStepType;
+  /** Raw server-side message_type (e.g. "bidding_bid"). Used by views that
+   *  need to parse the message body (bidding board) rather than render a label. */
+  messageType?: string;
   roundIndex?: number;
   target?: string;
   nodeId?: string;
   fromId?: string;
   toId?: string;
+  /** lucide-react icon name overriding the type-derived default. */
+  icon?: string;
+  /** True for a connection formed at runtime (dynamic "phone-book") rather than
+   *  one present in the static seed graph. */
+  dynamic?: boolean;
 }
 
 export interface AnimatedParticle {
@@ -119,6 +130,12 @@ export interface HistoryMessage {
   messageType: string;
   message: string | null;
   createdAt: string;
+}
+
+export interface ConversationTurn {
+  prompt: string;
+  mode: ConsensusMode;
+  answer: string | null;
 }
 
 export interface TrialSummary {

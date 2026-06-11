@@ -112,8 +112,8 @@ export function HistoryPage({ onBack }: HistoryPageProps) {
             fontWeight: 700,
           }}
         >
-          <LIcon name="ArrowLeft" size={16} color="currentColor" />
-          Canvas
+          <LIcon name="X" size={16} color="currentColor" />
+          Close
         </button>
         <div style={{ fontSize: 14, fontWeight: 800 }}>Simulation History</div>
         <button

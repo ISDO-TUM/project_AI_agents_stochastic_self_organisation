@@ -133,6 +133,11 @@ app.include_router(statistics_router)
 app.include_router(test_router)
 
 
+@app.get("/api/health", tags=["Health"], summary="Health check")
+async def health() -> dict[str, str]:
+    return {"status": "ok"}
+
+
 async def mock_agent_stream() -> AsyncGenerator[str, None]:
     """A mock stream to test your frontend-backend connection."""
     yield f"data: {json.dumps({'status': 'Backend connected. Agents standing by.'})}\n\n"

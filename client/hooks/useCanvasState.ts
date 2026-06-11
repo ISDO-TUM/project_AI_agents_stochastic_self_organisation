@@ -1,7 +1,14 @@
 "use client";
 
 import { useReducer, useEffect, useCallback } from "react";
-import { CanvasState, CanvasAction, Agent, Edge, Source } from "@/lib/types";
+import {
+  CanvasState,
+  CanvasAction,
+  Agent,
+  Edge,
+  Source,
+  SourceType,
+} from "@/lib/types";
 import { uuid, autoLayout } from "@/lib/utils";
 import {
   fetchAgents,
@@ -17,6 +24,14 @@ import {
   detachFile,
   patchAgentTools,
 } from "@/lib/api";
+
+// The backend stores knowledge files as plain (id, name, content) rows — it has
+// no notion of "dataset" vs "text". We infer it from the file extension so a
+// reloaded CSV still gets the dataset UI (type select, CSV preview, etc.)
+// instead of silently reverting to "text" and losing its preview.
+function inferSourceType(name: string): SourceType {
+  return /\.(csv|tsv)$/i.test(name) ? "dataset" : "text";
+}
 
 function reducer(state: CanvasState, action: CanvasAction): CanvasState {
   const { agents, sources, edges } = state;
@@ -113,7 +128,7 @@ export function useCanvasState() {
       const sources: Source[] = fileList.map((f, i) => ({
         id: f.id,
         name: f.name,
-        type: "text" as const,
+        type: inferSourceType(f.name),
         content: f.content,
         position: {
           x: 180 + (i % 4) * 220,

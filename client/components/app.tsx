@@ -1,7 +1,14 @@
 "use client";
 
 import { useState, useEffect, useCallback, useRef } from "react";
-import { CanvasState, ConsensusMode, Rule, Tweaks } from "@/lib/types";
+import { createPortal } from "react-dom";
+import {
+  CanvasState,
+  ConsensusMode,
+  Rule,
+  TopologyMode,
+  Tweaks,
+} from "@/lib/types";
 import { BURG } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { useCanvasState } from "@/hooks/useCanvasState";
@@ -25,6 +32,7 @@ import { HistoryPage } from "@/components/history-page";
 import { PromptBar } from "@/components/prompt-bar";
 import { ContextMenu, ContextMenuItem } from "@/components/context-menu";
 import { TweaksPanel } from "@/components/tweaks-panel";
+
 import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
 import { getTheme } from "@/lib/theme";
@@ -63,6 +71,8 @@ export function App() {
     cur,
     setCur,
     simMode,
+    running,
+    turns,
     logExp,
     setLogExp,
     activeNode,
@@ -71,12 +81,14 @@ export function App() {
     particles,
     runSim,
     stopSim,
+    dynamicEdges,
+    resetContext,
   } = useSimulation(agents, edges);
 
   const [logSidebarWidth, setLogSidebarWidth] = useState(290);
   const prevSidebarWidth = useRef(290);
   const [panAdjust, setPanAdjust] = useState({ dx: 0, seq: 0 });
-  const [view, setView] = useState<"canvas" | "history">("canvas");
+  const [showHistory, setShowHistory] = useState(false);
 
   const handleSidebarWidthChange = useCallback((w: number) => {
     const delta = w - prevSidebarWidth.current;
@@ -103,6 +115,13 @@ export function App() {
   const [selectedRules, setSelectedRules] = useState<Set<string>>(new Set());
   const [importError, setImportError] = useState<string | null>(null);
 
+  // Run configuration — edited in the Settings panel, read at run start.
+  const [consensusMode, setConsensusMode] =
+    useState<ConsensusMode>("plurality_voting");
+  const [topology, setTopology] = useState<TopologyMode>("static");
+  const [fanout, setFanout] = useState(3);
+  const [biddingBoardOpen, setBiddingBoardOpen] = useState(false);
+
   useEffect(() => {
     fetchRules()
       .then((rs) => {
@@ -125,14 +144,15 @@ export function App() {
   }, []);
 
   const handleRun = useCallback(
-    (prompt: string, mode: ConsensusMode) => {
+    (prompt: string) => {
       const active = rules.filter((r) => selectedRules.has(r.id));
       const ruleset = active.length
         ? active.map((r) => `- ${r.instruction}`).join("\n")
         : undefined;
-      runSim(prompt, mode, ruleset);
+      if (consensusMode === "bidding") setBiddingBoardOpen(true);
+      runSim(prompt, consensusMode, ruleset, topology, fanout);
     },
-    [rules, selectedRules, runSim],
+    [rules, selectedRules, runSim, consensusMode, topology, fanout],
   );
   const importErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -374,6 +394,11 @@ export function App() {
     setSelNode(null);
   }, [setPanel, setSelNode]);
 
+  const onAddDataset = useCallback(() => {
+    setPanel({ type: "source", id: null, sourceType: "dataset" });
+    setSelNode(null);
+  }, [setPanel, setSelNode]);
+
   const onClear = useCallback(async () => {
     await clearAll().catch(() => {});
     dispatch({ type: "CLEAR" });
@@ -397,10 +422,6 @@ export function App() {
       : null;
   const t = getTheme(dark);
   const hasNodes = agents.length > 0 || sources.length > 0;
-
-  if (view === "history") {
-    return <HistoryPage onBack={() => setView("canvas")} />;
-  }
 
   return (
     <div
@@ -454,6 +475,7 @@ export function App() {
           agents={agents}
           sources={sources}
           edges={edges}
+          dynamicEdges={simMode ? dynamicEdges : []}
           selectedNode={selNode}
           selectedEdge={selEdge}
           onSelectNode={selectNode}
@@ -469,6 +491,25 @@ export function App() {
           tweaks={tweaks}
           onCanvasClick={onCanvasClick}
           panAdjust={panAdjust}
+          phonebook={
+            topology === "dynamic"
+              ? {
+                  agents,
+                  steps,
+                  currentStep: cur,
+                  dynamicEdges: simMode ? dynamicEdges : [],
+                  simMode,
+                }
+              : null
+          }
+          biddingBoard={
+            simMode && biddingBoardOpen && consensusMode === "bidding"
+              ? {
+                  steps,
+                  onClose: () => setBiddingBoardOpen(false),
+                }
+              : null
+          }
         />
 
         <Toolbar
@@ -476,19 +517,25 @@ export function App() {
           onToggleTheme={toggleTheme}
           onAddAgent={onAddAgent}
           onAddFile={onAddFile}
+          onAddDataset={onAddDataset}
           onClear={onClear}
           onStop={stopSim}
           onAutoLayout={onAutoLayout}
           onExport={exportCanvas}
           onImport={importCanvas}
-          onOpenHistory={() => setView("history")}
+          onOpenHistory={() => setShowHistory(true)}
           showTweaks={showTweaks}
           onToggleTweaks={onToggleTweaks}
+          showBiddingBoardToggle={consensusMode === "bidding"}
+          biddingBoardOpen={biddingBoardOpen}
+          onToggleBiddingBoard={() => setBiddingBoardOpen((x) => !x)}
         />
 
         <PromptBar
-          simMode={simMode}
+          running={running}
+          turnCount={turns.length}
           onRun={handleRun}
+          onResetContext={resetContext}
           onOpenKeys={() => setShowTweaks(true)}
         />
       </div>
@@ -512,6 +559,14 @@ export function App() {
           rules={rules}
           selectedRules={selectedRules}
           onToggleRule={toggleRule}
+          consensusMode={consensusMode}
+          onConsensusModeChange={setConsensusMode}
+          consensusLocked={agents.length < 2}
+          topology={topology}
+          onTopologyChange={setTopology}
+          fanout={fanout}
+          onFanoutChange={setFanout}
+          simRunning={simMode}
           onClose={() => setShowTweaks(false)}
         />
       )}
@@ -521,6 +576,8 @@ export function App() {
           key={panel.id ?? "new-agent"}
           agent={panelAgent}
           agents={agents}
+          sources={sources}
+          edges={edges}
           onSave={async (data) => {
             await saveAgent(data);
             setPanel(null);
@@ -538,6 +595,7 @@ export function App() {
         <SourcePanel
           key={panel.id ?? "new-source"}
           source={panelSource}
+          initialType={panel.sourceType}
           onSave={(data) => {
             saveSource(data);
             setPanel(null);
@@ -573,6 +631,40 @@ export function App() {
           {importError}
         </div>
       )}
+
+      {showHistory &&
+        createPortal(
+          <div
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 300,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              backdropFilter: "blur(4px)",
+              background: dark ? "rgba(6,5,12,0.65)" : "rgba(240,238,248,0.65)",
+            }}
+            onClick={() => setShowHistory(false)}
+          >
+            <div
+              style={{
+                width: "min(1100px, 92vw)",
+                height: "min(820px, 88vh)",
+                borderRadius: 16,
+                overflow: "hidden",
+                boxShadow: dark
+                  ? "0 24px 72px rgba(0,0,0,0.65)"
+                  : "0 16px 48px rgba(0,0,0,0.18)",
+                border: `1px solid ${t.borderHi}`,
+              }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <HistoryPage onBack={() => setShowHistory(false)} />
+            </div>
+          </div>,
+          document.body,
+        )}
 
       {ctx && (
         <ContextMenu

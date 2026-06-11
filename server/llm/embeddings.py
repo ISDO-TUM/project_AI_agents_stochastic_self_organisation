@@ -12,7 +12,8 @@ from .credentials import resolve_api_key, resolve_base_url
 
 logger = logging.getLogger(__name__)
 
-_DEFAULT_MODEL = "text-embedding-3-small"
+DEFAULT_EMBED_MODEL = "text-embedding-3-small"
+_DEFAULT_MODEL = DEFAULT_EMBED_MODEL  # backward-compatible alias
 
 
 def _get_embedding_client() -> AsyncOpenAI:
@@ -48,11 +49,19 @@ async def embed_texts(
         return None
 
 
-def cosine_similarity(a: list[float], b: list[float]) -> float:
-    """Cosine similarity between two vectors. Pure Python, no numpy."""
+def cosine(a: list[float], b: list[float]) -> float:
+    """Cosine similarity in [-1, 1]; 0.0 when either vector has no magnitude.
+
+    Pure Python, no numpy. Used by both weighted opinion pooling and the
+    phone-registry semantic search.
+    """
     dot = sum(x * y for x, y in zip(a, b, strict=True))
     norm_a = math.sqrt(sum(x * x for x in a))
     norm_b = math.sqrt(sum(x * x for x in b))
     if norm_a == 0.0 or norm_b == 0.0:
         return 0.0
     return dot / (norm_a * norm_b)
+
+
+# Backward-compatible alias (introduced with weighted opinion pooling).
+cosine_similarity = cosine

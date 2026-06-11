@@ -43,6 +43,9 @@ COPY --from=builder --chown=nextjs:nodejs /workspace/client/.next/standalone ./
 # Copy static files to the correct subfolder
 COPY --from=builder --chown=nextjs:nodejs /workspace/client/.next/static ./client/.next/static
 
+# Standalone output omits `public/` — copy it next to server.js so Next.js can serve it
+COPY --from=builder --chown=nextjs:nodejs /workspace/client/public ./client/public
+
 USER nextjs
 EXPOSE 3000
 

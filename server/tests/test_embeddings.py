@@ -1,6 +1,9 @@
+import math
 from unittest.mock import AsyncMock, MagicMock, patch
 
-from server.llm.embeddings import cosine_similarity, embed_texts
+import pytest
+
+from server.llm.embeddings import cosine, cosine_similarity, embed_texts
 
 
 def test_cosine_similarity_identical() -> None:
@@ -52,3 +55,26 @@ async def test_embed_texts_batch_preserves_order(mock_client_fn: MagicMock) -> N
 
     result = await embed_texts(["first", "second"])
     assert result == [[0.1, 0.2], [0.3, 0.4]]
+
+
+# ── canonical `cosine` name used by the phone-registry semantic search ──
+
+
+def test_cosine_identical_is_one() -> None:
+    assert cosine([1.0, 0.0, 0.0], [1.0, 0.0, 0.0]) == pytest.approx(1.0)
+
+
+def test_cosine_orthogonal_is_zero() -> None:
+    assert cosine([1.0, 0.0], [0.0, 1.0]) == pytest.approx(0.0)
+
+
+def test_cosine_handles_zero_vector() -> None:
+    assert cosine([0.0, 0.0], [1.0, 1.0]) == 0.0
+
+
+def test_cosine_known_value() -> None:
+    assert cosine([1.0, 0.0], [1.0, 1.0]) == pytest.approx(1 / math.sqrt(2))
+
+
+def test_cosine_alias_points_at_cosine() -> None:
+    assert cosine_similarity is cosine

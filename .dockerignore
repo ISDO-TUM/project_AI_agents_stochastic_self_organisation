@@ -1,15 +1,15 @@
 # Python
-api/.venv
-api/__pycache__
-api/**/*.pyc
-api/**/*.pyo
-api/.env
-api/requirements-dev.txt
-api/.coverage*
+server/.venv
+server/__pycache__
+server/**/*.pyc
+server/**/*.pyo
+server/.env
+server/requirements-dev.txt
+server/.coverage*
 
 # Node
-app/node_modules
-app/.next
+client/node_modules
+client/.next
 node_modules
 *.tsbuildinfo
 

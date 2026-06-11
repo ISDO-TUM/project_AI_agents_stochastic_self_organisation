@@ -93,7 +93,7 @@ Common causes: a missing `NEXT_PUBLIC_*` environment variable required at build 
 Most likely cause: stale local dependencies. Sync them:
 
 ```bash
-cd server && uv pip install -r requirements-dev.txt
+cd server && uv sync --locked
 pnpm install
 ```
 
