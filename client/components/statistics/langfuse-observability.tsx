@@ -4,7 +4,6 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Legend,
   Line,
   LineChart,
   ResponsiveContainer,
@@ -12,6 +11,13 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
+import {
+  ChartLegend,
+  EmptyState,
+  Kpi,
+  StatCard,
+  chartTooltipProps,
+} from "@/components/statistics/primitives";
 import { getTheme } from "@/lib/theme";
 import type { LangfuseStats } from "@/lib/types";
 
@@ -23,120 +29,64 @@ function formatMs(value: number) {
   return value > 0 ? `${Math.round(value)} ms` : "0 ms";
 }
 
-function Kpi({
-  label,
-  value,
-  dark,
-}: {
-  label: string;
-  value: number | string;
-  dark: boolean;
-}) {
-  const t = getTheme(dark);
-  return (
-    <div
-      style={{
-        background: t.surface,
-        border: `1px solid ${t.border}`,
-        borderRadius: 8,
-        padding: "14px 16px",
-        minWidth: 150,
-        flex: "1 1 150px",
-      }}
-    >
-      <div style={{ color: t.textSub, fontSize: 11, fontWeight: 600 }}>
-        {label}
-      </div>
-      <div
-        style={{
-          color: t.text,
-          fontSize: 23,
-          fontWeight: 700,
-          overflowWrap: "anywhere",
-        }}
-      >
-        {value}
-      </div>
-    </div>
-  );
-}
-
-function Panel({
-  title,
-  children,
-  dark,
-}: {
-  title: string;
-  children: React.ReactNode;
-  dark: boolean;
-}) {
-  const t = getTheme(dark);
-  return (
-    <div
-      style={{
-        background: t.surface,
-        border: `1px solid ${t.border}`,
-        borderRadius: 8,
-        padding: 16,
-        minHeight: 330,
-      }}
-    >
-      <div
-        style={{
-          color: t.text,
-          fontSize: 13,
-          fontWeight: 600,
-          marginBottom: 8,
-        }}
-      >
-        {title}
-      </div>
-      {children}
-    </div>
-  );
-}
-
 export function LlmUsageSummaryCards({
   langfuse,
   dark,
+  delay = 0,
 }: {
   langfuse: LangfuseStats;
   dark: boolean;
+  delay?: number;
 }) {
   return (
     <div
       style={{
-        display: "flex",
-        gap: 10,
-        flexWrap: "wrap",
-        gridColumn: "1 / -1",
+        display: "grid",
+        gridTemplateColumns: "repeat(auto-fit, minmax(min(160px, 100%), 1fr))",
+        gap: 12,
       }}
     >
-      <Kpi label="Traces" value={langfuse.summary.traceCount} dark={dark} />
+      <Kpi
+        label="Traces"
+        icon="ListTree"
+        value={langfuse.summary.traceCount}
+        dark={dark}
+        delay={delay}
+      />
       <Kpi
         label="Generations"
+        icon="Sparkles"
         value={langfuse.summary.generationCount}
         dark={dark}
+        delay={delay + 40}
       />
       <Kpi
         label="Total tokens"
+        icon="Coins"
         value={langfuse.summary.totalTokens}
         dark={dark}
+        delay={delay + 80}
       />
       <Kpi
         label="Estimated cost"
+        icon="CircleDollarSign"
         value={formatCost(langfuse.summary.totalCost)}
         dark={dark}
+        delay={delay + 120}
       />
       <Kpi
         label="Avg latency"
+        icon="Timer"
         value={formatMs(langfuse.summary.averageLatencyMs)}
         dark={dark}
+        delay={delay + 160}
       />
       <Kpi
         label="Slowest model"
+        icon="Snail"
         value={langfuse.summary.slowestModel ?? "Unknown"}
         dark={dark}
+        delay={delay + 200}
       />
     </div>
   );
@@ -145,11 +95,14 @@ export function LlmUsageSummaryCards({
 export function TokensByModelChart({
   langfuse,
   dark,
+  delay = 0,
 }: {
   langfuse: LangfuseStats;
   dark: boolean;
+  delay?: number;
 }) {
   const t = getTheme(dark);
+  const tt = chartTooltipProps(dark);
   const modelData = langfuse.models.map((model) => ({
     name: model.model,
     "Input tokens": model.inputTokens,
@@ -157,96 +110,174 @@ export function TokensByModelChart({
   }));
 
   return (
-    <Panel title="Tokens by model" dark={dark}>
-      <ResponsiveContainer width="100%" height={280}>
-        <BarChart data={modelData}>
-          <CartesianGrid strokeDasharray="3 3" stroke={t.border} />
-          <XAxis dataKey="name" stroke={t.textSub} fontSize={11} />
-          <YAxis stroke={t.textSub} fontSize={11} allowDecimals={false} />
-          <Tooltip
-            contentStyle={{
-              background: t.surface,
-              border: `1px solid ${t.border}`,
-              color: t.text,
-            }}
+    <StatCard
+      title="Tokens by model"
+      icon="Boxes"
+      dark={dark}
+      delay={delay}
+      minHeight={320}
+      meta={
+        <ChartLegend
+          items={[
+            { label: "Input", color: "#5a8bce" },
+            { label: "Output", color: "#8b1a2f" },
+          ]}
+          dark={dark}
+        />
+      }
+    >
+      <ResponsiveContainer width="100%" height={270}>
+        <BarChart
+          data={modelData}
+          barGap={3}
+          barCategoryGap="30%"
+          margin={{ top: 6, right: 12, bottom: 0, left: 0 }}
+        >
+          <CartesianGrid
+            vertical={false}
+            strokeDasharray="3 3"
+            stroke={t.border}
           />
-          <Legend wrapperStyle={{ fontSize: 11, color: t.textSub }} />
-          <Bar dataKey="Input tokens" fill="#5a8bce" />
-          <Bar dataKey="Output tokens" fill="#8b1a2f" />
+          <XAxis
+            dataKey="name"
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: t.textSub, fontSize: 11 }}
+          />
+          <YAxis
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: t.textSub, fontSize: 11 }}
+            allowDecimals={false}
+          />
+          <Tooltip
+            contentStyle={tt.contentStyle}
+            labelStyle={tt.labelStyle}
+            itemStyle={tt.itemStyle}
+            cursor={{ fill: t.hover }}
+          />
+          <Bar
+            dataKey="Input tokens"
+            fill="#5a8bce"
+            radius={[4, 4, 0, 0]}
+            maxBarSize={26}
+          />
+          <Bar
+            dataKey="Output tokens"
+            fill="#8b1a2f"
+            radius={[4, 4, 0, 0]}
+            maxBarSize={26}
+          />
         </BarChart>
       </ResponsiveContainer>
-    </Panel>
+    </StatCard>
   );
 }
 
 export function PerAgentLlmUsageChart({
   langfuse,
   dark,
+  delay = 0,
 }: {
   langfuse: LangfuseStats;
   dark: boolean;
+  delay?: number;
 }) {
   const t = getTheme(dark);
+  const tt = chartTooltipProps(dark);
 
   const agentData = langfuse.agents.map((agent) => ({
     name: agent.agentName,
     Tokens: agent.totalTokens,
-    Cost: agent.totalCost,
     "Avg latency": Math.round(agent.averageLatencyMs),
   }));
-  const agentChartHeight = Math.max(280, langfuse.agents.length * 42 + 48);
+  const agentChartHeight = Math.max(260, langfuse.agents.length * 46 + 40);
   const agentYAxisWidth = Math.min(
     220,
     Math.max(96, ...langfuse.agents.map((agent) => agent.agentName.length * 7)),
   );
 
   return (
-    <Panel title="Per-agent LLM usage" dark={dark}>
+    <StatCard
+      title="Per-agent LLM usage"
+      icon="Users"
+      dark={dark}
+      delay={delay}
+      minHeight={320}
+      meta={
+        <ChartLegend
+          items={[
+            { label: "Tokens", color: "#6ec1a8" },
+            { label: "Avg latency (ms)", color: "#d8b15a" },
+          ]}
+          dark={dark}
+        />
+      }
+    >
       <ResponsiveContainer width="100%" height={agentChartHeight}>
         <BarChart
           data={agentData}
           layout="vertical"
-          margin={{ top: 8, right: 20, bottom: 8, left: 8 }}
+          barGap={2}
+          barCategoryGap="26%"
+          margin={{ top: 4, right: 20, bottom: 0, left: 0 }}
         >
-          <CartesianGrid strokeDasharray="3 3" stroke={t.border} />
+          <CartesianGrid
+            horizontal={false}
+            strokeDasharray="3 3"
+            stroke={t.border}
+          />
           <XAxis
             type="number"
-            stroke={t.textSub}
-            fontSize={11}
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: t.textSub, fontSize: 11 }}
             allowDecimals={false}
           />
           <YAxis
             type="category"
             dataKey="name"
-            stroke={t.textSub}
-            fontSize={11}
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: t.textSub, fontSize: 11 }}
             width={agentYAxisWidth}
             interval={0}
           />
           <Tooltip
-            contentStyle={{
-              background: t.surface,
-              border: `1px solid ${t.border}`,
-              color: t.text,
-            }}
+            contentStyle={tt.contentStyle}
+            labelStyle={tt.labelStyle}
+            itemStyle={tt.itemStyle}
+            cursor={{ fill: t.hover }}
           />
-          <Legend wrapperStyle={{ fontSize: 11, color: t.textSub }} />
-          <Bar dataKey="Tokens" fill="#6ec1a8" />
-          <Bar dataKey="Avg latency" fill="#d8b15a" />
+          <Bar
+            dataKey="Tokens"
+            fill="#6ec1a8"
+            radius={[0, 4, 4, 0]}
+            maxBarSize={10}
+          />
+          <Bar
+            dataKey="Avg latency"
+            fill="#d8b15a"
+            radius={[0, 4, 4, 0]}
+            maxBarSize={10}
+          />
         </BarChart>
       </ResponsiveContainer>
-    </Panel>
+    </StatCard>
   );
 }
 
 export function LlmRoundsChart({
   langfuse,
   dark,
+  delay = 0,
 }: {
   langfuse: LangfuseStats;
   dark: boolean;
+  delay?: number;
 }) {
   const t = getTheme(dark);
+  const tt = chartTooltipProps(dark);
   const roundData = langfuse.rounds.map((round) => ({
     round: round.roundIndex ? `R${round.roundIndex}` : "Unknown",
     Tokens: round.totalTokens,
@@ -255,41 +286,78 @@ export function LlmRoundsChart({
   }));
 
   return (
-    <Panel title="Cost and tokens over rounds" dark={dark}>
-      <ResponsiveContainer width="100%" height={280}>
-        <LineChart data={roundData}>
-          <CartesianGrid strokeDasharray="3 3" stroke={t.border} />
-          <XAxis dataKey="round" stroke={t.textSub} fontSize={11} />
-          <YAxis stroke={t.textSub} fontSize={11} allowDecimals={false} />
-          <Tooltip
-            contentStyle={{
-              background: t.surface,
-              border: `1px solid ${t.border}`,
-              color: t.text,
-            }}
+    <StatCard
+      title="Cost and tokens over rounds"
+      icon="TrendingUp"
+      dark={dark}
+      delay={delay}
+      minHeight={320}
+      meta={
+        <ChartLegend
+          items={[
+            { label: "Tokens", color: "#5a8bce" },
+            { label: "Cost", color: "#c4374f" },
+            { label: "Avg latency (ms)", color: "#d8b15a" },
+          ]}
+          dark={dark}
+        />
+      }
+    >
+      <ResponsiveContainer width="100%" height={270}>
+        <LineChart
+          data={roundData}
+          margin={{ top: 6, right: 12, bottom: 0, left: 0 }}
+        >
+          <CartesianGrid
+            vertical={false}
+            strokeDasharray="3 3"
+            stroke={t.border}
           />
-          <Legend wrapperStyle={{ fontSize: 11, color: t.textSub }} />
+          <XAxis
+            dataKey="round"
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: t.textSub, fontSize: 11 }}
+          />
+          <YAxis
+            axisLine={false}
+            tickLine={false}
+            tick={{ fill: t.textSub, fontSize: 11 }}
+            allowDecimals={false}
+          />
+          <Tooltip
+            contentStyle={tt.contentStyle}
+            labelStyle={tt.labelStyle}
+            itemStyle={tt.itemStyle}
+            cursor={{ stroke: t.borderHi }}
+          />
           <Line
             type="monotone"
             dataKey="Tokens"
             stroke="#5a8bce"
             strokeWidth={2}
+            dot={false}
+            activeDot={{ r: 4, strokeWidth: 0 }}
           />
           <Line
             type="monotone"
             dataKey="Cost"
-            stroke="#8b1a2f"
+            stroke="#c4374f"
             strokeWidth={2}
+            dot={false}
+            activeDot={{ r: 4, strokeWidth: 0 }}
           />
           <Line
             type="monotone"
             dataKey="Avg latency"
             stroke="#d8b15a"
             strokeWidth={2}
+            dot={false}
+            activeDot={{ r: 4, strokeWidth: 0 }}
           />
         </LineChart>
       </ResponsiveContainer>
-    </Panel>
+    </StatCard>
   );
 }
 
@@ -300,38 +368,35 @@ export function LangfuseObservability({
   langfuse: LangfuseStats;
   dark: boolean;
 }) {
-  const t = getTheme(dark);
-
   if (!langfuse.available) {
     return (
-      <div
-        style={{
-          background: t.surface,
-          border: `1px solid ${t.border}`,
-          borderRadius: 8,
-          color: t.textSub,
-          padding: 18,
-        }}
-      >
-        {langfuse.message ??
-          "No Langfuse statistics are available for this trial."}
-      </div>
+      <EmptyState
+        icon="Cpu"
+        title="No LLM usage data"
+        sub={
+          langfuse.message ??
+          "No Langfuse statistics are available for this trial."
+        }
+        dark={dark}
+      />
     );
   }
 
   return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "repeat(auto-fit, minmax(min(360px, 100%), 1fr))",
-        gap: 16,
-      }}
-    >
+    <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
       <LlmUsageSummaryCards langfuse={langfuse} dark={dark} />
-      <TokensByModelChart langfuse={langfuse} dark={dark} />
-      <PerAgentLlmUsageChart langfuse={langfuse} dark={dark} />
-      <div style={{ gridColumn: "1 / -1" }}>
-        <LlmRoundsChart langfuse={langfuse} dark={dark} />
+      <LlmRoundsChart langfuse={langfuse} dark={dark} delay={240} />
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns:
+            "repeat(auto-fit, minmax(min(420px, 100%), 1fr))",
+          gap: 16,
+          alignItems: "stretch",
+        }}
+      >
+        <TokensByModelChart langfuse={langfuse} dark={dark} delay={300} />
+        <PerAgentLlmUsageChart langfuse={langfuse} dark={dark} delay={360} />
       </div>
     </div>
   );

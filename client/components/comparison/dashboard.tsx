@@ -9,6 +9,12 @@ import {
   PerAgentLlmUsageChart,
   TokensByModelChart,
 } from "@/components/statistics/langfuse-observability";
+import {
+  EmptyState,
+  SkeletonCard,
+  cardSurface,
+  labelStyle,
+} from "@/components/statistics/primitives";
 import { RoundsTimelineChart } from "@/components/statistics/rounds-timeline-chart";
 import {
   MessageTypesChart,
@@ -16,7 +22,7 @@ import {
 } from "@/components/statistics/summary-cards";
 import { useStatistics } from "@/hooks/useStatistics";
 import { fetchHistoryTrials } from "@/lib/api";
-import { getTheme } from "@/lib/theme";
+import { BURG, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import type { HistoryTrial, LangfuseStats } from "@/lib/types";
 
@@ -30,7 +36,8 @@ function formatRunTimestamp(value: string) {
 }
 
 function formatTrialOption(trial: HistoryTrial) {
-  return `${trial.id} - ${formatRunTimestamp(trial.createdAt)}`;
+  const label = trial.description?.trim() || trial.id;
+  return `${label} · ${formatRunTimestamp(trial.createdAt)}`;
 }
 
 function RunSelect({
@@ -55,32 +62,35 @@ function RunSelect({
         display: "flex",
         flex: "1 1 320px",
         flexDirection: "column",
-        gap: 6,
+        gap: 7,
         minWidth: 0,
       }}
     >
-      <span style={{ color: t.textSub, fontSize: 11, fontWeight: 700 }}>
-        {label}
-      </span>
+      <span style={labelStyle(dark)}>{label}</span>
       <select
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value || null)}
         disabled={trials.length === 0}
         style={{
-          background: t.surface,
+          background: t.inputBg,
           color: t.text,
-          border: `1px solid ${t.border}`,
-          borderRadius: 8,
-          padding: "8px 10px",
-          fontSize: 12,
+          border: `1.5px solid ${t.border}`,
+          borderRadius: 10,
+          padding: "9px 34px 9px 13px",
+          fontSize: 12.5,
+          fontWeight: 600,
           minWidth: 0,
           width: "100%",
+          outline: "none",
+          cursor: trials.length === 0 ? "not-allowed" : "pointer",
+          appearance: "none",
+          backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236B6880'/%3E%3C/svg%3E")`,
+          backgroundRepeat: "no-repeat",
+          backgroundPosition: "right 13px center",
         }}
       >
         {trials.length === 0 && (
-          <option value="">
-            {loading ? "Loading trials" : "No trials yet"}
-          </option>
+          <option value="">{loading ? "Loading runs…" : "No runs yet"}</option>
         )}
         {trials.map((trial) => (
           <option key={trial.id} value={trial.id}>
@@ -101,16 +111,14 @@ function RunColumn({
   children: React.ReactNode;
   dark: boolean;
 }) {
-  const t = getTheme(dark);
   return (
     <section style={{ minWidth: 0 }}>
       <div
         style={{
-          color: t.textSub,
-          fontSize: 12,
-          fontWeight: 800,
-          marginBottom: 8,
+          ...labelStyle(dark),
+          whiteSpace: "normal",
           overflowWrap: "anywhere",
+          marginBottom: 9,
         }}
       >
         {title}
@@ -137,15 +145,29 @@ function ComparisonRow({
 }) {
   const t = getTheme(dark);
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <h2
         style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 9,
           color: t.text,
-          fontSize: 14,
+          fontSize: 13.5,
           fontWeight: 800,
+          letterSpacing: 0.3,
           margin: 0,
         }}
       >
+        <span
+          style={{
+            width: 3,
+            height: 15,
+            borderRadius: 2,
+            background: BURG,
+            boxShadow: "0 0 8px rgba(139,26,47,0.5)",
+            flexShrink: 0,
+          }}
+        />
         {title}
       </h2>
       <div
@@ -181,12 +203,14 @@ function LlmSlot({
     return (
       <div
         style={{
-          background: t.surface,
-          border: `1px solid ${t.border}`,
-          borderRadius: 8,
+          ...cardSurface(dark),
           color: t.textSub,
+          fontSize: 12.5,
+          lineHeight: 1.6,
           padding: 18,
           minHeight: 120,
+          display: "flex",
+          alignItems: "center",
         }}
       >
         {langfuse?.message ?? "No LLM usage data is available for this run."}
@@ -198,7 +222,6 @@ function LlmSlot({
 
 export function ComparisonDashboard() {
   const { dark } = useTheme();
-  const t = getTheme(dark);
   const [trials, setTrials] = useState<HistoryTrial[]>([]);
   const [firstTrialId, setFirstTrialId] = useState<string | null>(null);
   const [secondTrialId, setSecondTrialId] = useState<string | null>(null);
@@ -235,7 +258,7 @@ export function ComparisonDashboard() {
         style={{
           display: "flex",
           gap: 14,
-          marginBottom: 18,
+          margin: "10px 0 22px",
           flexWrap: "wrap",
         }}
       >
@@ -257,20 +280,33 @@ export function ComparisonDashboard() {
         />
       </div>
 
-      {(first.loading || second.loading) && (
-        <div style={{ color: t.textSub }}>Loading...</div>
-      )}
-      {(first.error || second.error) && (
-        <div style={{ color: "#c2596d" }}>{first.error ?? second.error}</div>
-      )}
-      {!trialsLoading && trials.length < 2 && (
-        <div style={{ color: t.textSub }}>
-          Create at least two runs to compare different results.
+      {!trialsLoading && trials.length < 2 ? (
+        <EmptyState
+          icon="GitCompare"
+          title="Not enough runs to compare"
+          sub="Create at least two simulation runs to compare their results side by side."
+          dark={dark}
+        />
+      ) : trialsLoading || first.loading || second.loading ? (
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(2, minmax(360px, 1fr))",
+            gap: 16,
+            overflowX: "auto",
+          }}
+        >
+          <SkeletonCard height={300} dark={dark} />
+          <SkeletonCard height={300} dark={dark} delay={80} />
         </div>
-      )}
+      ) : first.error || second.error ? (
+        <div style={{ color: "#c2596d", fontSize: 13, marginBottom: 16 }}>
+          {first.error ?? second.error}
+        </div>
+      ) : null}
 
       {ready && first.summary && second.summary && (
-        <div style={{ display: "flex", flexDirection: "column", gap: 24 }}>
+        <div style={{ display: "flex", flexDirection: "column", gap: 28 }}>
           <ComparisonRow
             title="Fixed statistics"
             leftTitle={firstTitle}
