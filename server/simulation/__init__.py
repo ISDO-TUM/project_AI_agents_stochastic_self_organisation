@@ -38,10 +38,10 @@ import asyncio
 import json
 import re
 import uuid
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from datetime import date, datetime
-from typing import Any, Literal
+from typing import Any, Literal, Protocol
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -59,6 +59,7 @@ from server.guardrails import build_guarded_system_prompt, sanitize_prompt
 from server.guardrails.input_sanitizer import PromptInjectionError
 from server.llm import call_agent
 from server.llm.embeddings import cosine_similarity, embed_texts
+from server.llm.langfuse_setup import langfuse_metadata
 from server.schemas import ToolCall
 from server.tools.builtin.registry import RegistryIndex
 from server.tools.builtin.table import TableStore
@@ -70,8 +71,17 @@ ConsensusMode = Literal[
     "bidding",
 ]
 
-# Callable type for the bound agent-call closure passed into runner functions.
-_AgentCall = Callable[[dict[str, Any], str], Awaitable[tuple[str, list[ToolCall]]]]
+
+class _AgentCall(Protocol):
+    """Bound agent-call closure passed into runner functions."""
+
+    def __call__(
+        self,
+        agent: dict[str, Any],
+        prompt: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> Awaitable[tuple[str, list[ToolCall]]]: ...
+
 
 MessageDelivery = tuple[str | None, str, str]
 SelfMessage = tuple[str, str]
@@ -964,15 +974,28 @@ async def run_topology(
             seen[name] = store.version
         return ("\n\n" + "\n".join(notes)) if notes else ""
 
-    async def call(agent: dict[str, Any], prompt: str) -> tuple[str, list[ToolCall]]:
-        return await _call_agent(
-            agent,
-            prompt + _table_change_notes(agent["id"]),
-            files_by_agent.get(agent["id"], {}),
-            ruleset,
-            registry=registry,
-            tables=shared_tables,
-        )
+    async def call(
+        agent: dict[str, Any],
+        prompt: str,
+        metadata: dict[str, Any] | None = None,
+    ) -> tuple[str, list[ToolCall]]:
+        langfuse_context = {
+            "trial_id": trial_id,
+            "agent_id": str(agent["id"]),
+            "agent_name": str(agent["name"]),
+            "provider": str(agent["provider"]),
+            "model": str(agent["model"]),
+            **(metadata or {}),
+        }
+        with langfuse_metadata(langfuse_context):
+            return await _call_agent(
+                agent,
+                prompt + _table_change_notes(agent["id"]),
+                files_by_agent.get(agent["id"], {}),
+                ruleset,
+                registry=registry,
+                tables=shared_tables,
+            )
 
     if mode == "weighted_opinion_pooling":
         await _run_weighted_opinion_pool(
@@ -1025,7 +1048,11 @@ async def _run_broadcast_no_consensus(
     ) -> tuple[str, list[SelfMessage]]:
         agent_id = str(agent["id"])
         try:
-            response, tools_used = await call(agent, _with_context(prompt, agent_id, agent_context))
+            response, tools_used = await call(
+                agent,
+                _with_context(prompt, agent_id, agent_context),
+                {"round_index": 2, "phase": "broadcast_no_consensus_outputs"},
+            )
         except Exception as exc:
             err = f"[error: {exc}]"
             return err, [("agent_error", err)]
@@ -1049,6 +1076,7 @@ async def _run_broadcast_no_consensus(
         async def _discuss(
             agent: dict[str, Any],
             incoming: dict[str, list[str]] = incoming,
+            current_round_index: int = round_num + 2,
         ) -> tuple[str, list[MessageDelivery], list[SelfMessage], str] | None:
             senders = [sid for sid in incoming[agent["id"]] if sid in responses]
             suffix = controller.prompt_suffix(agent)
@@ -1078,7 +1106,11 @@ async def _run_broadcast_no_consensus(
             deliveries: list[MessageDelivery] = [(sid, agent_id, responses[sid]) for sid in senders]
 
             try:
-                response, tools_used = await call(agent, discussion_prompt)
+                response, tools_used = await call(
+                    agent,
+                    discussion_prompt,
+                    {"round_index": current_round_index, "phase": "discussion"},
+                )
             except Exception as exc:
                 err = f"[error: {exc}]"
                 return agent_id, deliveries, [("agent_error", err)], err
@@ -1167,7 +1199,11 @@ async def _run_weighted_opinion_pool(
         agent_id = str(agent["id"])
         full_prompt = _with_context(prompt, agent_id, agent_context) + _WEIGHTED_POOL_INSTRUCTION
         try:
-            response, tools = await call(agent, full_prompt)
+            response, tools = await call(
+                agent,
+                full_prompt,
+                {"round_index": 2, "phase": "weighted_opinion_pooling_broadcast_outputs"},
+            )
         except Exception as exc:
             err = f"[error: {exc}]"
             return err, [("agent_error", err)]
@@ -1259,6 +1295,7 @@ async def _run_weighted_opinion_pool(
         async def _discuss(
             agent: dict[str, Any],
             incoming: dict[str, list[str]] = incoming,
+            current_round_index: int = round_num + 2,
         ) -> tuple[str, list[MessageDelivery], list[SelfMessage], str] | None:
             nbrs = [n for n in incoming[agent["id"]] if n in responses]
             suffix = controller.prompt_suffix(agent)
@@ -1323,7 +1360,14 @@ async def _run_weighted_opinion_pool(
             deliveries: list[MessageDelivery] = [(n, agent_id, responses[n]) for n in nbrs]
 
             try:
-                resp, tools = await call(agent, discussion_prompt)
+                resp, tools = await call(
+                    agent,
+                    discussion_prompt,
+                    {
+                        "round_index": current_round_index,
+                        "phase": "weighted_opinion_pooling_discussion",
+                    },
+                )
             except Exception as exc:
                 err = f"[error: {exc}]"
                 return agent_id, deliveries, [("agent_error", err)], err
@@ -1536,7 +1580,11 @@ async def _run_voting(
         agent_id = str(agent["id"])
         full_prompt = _with_context(prompt, agent_id, agent_context) + _VOTE_INSTRUCTION
         try:
-            response, tools = await call(agent, full_prompt)
+            response, tools = await call(
+                agent,
+                full_prompt,
+                {"round_index": 2, "phase": "plurality_voting_broadcast_outputs"},
+            )
         except Exception as exc:
             err = f"[error: {exc}]"
             return err, None, None, [("agent_error", err)]
@@ -1576,6 +1624,7 @@ async def _run_voting(
             tally_msg: str = tally_msg,
             reasons_msg: str = reasons_msg,
             incoming: dict[str, list[str]] = incoming,
+            current_round_index: int = next_round_index,
         ) -> tuple[
             str,
             list[MessageDelivery],
@@ -1666,7 +1715,14 @@ async def _run_voting(
                 )
 
             try:
-                resp, tools = await call(agent, full_prompt)
+                resp, tools = await call(
+                    agent,
+                    full_prompt,
+                    {
+                        "round_index": current_round_index,
+                        "phase": "plurality_voting_discussion",
+                    },
+                )
             except Exception as exc:
                 err = f"[error: {exc}]"
                 return agent_id, deliveries, delivery_type, [("agent_error", err)], err, None, None

@@ -7,6 +7,7 @@ from server.routes.history import router as history_router
 from server.routes.models import router as models_router
 from server.routes.rules import rules_router
 from server.routes.simulation import router as simulation_router
+from server.routes.statistics import router as statistics_router
 from server.routes.test import router as test_router
 
 __all__ = [
@@ -17,5 +18,6 @@ __all__ = [
     "models_router",
     "rules_router",
     "simulation_router",
+    "statistics_router",
     "test_router",
 ]

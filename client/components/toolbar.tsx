@@ -8,6 +8,7 @@ import {
   useSyncExternalStore,
 } from "react";
 import { createPortal } from "react-dom";
+import Link from "next/link";
 import { LIcon } from "@/lib/icons";
 import { BURG, BURG_LT, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
@@ -699,6 +700,48 @@ function ImportDropdown({
   );
 }
 
+function TLink({
+  children,
+  href,
+  icon,
+  title,
+  t,
+}: {
+  children: React.ReactNode;
+  href: string;
+  icon?: string;
+  title?: string;
+  t: ReturnType<typeof getTheme>;
+}) {
+  const [hov, setHov] = useState(false);
+  return (
+    <Link
+      href={href}
+      title={title}
+      onMouseEnter={() => setHov(true)}
+      onMouseLeave={() => setHov(false)}
+      style={{
+        background: hov ? t.hover : "transparent",
+        borderRadius: 8,
+        color: hov ? t.text : t.textSub,
+        fontSize: 12,
+        fontWeight: 600,
+        padding: "6px 11px",
+        cursor: "pointer",
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        transition: "all 0.15s",
+        whiteSpace: "nowrap",
+        textDecoration: "none",
+      }}
+    >
+      {icon && <LIcon name={icon} size={14} color="currentColor" />}
+      {children}
+    </Link>
+  );
+}
+
 export function Toolbar({
   simMode,
   onToggleTheme,
@@ -810,6 +853,14 @@ export function Toolbar({
             >
               History
             </TBtn>
+            <TLink
+              href="/statistics"
+              icon="ChartNoAxesColumn"
+              title="Statistics"
+              t={t}
+            >
+              Stats
+            </TLink>
             <Sep t={t} />
             <TBtn
               onClick={onToggleTweaks}

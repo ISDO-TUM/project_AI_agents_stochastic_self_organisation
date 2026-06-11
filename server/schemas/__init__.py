@@ -306,6 +306,121 @@ class MessageTraceResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Statistics (collaboration analytics)
+# ---------------------------------------------------------------------------
+
+
+class TrialStatisticsSummary(BaseModel):
+    """High-level KPIs describing one trial's collaboration."""
+
+    trial_id: str
+    user_prompt: str
+    description: str
+    mode: str | None = None
+    status: str
+    created_at: str
+    round_count: int
+    agent_count: int
+    total_messages: int
+    total_edges: int
+    message_type_counts: dict[str, int]
+
+
+class AgentStatistics(BaseModel):
+    """Per-agent communication activity within a trial."""
+
+    agent_id: str
+    agent_name: str
+    messages_sent: int
+    messages_received: int
+    out_degree: int
+    in_degree: int
+    tool_invocations: int
+
+
+class EdgeStatistics(BaseModel):
+    """Aggregate message volume along one directed agent->agent edge."""
+
+    from_agent_id: str
+    from_agent_name: str
+    to_agent_id: str
+    to_agent_name: str
+    message_count: int
+
+
+class RoundStatistics(BaseModel):
+    """Per-round message and active-edge counts for timeline charts."""
+
+    round_id: int
+    round_index: int
+    phase: str
+    message_count: int
+    active_edge_count: int
+
+
+class LangfuseStatisticsSummary(BaseModel):
+    """LLM observability KPIs sourced from Langfuse for one trial."""
+
+    trial_id: str
+    trace_count: int
+    generation_count: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    total_cost: float
+    average_latency_ms: float
+    slowest_agent_name: str | None
+    slowest_model: str | None
+
+
+class LangfuseAgentStatistics(BaseModel):
+    """Per-agent token, cost, and latency metrics from Langfuse."""
+
+    agent_id: str
+    agent_name: str
+    generation_count: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    total_cost: float
+    average_latency_ms: float
+
+
+class LangfuseModelStatistics(BaseModel):
+    """Per-model token, cost, and latency metrics from Langfuse."""
+
+    model: str
+    generation_count: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    total_cost: float
+    average_latency_ms: float
+
+
+class LangfuseRoundStatistics(BaseModel):
+    """Per-round cost and token metrics from Langfuse metadata."""
+
+    round_index: int
+    phase: str
+    generation_count: int
+    total_tokens: int
+    total_cost: float
+    average_latency_ms: float
+
+
+class LangfuseStatisticsResponse(BaseModel):
+    """Complete Langfuse statistics payload for one trial."""
+
+    summary: LangfuseStatisticsSummary
+    agents: list[LangfuseAgentStatistics]
+    models: list[LangfuseModelStatistics]
+    rounds: list[LangfuseRoundStatistics]
+    available: bool
+    message: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Knowledge files
 # ---------------------------------------------------------------------------
 
