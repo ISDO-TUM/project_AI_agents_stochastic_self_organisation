@@ -10,6 +10,12 @@ import type {
   AgentStat,
   ConsensusMode,
   EdgeStat,
+  ExperimentAgentStat,
+  ExperimentEdgeStat,
+  ExperimentLangfuseStats,
+  ExperimentListItem,
+  ExperimentRoundStat,
+  ExperimentSummary,
   HistoryMessage,
   HistoryTrial,
   KnowledgeFile,
@@ -600,4 +606,216 @@ export async function fetchLangfuseStats(
 
 export async function fetchRules(): Promise<Rule[]> {
   return request<Rule[]>("GET", "/api/rules");
+}
+
+// ─── Experiment endpoints ─────────────────────────────────────────────────────
+
+interface WireExperimentListItem {
+  id: string;
+  description: string;
+  trial_count: number;
+  created_at: string;
+  mode: string | null;
+  user_prompt: string | null;
+}
+
+interface WireExperimentSummary {
+  experiment_id: string;
+  description: string;
+  mode: string | null;
+  user_prompt: string | null;
+  trial_count: number;
+  trial_ids: string[];
+  avg_round_count: number;
+  avg_agent_count: number;
+  avg_total_messages: number;
+  avg_total_edges: number;
+  message_type_counts: Record<string, number>;
+}
+
+interface WireExperimentAgentStat {
+  agent_id: string;
+  agent_name: string;
+  avg_messages_sent: number;
+  avg_messages_received: number;
+  avg_out_degree: number;
+  avg_in_degree: number;
+  avg_tool_invocations: number;
+}
+
+interface WireExperimentEdgeStat {
+  from_agent_id: string;
+  from_agent_name: string;
+  to_agent_id: string;
+  to_agent_name: string;
+  avg_message_count: number;
+}
+
+interface WireExperimentRoundStat {
+  round_index: number;
+  phase: string;
+  avg_message_count: number;
+  avg_active_edge_count: number;
+}
+
+interface WireExperimentLangfuseSummary {
+  experiment_id: string;
+  trial_count: number;
+  trace_count: number;
+  generation_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  total_cost: number;
+  average_latency_ms: number;
+  slowest_agent_name: string | null;
+  slowest_model: string | null;
+}
+
+interface WireExperimentLangfuseStats {
+  summary: WireExperimentLangfuseSummary;
+  agents: WireLangfuseAgentStat[];
+  models: WireLangfuseModelStat[];
+  rounds: WireLangfuseRoundStat[];
+  available: boolean;
+  message: string | null;
+}
+
+export async function fetchExperiments(): Promise<ExperimentListItem[]> {
+  const rows = await request<WireExperimentListItem[]>(
+    "GET",
+    "/api/statistics/experiments",
+  );
+  return rows.map((r) => ({
+    id: r.id,
+    description: r.description,
+    trialCount: r.trial_count,
+    createdAt: r.created_at,
+    mode: r.mode,
+    userPrompt: r.user_prompt,
+  }));
+}
+
+export async function fetchExperimentSummary(
+  expId: string,
+): Promise<ExperimentSummary> {
+  const r = await request<WireExperimentSummary>(
+    "GET",
+    `/api/statistics/experiments/${expId}/summary`,
+  );
+  return {
+    experimentId: r.experiment_id,
+    description: r.description,
+    mode: r.mode,
+    userPrompt: r.user_prompt,
+    trialCount: r.trial_count,
+    trialIds: r.trial_ids,
+    avgRoundCount: r.avg_round_count,
+    avgAgentCount: r.avg_agent_count,
+    avgTotalMessages: r.avg_total_messages,
+    avgTotalEdges: r.avg_total_edges,
+    messageTypeCounts: r.message_type_counts,
+  };
+}
+
+export async function fetchExperimentAgentStats(
+  expId: string,
+): Promise<ExperimentAgentStat[]> {
+  const rows = await request<WireExperimentAgentStat[]>(
+    "GET",
+    `/api/statistics/experiments/${expId}/agents`,
+  );
+  return rows.map((r) => ({
+    agentId: r.agent_id,
+    agentName: r.agent_name,
+    avgMessagesSent: r.avg_messages_sent,
+    avgMessagesReceived: r.avg_messages_received,
+    avgOutDegree: r.avg_out_degree,
+    avgInDegree: r.avg_in_degree,
+    avgToolInvocations: r.avg_tool_invocations,
+  }));
+}
+
+export async function fetchExperimentEdgeStats(
+  expId: string,
+): Promise<ExperimentEdgeStat[]> {
+  const rows = await request<WireExperimentEdgeStat[]>(
+    "GET",
+    `/api/statistics/experiments/${expId}/edges`,
+  );
+  return rows.map((r) => ({
+    fromAgentId: r.from_agent_id,
+    fromAgentName: r.from_agent_name,
+    toAgentId: r.to_agent_id,
+    toAgentName: r.to_agent_name,
+    avgMessageCount: r.avg_message_count,
+  }));
+}
+
+export async function fetchExperimentRoundStats(
+  expId: string,
+): Promise<ExperimentRoundStat[]> {
+  const rows = await request<WireExperimentRoundStat[]>(
+    "GET",
+    `/api/statistics/experiments/${expId}/timeline`,
+  );
+  return rows.map((r) => ({
+    roundIndex: r.round_index,
+    phase: r.phase,
+    avgMessageCount: r.avg_message_count,
+    avgActiveEdgeCount: r.avg_active_edge_count,
+  }));
+}
+
+export async function fetchExperimentLangfuseStats(
+  expId: string,
+): Promise<ExperimentLangfuseStats> {
+  const r = await request<WireExperimentLangfuseStats>(
+    "GET",
+    `/api/statistics/experiments/${expId}/langfuse`,
+  );
+  return {
+    summary: {
+      experimentId: r.summary.experiment_id,
+      trialCount: r.summary.trial_count,
+      traceCount: r.summary.trace_count,
+      generationCount: r.summary.generation_count,
+      inputTokens: r.summary.input_tokens,
+      outputTokens: r.summary.output_tokens,
+      totalTokens: r.summary.total_tokens,
+      totalCost: r.summary.total_cost,
+      averageLatencyMs: r.summary.average_latency_ms,
+      slowestAgentName: r.summary.slowest_agent_name,
+      slowestModel: r.summary.slowest_model,
+    },
+    agents: r.agents.map((row) => ({
+      agentId: row.agent_id,
+      agentName: row.agent_name,
+      generationCount: row.generation_count,
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      totalTokens: row.total_tokens,
+      totalCost: row.total_cost,
+      averageLatencyMs: row.average_latency_ms,
+    })),
+    models: r.models.map((row) => ({
+      model: row.model,
+      generationCount: row.generation_count,
+      inputTokens: row.input_tokens,
+      outputTokens: row.output_tokens,
+      totalTokens: row.total_tokens,
+      totalCost: row.total_cost,
+      averageLatencyMs: row.average_latency_ms,
+    })),
+    rounds: r.rounds.map((row) => ({
+      roundIndex: row.round_index,
+      phase: row.phase,
+      generationCount: row.generation_count,
+      totalTokens: row.total_tokens,
+      totalCost: row.total_cost,
+      averageLatencyMs: row.average_latency_ms,
+    })),
+    available: r.available,
+    message: r.message,
+  };
 }

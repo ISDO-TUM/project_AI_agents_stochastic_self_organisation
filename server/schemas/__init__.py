@@ -421,6 +421,96 @@ class LangfuseStatisticsResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Experiments (groups of trials with identical setup)
+# ---------------------------------------------------------------------------
+
+
+class ExperimentListItem(BaseModel):
+    """Lightweight experiment record for selector lists."""
+
+    id: str
+    description: str
+    trial_count: int
+    created_at: str
+    mode: str | None = None
+    user_prompt: str | None = None
+
+
+class ExperimentSummary(BaseModel):
+    """Averaged KPIs across all trials in one experiment."""
+
+    experiment_id: str
+    description: str
+    mode: str | None = None
+    user_prompt: str | None = None
+    trial_count: int
+    trial_ids: list[str]
+    avg_round_count: float
+    avg_agent_count: float
+    avg_total_messages: float
+    avg_total_edges: float
+    message_type_counts: dict[str, float]
+
+
+class ExperimentAgentStatistics(BaseModel):
+    """Per-agent metrics averaged across all trials in an experiment."""
+
+    agent_id: str
+    agent_name: str
+    avg_messages_sent: float
+    avg_messages_received: float
+    avg_out_degree: float
+    avg_in_degree: float
+    avg_tool_invocations: float
+
+
+class ExperimentEdgeStatistics(BaseModel):
+    """Averaged message volume along one directed agent->agent edge."""
+
+    from_agent_id: str
+    from_agent_name: str
+    to_agent_id: str
+    to_agent_name: str
+    avg_message_count: float
+
+
+class ExperimentRoundStatistics(BaseModel):
+    """Per-round-index averages across all trials in an experiment."""
+
+    round_index: int
+    phase: str
+    avg_message_count: float
+    avg_active_edge_count: float
+
+
+class ExperimentLangfuseSummary(BaseModel):
+    """Aggregated Langfuse KPIs across all trials in an experiment."""
+
+    experiment_id: str
+    trial_count: int
+    trace_count: int
+    generation_count: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    total_cost: float
+    average_latency_ms: float
+    slowest_agent_name: str | None
+    slowest_model: str | None
+
+
+class ExperimentLangfuseResponse(BaseModel):
+    """Complete Langfuse payload aggregated for one experiment."""
+
+    summary: ExperimentLangfuseSummary
+    agents: list[LangfuseAgentStatistics]
+    models: list[LangfuseModelStatistics]
+    rounds: list[LangfuseRoundStatistics]
+    available: bool
+    message: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Knowledge files
 # ---------------------------------------------------------------------------
 

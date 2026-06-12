@@ -8,14 +8,13 @@ import {
   MetaChip,
   MONO,
   StatCard,
-  StatusBadge,
   cardSurface,
   chartTooltipProps,
   labelStyle,
 } from "@/components/statistics/primitives";
 import { LIcon } from "@/lib/icons";
 import { BURG, BURG_DIM, getTheme } from "@/lib/theme";
-import type { TrialSummary } from "@/lib/types";
+import type { ExperimentSummary } from "@/lib/types";
 
 function formatMode(mode: string | null) {
   if (!mode) return "Unknown";
@@ -40,7 +39,7 @@ export function SummaryCards({
   dark,
   delay = 0,
 }: {
-  summary: TrialSummary;
+  summary: ExperimentSummary;
   dark: boolean;
   delay?: number;
 }) {
@@ -91,9 +90,8 @@ export function SummaryCards({
               flexWrap: "wrap",
             }}
           >
-            <StatusBadge status={summary.status} dark={dark} />
-            <MetaChip icon="Calendar" dark={dark}>
-              {formatCreatedAt(summary.createdAt)}
+            <MetaChip icon="FlaskConical" dark={dark}>
+              {summary.trialCount} run{summary.trialCount === 1 ? "" : "s"}
             </MetaChip>
           </div>
         </div>
@@ -127,7 +125,7 @@ export function SummaryCards({
               overflowWrap: "anywhere",
             }}
           >
-            {summary.trialId}
+            {summary.experimentId}
           </span>
         </div>
       </section>
@@ -141,41 +139,37 @@ export function SummaryCards({
         }}
       >
         <Kpi
-          label="Agents"
+          label="Avg Agents"
           icon="Users"
-          value={summary.agentCount}
+          value={Math.round(summary.avgAgentCount)}
           dark={dark}
           delay={delay + 40}
         />
         <Kpi
-          label="Rounds"
+          label="Avg Rounds"
           icon="RotateCw"
-          value={summary.roundCount}
+          value={+summary.avgRoundCount.toFixed(1)}
           dark={dark}
           delay={delay + 80}
         />
         <Kpi
-          label="Messages"
+          label="Avg Messages"
           icon="MessageSquare"
-          value={summary.totalMessages}
+          value={+summary.avgTotalMessages.toFixed(1)}
           dark={dark}
           delay={delay + 120}
         />
         <Kpi
-          label="Edges"
+          label="Avg Edges"
           icon="Waypoints"
-          value={summary.totalEdges}
+          value={+summary.avgTotalEdges.toFixed(1)}
           dark={dark}
           delay={delay + 160}
         />
         <Kpi
-          label="Status"
+          label="Runs"
           icon="CircleDot"
-          value={
-            <div style={{ paddingTop: 3 }}>
-              <StatusBadge status={summary.status} dark={dark} />
-            </div>
-          }
+          value={summary.trialCount}
           dark={dark}
           delay={delay + 200}
         />
@@ -189,7 +183,7 @@ export function MessageTypesChart({
   dark,
   delay = 0,
 }: {
-  summary: TrialSummary;
+  summary: ExperimentSummary;
   dark: boolean;
   delay?: number;
 }) {

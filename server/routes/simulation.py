@@ -8,7 +8,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from server.db import create_trial, get_db, update_trial_status
+from server.db import create_trial, get_db, resolve_experiment, update_trial_status
 from server.db.tables import agents
 from server.llm.credentials import use_credentials
 from server.schemas import SimulationRunRequest, SimulationStartResponse
@@ -71,7 +71,17 @@ async def run_simulation(
             detail="No agents found. Add at least one agent before running a simulation.",
         )
 
-    trial_id = await create_trial(db, body.prompt, f"{body.mode} run", body.mode)
+    experiment_id = await resolve_experiment(
+        db,
+        prompt=body.prompt,
+        rounds_count=body.rounds,
+        mode=body.mode,
+        ruleset=body.ruleset,
+        topology=body.topology,
+        fanout=body.fanout,
+        agent_context=body.agent_context,
+    )
+    trial_id = await create_trial(db, body.prompt, f"{body.mode} run", body.mode, experiment_id)
     background_tasks.add_task(
         _run_simulation_background,
         body.prompt,
