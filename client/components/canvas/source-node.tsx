@@ -91,7 +91,7 @@ export function SourceNode({
         }}
       >
         <LIcon
-          name="FileText"
+          name={source.type === "dataset" ? "Table2" : "FileText"}
           size={20}
           color={dark ? "rgba(255,255,255,0.35)" : "rgba(0,0,0,0.28)"}
         />

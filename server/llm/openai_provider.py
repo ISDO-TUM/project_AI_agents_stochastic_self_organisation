@@ -4,6 +4,7 @@ from openai import AsyncOpenAI
 
 from .base_provider import BaseLLMProvider
 from .credentials import resolve_api_key, resolve_base_url
+from .langfuse_setup import observe, update_current_generation
 from .normalizer import NormalizedToolCall, extract_openai_tool_calls
 
 # GPT-5 and GPT-5.4 families require max_completion_tokens (not max_tokens)
@@ -54,8 +55,21 @@ class OpenAIProvider(BaseLLMProvider):
             kwargs["tools"] = tools
         return kwargs
 
+    @observe(as_type="generation", name="openai")
     async def _send(self, kwargs: dict[str, Any]) -> Any:
-        return await self._get_client().chat.completions.create(**kwargs)
+        response = await self._get_client().chat.completions.create(**kwargs)
+        usage = getattr(response, "usage", None)
+        update_current_generation(
+            model=kwargs.get("model"),
+            input=kwargs.get("messages"),
+            usage={
+                "input": getattr(usage, "prompt_tokens", None),
+                "output": getattr(usage, "completion_tokens", None),
+            }
+            if usage
+            else None,
+        )
+        return response
 
     def _extract_tool_calls(self, response: Any) -> list[NormalizedToolCall]:
         return extract_openai_tool_calls(response.choices[0].message)

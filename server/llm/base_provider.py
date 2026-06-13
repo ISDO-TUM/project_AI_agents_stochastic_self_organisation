@@ -2,16 +2,29 @@
 
 from __future__ import annotations
 
+import asyncio
+import logging
 from abc import ABC, abstractmethod
 from typing import Any
 
 from .normalizer import NormalizedToolCall
 
+logger = logging.getLogger(__name__)
+
+# Maximum wall-clock seconds for a single complete agent call (all tool
+# iterations included).  Prevents runaway loops from blocking indefinitely.
+_DEFAULT_TIMEOUT_SECONDS = 60
+
 
 class BaseLLMProvider(ABC):
     """Template for LLM providers — subclasses override formatting hooks."""
 
-    max_iterations: int = 10
+    # Reduced from 10: limits how many tool-call round-trips a single agent
+    # call may perform, capping both cost and latency exposure.
+    max_iterations: int = 5
+
+    # Per-call timeout in seconds.  Subclasses may override.
+    timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS
 
     @abstractmethod
     def _get_client(self) -> Any:
@@ -52,6 +65,26 @@ class BaseLLMProvider(ABC):
         raise NotImplementedError
 
     async def call(
+        self,
+        prompt: str,
+        model: str,
+        system_prompt: str | None = None,
+        tools: list[dict[str, Any]] | None = None,
+        tool_handler: Any | None = None,
+    ) -> str:
+        try:
+            return await asyncio.wait_for(
+                self._call_inner(prompt, model, system_prompt, tools, tool_handler),
+                timeout=self.timeout_seconds,
+            )
+        except TimeoutError as err:
+            logger.warning("LLM call timed out after %ds (model=%s)", self.timeout_seconds, model)
+            raise TimeoutError(
+                f"The LLM call exceeded the maximum allowed time ({self.timeout_seconds}s). "
+                "Please try again with a shorter prompt or fewer tools."
+            ) from err
+
+    async def _call_inner(
         self,
         prompt: str,
         model: str,

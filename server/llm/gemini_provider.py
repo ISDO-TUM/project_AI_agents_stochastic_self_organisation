@@ -22,6 +22,7 @@ import httpx
 
 from .base_provider import BaseLLMProvider
 from .credentials import resolve_api_key, resolve_base_url
+from .langfuse_setup import observe, update_current_generation
 from .normalizer import NormalizedToolCall, extract_gemini_tool_calls
 
 _DEFAULT_MAX_TOKENS = 1024
@@ -62,6 +63,7 @@ class GeminiProvider(BaseLLMProvider):
             body["tools"] = [{"functionDeclarations": tools}]
         return {"model": model, "body": body}
 
+    @observe(as_type="generation", name="gemini")
     async def _send(self, kwargs: dict[str, Any]) -> dict[str, Any]:
         model = kwargs["model"]
         body = kwargs["body"]
@@ -78,7 +80,19 @@ class GeminiProvider(BaseLLMProvider):
             response = await client.send(req)
             if not response.is_success:
                 raise RuntimeError(f"Gemini {response.status_code}: {response.text}")
-            return cast(dict[str, Any], response.json())
+            data = cast(dict[str, Any], response.json())
+        usage_meta = data.get("usageMetadata", {})
+        update_current_generation(
+            model=model,
+            input=body.get("contents"),
+            usage={
+                "input": usage_meta.get("promptTokenCount"),
+                "output": usage_meta.get("candidatesTokenCount"),
+            }
+            if usage_meta
+            else None,
+        )
+        return data
 
     def _extract_tool_calls(self, response: dict[str, Any]) -> list[NormalizedToolCall]:
         return extract_gemini_tool_calls(response)

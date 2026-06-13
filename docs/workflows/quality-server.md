@@ -23,10 +23,10 @@ Tests run against an **in-memory SQLite database** (forced in `conftest.py`). No
 
 ## Caching
 
-| Cache                   | Key                                |
-| ----------------------- | ---------------------------------- |
-| uv package cache        | `server/requirements-dev.txt` hash |
-| pre-commit environments | `.pre-commit-config.yaml` hash     |
+| Cache                   | Key                            |
+| ----------------------- | ------------------------------ |
+| uv package cache        | `server/uv.lock` hash          |
+| pre-commit environments | `.pre-commit-config.yaml` hash |
 
 ---
 

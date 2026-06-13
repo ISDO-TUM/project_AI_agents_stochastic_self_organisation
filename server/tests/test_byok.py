@@ -127,7 +127,7 @@ async def test_models_filtered_by_header_key(
     assert providers == {"anthropic"}
 
 
-async def test_models_returns_sap_ids_with_base_url(
+async def test_models_returns_proxy_ids_with_base_url(
     client: AsyncClient, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     for var in _ALL_KEY_ENV:

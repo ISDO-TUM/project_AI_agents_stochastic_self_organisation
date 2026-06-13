@@ -1,7 +1,14 @@
 "use client";
 
 import { useState, useRef, useEffect, useCallback } from "react";
-import { Agent, Source, Edge, AnimatedParticle, Tweaks } from "@/lib/types";
+import {
+  Agent,
+  Source,
+  Edge,
+  AnimatedParticle,
+  Tweaks,
+  SimStep,
+} from "@/lib/types";
 import { clamp } from "@/lib/utils";
 import { useTheme } from "@/lib/theme-context";
 
@@ -9,11 +16,14 @@ import { AgentNode } from "./agent-node";
 import { SourceNode } from "./source-node";
 import { EdgeLayer } from "./edge-layer";
 import { Minimap } from "./minimap";
+import { PhonebookPanel } from "../phonebook-panel";
+import { BiddingBoardPanel } from "../bidding-board-panel";
 
 interface CanvasProps {
   agents: Agent[];
   sources: Source[];
   edges: Edge[];
+  dynamicEdges: Edge[];
   selectedNode: string | null;
   selectedEdge: string | null;
   onSelectNode: (id: string, e: React.MouseEvent) => void;
@@ -24,12 +34,28 @@ interface CanvasProps {
   simMode: boolean;
   activeNodeId: string | null;
   activeEdgeId: string | null;
+  activeEdgeReversed: boolean;
   animatedParticles: AnimatedParticle[];
   tweaks: Tweaks;
   onCanvasClick: () => void;
   /** Fired by parent when the available canvas width changes; dx is the
    *  translation to apply to the current pan so nodes stay put visually. */
   panAdjust?: { dx: number; seq: number };
+  /** When provided, renders the PhonebookPanel inside the world transform so
+   *  it pans/zooms with the canvas like any other element. */
+  phonebook?: {
+    agents: Agent[];
+    steps: SimStep[];
+    currentStep: number;
+    dynamicEdges: Edge[];
+    simMode: boolean;
+  } | null;
+  /** When provided, renders the BiddingBoardPanel as a draggable node inside
+   *  the world transform — pans/zooms with the canvas. */
+  biddingBoard?: {
+    steps: SimStep[];
+    onClose: () => void;
+  } | null;
 }
 
 interface ConnectingState {
@@ -49,6 +75,7 @@ export function Canvas({
   agents,
   sources,
   edges,
+  dynamicEdges,
   selectedNode,
   selectedEdge,
   onSelectNode,
@@ -59,10 +86,13 @@ export function Canvas({
   simMode,
   activeNodeId,
   activeEdgeId,
+  activeEdgeReversed,
   animatedParticles,
   tweaks,
   onCanvasClick,
   panAdjust,
+  phonebook = null,
+  biddingBoard = null,
 }: CanvasProps) {
   const { dark } = useTheme();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -82,10 +112,29 @@ export function Canvas({
     // eslint-disable-next-line react-hooks/set-state-in-effect
     setPan((p) => ({ ...p, x: p.x + panAdjust.dx }));
   }, [panAdjust]);
-  const handleWheel = useCallback((e: WheelEvent) => {
-    e.preventDefault();
-    setZoom((z) => clamp(z * (e.deltaY > 0 ? 0.93 : 1.07), 0.15, 5));
-  }, []);
+  const handleWheel = useCallback(
+    (e: WheelEvent) => {
+      e.preventDefault();
+      const el = canvasRef.current;
+      if (!el) return;
+      const rect = el.getBoundingClientRect();
+      // Cursor position in canvas-element space (screen coords relative to canvas)
+      const mx = e.clientX - rect.left;
+      const my = e.clientY - rect.top;
+      const oldZoom = zoom;
+      const newZoom = clamp(oldZoom * (e.deltaY > 0 ? 0.93 : 1.07), 0.15, 5);
+      const { x: px, y: py } = pan;
+      // Keep the world-space point under the cursor fixed:
+      //   worldPt = (screenPt - pan) / zoom
+      //   newPan  = screenPt - worldPt * newZoom
+      setPan({
+        x: mx - ((mx - px) / oldZoom) * newZoom,
+        y: my - ((my - py) / oldZoom) * newZoom,
+      });
+      setZoom(newZoom);
+    },
+    [pan, zoom],
+  );
 
   useEffect(() => {
     const el = canvasRef.current;
@@ -296,12 +345,14 @@ export function Canvas({
       >
         <EdgeLayer
           edges={edges}
+          dynamicEdges={dynamicEdges}
           agents={agents}
           sources={sources}
           selectedEdge={selectedEdge}
           onSelectEdge={onSelectEdge}
           onDeleteEdge={onDeleteEdge}
           activeEdgeId={activeEdgeId}
+          activeEdgeReversed={activeEdgeReversed}
           animatedParticles={animatedParticles}
           tweaks={tweaks}
         />
@@ -360,10 +411,28 @@ export function Canvas({
             tweaks={tweaks}
           />
         ))}
+        {/* PhonebookPanel lives in world space — pans & zooms with the canvas */}
+        {phonebook && (
+          <PhonebookPanel
+            agents={phonebook.agents}
+            steps={phonebook.steps}
+            currentStep={phonebook.currentStep}
+            dynamicEdges={phonebook.dynamicEdges}
+            simMode={phonebook.simMode}
+            zoom={zoom}
+          />
+        )}
+        {biddingBoard && (
+          <BiddingBoardPanel
+            steps={biddingBoard.steps}
+            onClose={biddingBoard.onClose}
+            zoom={zoom}
+          />
+        )}
       </div>
 
-      {/* Empty state */}
-      {!hasNodes && (
+      {/* Empty state — hidden when the phonebook panel takes its place */}
+      {!hasNodes && !phonebook && (
         <div
           style={{
             position: "absolute",
@@ -379,29 +448,12 @@ export function Canvas({
           }}
         >
           <div style={{ animation: "emptyFloat 4s ease-in-out infinite" }}>
-            <svg width="84" height="84" viewBox="0 0 84 84" fill="none">
-              <polygon
-                points="42,6 76,24 76,60 42,78 8,60 8,24"
-                fill="none"
-                stroke={accent}
-                strokeWidth="1.5"
-                opacity={0.7}
-              />
-              <polygon
-                points="42,18 64,29 64,55 42,66 20,55 20,29"
-                fill="none"
-                stroke={accent}
-                strokeWidth="1"
-                opacity={0.4}
-              />
-              <polygon
-                points="42,30 53,36 53,48 42,54 31,48 31,36"
-                fill={accent}
-                opacity={0.15}
-              />
-              <circle cx="42" cy="42" r="5" fill={accent} opacity={0.7} />
-              <circle cx="42" cy="42" r="2.5" fill={accent} />
-            </svg>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img
+              src={dark ? "/logo_dark.png" : "/logo_light.png"}
+              alt="Stochastic Agents"
+              style={{ height: 160, width: "auto" }}
+            />
           </div>
           <div
             style={{

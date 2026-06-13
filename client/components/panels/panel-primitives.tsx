@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 import { BURG, BURG_DIM, BURG_LT, getTheme } from "@/lib/theme";
 import { LIcon } from "@/lib/icons";
 import { useTheme } from "@/lib/theme-context";
@@ -305,6 +305,10 @@ interface PanelShellProps {
   icon?: string;
 }
 
+const PANEL_MIN_WIDTH = 360;
+const PANEL_MAX_WIDTH = 980;
+const PANEL_DEFAULT_WIDTH = 360;
+
 export function PanelShell({
   title,
   onClose,
@@ -313,6 +317,35 @@ export function PanelShell({
 }: PanelShellProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
+  const [width, setWidth] = useState(PANEL_DEFAULT_WIDTH);
+  const dragging = useRef(false);
+
+  useEffect(() => {
+    const onMove = (e: MouseEvent) => {
+      if (!dragging.current) return;
+      const next = window.innerWidth - e.clientX;
+      setWidth(Math.min(PANEL_MAX_WIDTH, Math.max(PANEL_MIN_WIDTH, next)));
+    };
+    const stopDragging = () => {
+      dragging.current = false;
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    window.addEventListener("mousemove", onMove);
+    window.addEventListener("mouseup", stopDragging);
+    return () => {
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", stopDragging);
+    };
+  }, []);
+
+  const startDragging = (e: React.MouseEvent) => {
+    e.preventDefault();
+    dragging.current = true;
+    document.body.style.cursor = "ew-resize";
+    document.body.style.userSelect = "none";
+  };
+
   return (
     <div
       style={{
@@ -320,7 +353,7 @@ export function PanelShell({
         top: 0,
         right: 0,
         bottom: 0,
-        width: 360,
+        width,
         display: "flex",
         alignItems: "stretch",
         padding: 16,
@@ -328,9 +361,41 @@ export function PanelShell({
         pointerEvents: "none",
       }}
     >
+      {/* Drag handle — straddles the panel's true left edge (not the padded
+          content edge) so the width doesn't jump when the drag starts. Lets
+          wide content (e.g. a full table preview) be viewed without
+          horizontal scrolling. */}
+      <div
+        onMouseDown={startDragging}
+        title="Drag to resize"
+        style={{
+          position: "absolute",
+          left: -7,
+          top: 0,
+          bottom: 0,
+          width: 14,
+          cursor: "ew-resize",
+          pointerEvents: "all",
+          zIndex: 1,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+        }}
+      >
+        <div
+          style={{
+            width: 4,
+            height: 52,
+            borderRadius: 4,
+            background: t.borderHi,
+            transition: "background 0.15s",
+          }}
+        />
+      </div>
       <div
         style={{
           flex: 1,
+          minWidth: 0,
           background: dark ? "rgba(8,6,16,0.97)" : "rgba(255,253,255,0.98)",
           backdropFilter: "blur(32px)",
           borderRadius: 20,

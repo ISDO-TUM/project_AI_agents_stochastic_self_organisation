@@ -2,9 +2,53 @@
 
 from __future__ import annotations
 
+import re
+import uuid as _uuid_module
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
+
+from server.llm.model_catalogue import ALLOWED_MODEL_IDS
+
+# ---------------------------------------------------------------------------
+# Field-length constants (defence against token-exhaustion / DoS)
+# ---------------------------------------------------------------------------
+
+_MAX_NAME_LEN = 200
+_MAX_DESCRIPTION_LEN = 1_000
+_MAX_SYSTEM_PROMPT_LEN = 8_000
+_MAX_PROMPT_LEN = 4_000
+_MAX_FILE_NAME_LEN = 255
+_MAX_FILE_CONTENT_LEN = 500_000  # 500 KB plain-text ceiling
+_MAX_RULESET_LEN = 4_000
+_MAX_TOOLS_COUNT = 20
+_MAX_CONNECTIONS_COUNT = 50
+_MAX_AGENT_CONTEXT_VALUE_LEN = 8_000
+_MAX_AGENT_CONTEXT_ENTRIES = 100
+
+# Expose as ALLOWED_MODELS for backwards compatibility with tests
+ALLOWED_MODELS: frozenset[str] = ALLOWED_MODEL_IDS
+
+# ---------------------------------------------------------------------------
+# UUID validator helper
+# ---------------------------------------------------------------------------
+
+_UUID_RE = re.compile(
+    r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$",
+    re.IGNORECASE,
+)
+
+
+def _validate_uuid(v: str | None, field_name: str = "id") -> str | None:
+    """Reject non-UUID strings when an id is explicitly supplied."""
+    if v is None:
+        return v
+    if not _UUID_RE.match(v):
+        raise ValueError(
+            f"{field_name} must be a valid UUID (e.g. '550e8400-e29b-41d4-a716-446655440000')."
+        )
+    return v
+
 
 # ---------------------------------------------------------------------------
 # Models
@@ -31,18 +75,37 @@ class Model(BaseModel):
 class AgentBase(BaseModel):
     """Shared agent fields used by create and response schemas."""
 
-    name: str
-    description: str = Field(description="Role description, e.g. 'Sales agent'.")
-    system_prompt: str = Field(description="System prompt prepended to every LLM call.")
+    name: str = Field(max_length=_MAX_NAME_LEN)
+    description: str = Field(
+        description="Role description, e.g. 'Sales agent'.",
+        max_length=_MAX_DESCRIPTION_LEN,
+    )
+    system_prompt: str = Field(
+        description="System prompt prepended to every LLM call.",
+        max_length=_MAX_SYSTEM_PROMPT_LEN,
+    )
     provider: ProviderType
     model: str = Field(description="Model identifier, e.g. 'gpt-4o'.")
     tools: list[str] = Field(
-        default_factory=list, description="Tool names available to this agent."
+        default_factory=list,
+        description="Tool names available to this agent.",
+        max_length=_MAX_TOOLS_COUNT,
     )
     connections: list[str] = Field(
         default_factory=list,
         description="UUIDs of agents this agent may delegate work to.",
+        max_length=_MAX_CONNECTIONS_COUNT,
     )
+
+    @field_validator("model")
+    @classmethod
+    def model_must_be_allowlisted(cls, v: str) -> str:
+        if v not in ALLOWED_MODELS:
+            raise ValueError(
+                f"Model '{v}' is not in the allowed model list. "
+                f"Choose from: {sorted(ALLOWED_MODELS)}"
+            )
+        return v
 
 
 class AgentCreate(AgentBase):
@@ -56,17 +119,32 @@ class AgentCreate(AgentBase):
         ),
     )
 
+    @field_validator("id")
+    @classmethod
+    def id_must_be_uuid(cls, v: str | None) -> str | None:
+        return _validate_uuid(v, "id")
+
 
 class AgentUpdate(BaseModel):
     """Partial update body; only supplied fields are written to the database."""
 
-    name: str | None = None
-    description: str | None = None
-    system_prompt: str | None = None
+    name: str | None = Field(default=None, max_length=_MAX_NAME_LEN)
+    description: str | None = Field(default=None, max_length=_MAX_DESCRIPTION_LEN)
+    system_prompt: str | None = Field(default=None, max_length=_MAX_SYSTEM_PROMPT_LEN)
     provider: ProviderType | None = None
     model: str | None = None
-    tools: list[str] | None = None
-    connections: list[str] | None = None
+    tools: list[str] | None = Field(default=None, max_length=_MAX_TOOLS_COUNT)
+    connections: list[str] | None = Field(default=None, max_length=_MAX_CONNECTIONS_COUNT)
+
+    @field_validator("model")
+    @classmethod
+    def model_must_be_allowlisted(cls, v: str | None) -> str | None:
+        if v is not None and v not in ALLOWED_MODELS:
+            raise ValueError(
+                f"Model '{v}' is not in the allowed model list. "
+                f"Choose from: {sorted(ALLOWED_MODELS)}"
+            )
+        return v
 
 
 class AgentResponse(AgentBase):
@@ -78,7 +156,11 @@ class AgentResponse(AgentBase):
 class AgentRunRequest(BaseModel):
     """Request body for running an agent."""
 
-    prompt: str = Field(description="The user message to send to the agent.")
+    prompt: str = Field(
+        description="The user message to send to the agent.",
+        min_length=1,
+        max_length=_MAX_PROMPT_LEN,
+    )
 
 
 class ToolCall(BaseModel):
@@ -224,6 +306,121 @@ class MessageTraceResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Statistics (collaboration analytics)
+# ---------------------------------------------------------------------------
+
+
+class TrialStatisticsSummary(BaseModel):
+    """High-level KPIs describing one trial's collaboration."""
+
+    trial_id: str
+    user_prompt: str
+    description: str
+    mode: str | None = None
+    status: str
+    created_at: str
+    round_count: int
+    agent_count: int
+    total_messages: int
+    total_edges: int
+    message_type_counts: dict[str, int]
+
+
+class AgentStatistics(BaseModel):
+    """Per-agent communication activity within a trial."""
+
+    agent_id: str
+    agent_name: str
+    messages_sent: int
+    messages_received: int
+    out_degree: int
+    in_degree: int
+    tool_invocations: int
+
+
+class EdgeStatistics(BaseModel):
+    """Aggregate message volume along one directed agent->agent edge."""
+
+    from_agent_id: str
+    from_agent_name: str
+    to_agent_id: str
+    to_agent_name: str
+    message_count: int
+
+
+class RoundStatistics(BaseModel):
+    """Per-round message and active-edge counts for timeline charts."""
+
+    round_id: int
+    round_index: int
+    phase: str
+    message_count: int
+    active_edge_count: int
+
+
+class LangfuseStatisticsSummary(BaseModel):
+    """LLM observability KPIs sourced from Langfuse for one trial."""
+
+    trial_id: str
+    trace_count: int
+    generation_count: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    total_cost: float
+    average_latency_ms: float
+    slowest_agent_name: str | None
+    slowest_model: str | None
+
+
+class LangfuseAgentStatistics(BaseModel):
+    """Per-agent token, cost, and latency metrics from Langfuse."""
+
+    agent_id: str
+    agent_name: str
+    generation_count: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    total_cost: float
+    average_latency_ms: float
+
+
+class LangfuseModelStatistics(BaseModel):
+    """Per-model token, cost, and latency metrics from Langfuse."""
+
+    model: str
+    generation_count: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    total_cost: float
+    average_latency_ms: float
+
+
+class LangfuseRoundStatistics(BaseModel):
+    """Per-round cost and token metrics from Langfuse metadata."""
+
+    round_index: int
+    phase: str
+    generation_count: int
+    total_tokens: int
+    total_cost: float
+    average_latency_ms: float
+
+
+class LangfuseStatisticsResponse(BaseModel):
+    """Complete Langfuse statistics payload for one trial."""
+
+    summary: LangfuseStatisticsSummary
+    agents: list[LangfuseAgentStatistics]
+    models: list[LangfuseModelStatistics]
+    rounds: list[LangfuseRoundStatistics]
+    available: bool
+    message: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Knowledge files
 # ---------------------------------------------------------------------------
 
@@ -231,8 +428,14 @@ class MessageTraceResponse(BaseModel):
 class KnowledgeFileBase(BaseModel):
     """Shared knowledge-file fields used by create and response schemas."""
 
-    name: str = Field(description="Human-readable filename.")
-    content: str = Field(description="Full text content of the file.")
+    name: str = Field(
+        description="Human-readable filename.",
+        max_length=_MAX_FILE_NAME_LEN,
+    )
+    content: str = Field(
+        description="Full text content of the file.",
+        max_length=_MAX_FILE_CONTENT_LEN,
+    )
 
 
 class KnowledgeFileCreate(KnowledgeFileBase):
@@ -240,12 +443,17 @@ class KnowledgeFileCreate(KnowledgeFileBase):
 
     id: str | None = None
 
+    @field_validator("id")
+    @classmethod
+    def id_must_be_uuid(cls, v: str | None) -> str | None:
+        return _validate_uuid(v, "id")
+
 
 class KnowledgeFileUpdate(BaseModel):
     """Partial update body; only supplied fields are written to the database."""
 
-    name: str | None = None
-    content: str | None = None
+    name: str | None = Field(default=None, max_length=_MAX_NAME_LEN)
+    content: str | None = Field(default=None, max_length=_MAX_FILE_CONTENT_LEN)
 
 
 class KnowledgeFileResponse(KnowledgeFileBase):
@@ -262,22 +470,43 @@ _GROQ_DEFAULT_MODEL = "llama-3.3-70b-versatile"
 class OpenAIPromptRequest(BaseModel):
     """Request body for testing OpenAI connectivity."""
 
-    prompt: str = Field(..., examples=["Hello"])
+    prompt: str = Field(..., examples=["Hello"], min_length=1, max_length=_MAX_PROMPT_LEN)
     model: str = Field(_OPENAI_DEFAULT_MODEL, examples=[_OPENAI_DEFAULT_MODEL])
+
+    @field_validator("model")
+    @classmethod
+    def model_must_be_allowlisted(cls, v: str) -> str:
+        if v not in ALLOWED_MODELS:
+            raise ValueError(f"Model '{v}' is not in the allowed model list.")
+        return v
 
 
 class AnthropicPromptRequest(BaseModel):
     """Request body for testing Anthropic connectivity."""
 
-    prompt: str = Field(..., examples=["Hello"])
+    prompt: str = Field(..., examples=["Hello"], min_length=1, max_length=_MAX_PROMPT_LEN)
     model: str = Field(_ANTHROPIC_DEFAULT_MODEL, examples=[_ANTHROPIC_DEFAULT_MODEL])
+
+    @field_validator("model")
+    @classmethod
+    def model_must_be_allowlisted(cls, v: str) -> str:
+        if v not in ALLOWED_MODELS:
+            raise ValueError(f"Model '{v}' is not in the allowed model list.")
+        return v
 
 
 class GroqPromptRequest(BaseModel):
     """Request body for testing Groq connectivity."""
 
-    prompt: str = Field(..., examples=["Hello"])
+    prompt: str = Field(..., examples=["Hello"], min_length=1, max_length=_MAX_PROMPT_LEN)
     model: str = Field(_GROQ_DEFAULT_MODEL, examples=[_GROQ_DEFAULT_MODEL])
+
+    @field_validator("model")
+    @classmethod
+    def model_must_be_allowlisted(cls, v: str) -> str:
+        if v not in ALLOWED_MODELS:
+            raise ValueError(f"Model '{v}' is not in the allowed model list.")
+        return v
 
 
 class PromptResponse(BaseModel):
@@ -299,7 +528,11 @@ class FilesToolRequest(BaseModel):
 
     action: str = Field(..., description="'list' or 'read'.")
     file_name: str | None = Field(None, description="Required when action is 'read'.")
-    files: dict[str, str] = Field(..., description="Mock file store: name -> content.")
+    files: dict[str, str] = Field(
+        ...,
+        description="Mock file store: name -> content.",
+        max_length=_MAX_TOOLS_COUNT,
+    )
 
 
 class FilesToolResponse(BaseModel):
@@ -446,13 +679,20 @@ _ConsensusMode = Literal[
     "broadcast_no_consensus",
     "weighted_opinion_pooling",
     "plurality_voting",
+    "bidding",
 ]
+
+_TopologyMode = Literal["static", "dynamic"]
 
 
 class SimulationRunRequest(BaseModel):
     """Request body for running a topology simulation."""
 
-    prompt: str = Field(description="The prompt broadcast to all agents.")
+    prompt: str = Field(
+        description="The prompt broadcast to all agents.",
+        min_length=1,
+        max_length=_MAX_PROMPT_LEN,
+    )
     rounds: int = Field(
         default=3,
         ge=1,
@@ -465,7 +705,8 @@ class SimulationRunRequest(BaseModel):
             "Consensus algorithm. 'broadcast_no_consensus' = discussion without "
             "a final consensus operator. 'weighted_opinion_pooling' = per-agent "
             "trust vector over neighbours. 'plurality_voting' = global plurality "
-            "voting via a coordinator function."
+            "voting via a coordinator function. 'bidding' = bidding-based "
+            "consensus (not yet implemented)."
         ),
     )
     agent_context: dict[str, str] | None = Field(
@@ -476,11 +717,51 @@ class SimulationRunRequest(BaseModel):
             "benchmarks (e.g. needle-in-haystack) to seed each agent with a chunk."
         ),
     )
+
+    @field_validator("agent_context")
+    @classmethod
+    def validate_agent_context(cls, v: dict[str, str] | None) -> dict[str, str] | None:
+        if v is None:
+            return v
+        if len(v) > _MAX_AGENT_CONTEXT_ENTRIES:
+            raise ValueError(
+                f"agent_context may contain at most {_MAX_AGENT_CONTEXT_ENTRIES} entries, "
+                f"got {len(v)}."
+            )
+        for key, value in v.items():
+            if not isinstance(value, str):
+                raise ValueError(
+                    f"agent_context values must be strings, got {type(value)} for key '{key}'."
+                )
+            if len(value) > _MAX_AGENT_CONTEXT_VALUE_LEN:
+                raise ValueError(
+                    f"agent_context['{key}'] exceeds {_MAX_AGENT_CONTEXT_VALUE_LEN} characters."
+                )
+        return v
+
     ruleset: str | None = Field(
         default=None,
+        max_length=_MAX_RULESET_LEN,
         description=(
             "Optional global ruleset prepended to every agent's system prompt. "
             "Use this to define shared rules that all agents must abide by."
+        ),
+    )
+    topology: _TopologyMode = Field(
+        default="static",
+        description=(
+            "Graph mode. 'static' = connections fixed at run start (current behaviour). "
+            "'dynamic' = agents discover peers via the registry tool and choose who to "
+            "hear from each round via a CONNECT: line."
+        ),
+    )
+    fanout: int = Field(
+        default=3,
+        ge=0,
+        le=10,
+        description=(
+            "Max neighbours an agent may connect to per round in dynamic mode. "
+            "0 means unlimited (no cap) — every relevant peer an agent finds is kept."
         ),
     )
 

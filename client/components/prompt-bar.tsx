@@ -7,31 +7,26 @@ import { useTheme } from "@/lib/theme-context";
 import { useApiKeys } from "@/lib/api-keys-context";
 import { fetchModels } from "@/lib/api";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
-import {
-  Select,
-  SelectContent,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from "@/components/ui/select";
-import type { ConsensusMode } from "@/lib/types";
 
 interface PromptBarProps {
-  simMode: boolean;
-  onRun: (prompt: string, mode: ConsensusMode) => void;
+  running: boolean;
+  turnCount: number;
+  // Consensus mode, topology and fan-out now live in the Settings panel; the
+  // prompt bar only collects the prompt and triggers the run.
+  onRun: (prompt: string) => void;
+  onResetContext: () => void;
   onOpenKeys: () => void;
 }
 
-const MODE_LABELS: Partial<Record<ConsensusMode, string>> = {
-  broadcast_no_consensus: "Broadcast",
-  weighted_opinion_pooling: "Weighted pooling",
-  plurality_voting: "Plurality voting",
-};
-
-export function PromptBar({ simMode, onRun, onOpenKeys }: PromptBarProps) {
+export function PromptBar({
+  running,
+  turnCount,
+  onRun,
+  onResetContext,
+  onOpenKeys,
+}: PromptBarProps) {
   const [val, setVal] = useState("");
   const [preview, setPreview] = useState(false);
-  const [mode, setMode] = useState<ConsensusMode>("plurality_voting");
   const { dark } = useTheme();
   const t = getTheme(dark);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -46,14 +41,15 @@ export function PromptBar({ simMode, onRun, onOpenKeys }: PromptBarProps) {
   }, [hasLocalKey]);
 
   const hasAnyKey = hasLocalKey || hasServerModels;
-  const canRun = !simMode && hasAnyKey && val.trim().length > 0;
+  const inputDisabled = running || !hasAnyKey;
+  const canRun = !running && hasAnyKey && val.trim().length > 0;
 
   const handleSubmit = useCallback(() => {
     if (!canRun) return;
-    onRun(val, mode);
+    onRun(val);
     setVal("");
     setPreview(false);
-  }, [canRun, onRun, val, mode]);
+  }, [canRun, onRun, val]);
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -178,7 +174,7 @@ export function PromptBar({ simMode, onRun, onOpenKeys }: PromptBarProps) {
           value={val}
           onChange={(e) => setVal(e.target.value)}
           onKeyDown={handleKeyDown}
-          disabled={simMode || !hasAnyKey}
+          disabled={inputDisabled}
           placeholder={
             hasAnyKey
               ? "Analyze market trends and reach a consensus recommendation…"
@@ -190,13 +186,13 @@ export function PromptBar({ simMode, onRun, onOpenKeys }: PromptBarProps) {
             background: "transparent",
             border: "none",
             outline: "none",
-            color: simMode || !hasAnyKey ? t.textDim : t.text,
+            color: inputDisabled ? t.textDim : t.text,
             caretColor: t.text,
             colorScheme: dark ? "dark" : "light",
             fontSize: 13.5,
             lineHeight: 1.55,
-            opacity: simMode || !hasAnyKey ? 0.5 : 1,
-            cursor: simMode || !hasAnyKey ? "not-allowed" : "text",
+            opacity: inputDisabled ? 0.5 : 1,
+            cursor: inputDisabled ? "not-allowed" : "text",
             resize: "none",
             width: "100%",
             height: 28,
@@ -239,26 +235,6 @@ export function PromptBar({ simMode, onRun, onOpenKeys }: PromptBarProps) {
           </button>
         )}
 
-        {/* Consensus mode selector */}
-        <Select
-          value={mode}
-          onValueChange={(v) => setMode(v as ConsensusMode)}
-          disabled={simMode}
-        >
-          <SelectTrigger disabled={simMode}>
-            <SelectValue />
-          </SelectTrigger>
-          <SelectContent>
-            {(Object.entries(MODE_LABELS) as [ConsensusMode, string][]).map(
-              ([m, label]) => (
-                <SelectItem key={m} value={m}>
-                  {label}
-                </SelectItem>
-              ),
-            )}
-          </SelectContent>
-        </Select>
-
         {/* Run button */}
         <button
           onClick={handleSubmit}
@@ -300,6 +276,45 @@ export function PromptBar({ simMode, onRun, onOpenKeys }: PromptBarProps) {
         </button>
       </div>
 
+      {/* Conversation reset — only shown after at least one completed turn */}
+      {turnCount > 0 && !running && (
+        <button
+          onClick={onResetContext}
+          title="Start a fresh conversation"
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            background: t.pill,
+            border: `1px solid ${t.pillBorder}`,
+            borderRadius: 100,
+            padding: "4px 12px",
+            cursor: "pointer",
+            color: t.textSub,
+            fontSize: 10.5,
+            fontFamily: "'JetBrains Mono', monospace",
+            letterSpacing: 0.3,
+            transition: "color 0.15s, border-color 0.15s",
+          }}
+          onMouseEnter={(e) => {
+            const el = e.currentTarget as HTMLButtonElement;
+            el.style.color = t.text;
+            el.style.borderColor = BURG;
+          }}
+          onMouseLeave={(e) => {
+            const el = e.currentTarget as HTMLButtonElement;
+            el.style.color = t.textSub;
+            el.style.borderColor = t.pillBorder;
+          }}
+        >
+          <LIcon name="RotateCcw" size={11} color="currentColor" />
+          New conversation
+          <span style={{ opacity: 0.6 }}>
+            · {turnCount} turn{turnCount === 1 ? "" : "s"}
+          </span>
+        </button>
+      )}
+
       {/* Disclaimer */}
       <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
         <LIcon
@@ -316,8 +331,8 @@ export function PromptBar({ simMode, onRun, onOpenKeys }: PromptBarProps) {
           }}
         >
           {hasAnyKey
-            ? "This is an AI simulation and may make mistakes. Verify outputs independently."
-            : "Add an API key (Keys button, top bar) to start running simulations."}
+            ? "This AI system can make mistakes. Outputs may be incomplete or incorrect — always verify independently."
+            : "This AI system can make mistakes. Add an API key (Keys button, top bar) to start running simulations."}
         </span>
       </div>
     </div>

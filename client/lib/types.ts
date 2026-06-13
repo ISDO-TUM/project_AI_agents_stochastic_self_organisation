@@ -1,5 +1,5 @@
 export type Provider = "openai" | "anthropic" | "groq" | "gemini";
-export type SourceType = "text" | "document";
+export type SourceType = "text" | "document" | "dataset";
 export type SimStepType =
   | "system"
   | "agent-to-agent"
@@ -9,7 +9,10 @@ export type SimStepType =
 export type ConsensusMode =
   | "broadcast_no_consensus"
   | "weighted_opinion_pooling"
-  | "plurality_voting";
+  | "plurality_voting"
+  | "bidding";
+
+export type TopologyMode = "static" | "dynamic";
 
 export interface Position {
   x: number;
@@ -54,11 +57,19 @@ export interface SimStep {
   label: string;
   msg: string;
   type: SimStepType;
+  /** Raw server-side message_type (e.g. "bidding_bid"). Used by views that
+   *  need to parse the message body (bidding board) rather than render a label. */
+  messageType?: string;
   roundIndex?: number;
   target?: string;
   nodeId?: string;
   fromId?: string;
   toId?: string;
+  /** lucide-react icon name overriding the type-derived default. */
+  icon?: string;
+  /** True for a connection formed at runtime (dynamic "phone-book") rather than
+   *  one present in the static seed graph. */
+  dynamic?: boolean;
 }
 
 export interface AnimatedParticle {
@@ -119,6 +130,104 @@ export interface HistoryMessage {
   messageType: string;
   message: string | null;
   createdAt: string;
+}
+
+export interface ConversationTurn {
+  prompt: string;
+  mode: ConsensusMode;
+  answer: string | null;
+}
+
+export interface TrialSummary {
+  trialId: string;
+  userPrompt: string;
+  description: string;
+  mode: ConsensusMode | string | null;
+  status: string;
+  createdAt: string;
+  roundCount: number;
+  agentCount: number;
+  totalMessages: number;
+  totalEdges: number;
+  messageTypeCounts: Record<string, number>;
+}
+
+export interface AgentStat {
+  agentId: string;
+  agentName: string;
+  messagesSent: number;
+  messagesReceived: number;
+  outDegree: number;
+  inDegree: number;
+  toolInvocations: number;
+}
+
+export interface EdgeStat {
+  fromAgentId: string;
+  fromAgentName: string;
+  toAgentId: string;
+  toAgentName: string;
+  messageCount: number;
+}
+
+export interface RoundStat {
+  roundId: number;
+  roundIndex: number;
+  phase: string;
+  messageCount: number;
+  activeEdgeCount: number;
+}
+
+export interface LangfuseSummary {
+  trialId: string;
+  traceCount: number;
+  generationCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  averageLatencyMs: number;
+  slowestAgentName: string | null;
+  slowestModel: string | null;
+}
+
+export interface LangfuseAgentStat {
+  agentId: string;
+  agentName: string;
+  generationCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  averageLatencyMs: number;
+}
+
+export interface LangfuseModelStat {
+  model: string;
+  generationCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  averageLatencyMs: number;
+}
+
+export interface LangfuseRoundStat {
+  roundIndex: number;
+  phase: string;
+  generationCount: number;
+  totalTokens: number;
+  totalCost: number;
+  averageLatencyMs: number;
+}
+
+export interface LangfuseStats {
+  summary: LangfuseSummary;
+  agents: LangfuseAgentStat[];
+  models: LangfuseModelStat[];
+  rounds: LangfuseRoundStat[];
+  available: boolean;
+  message: string | null;
 }
 
 export type CanvasAction =

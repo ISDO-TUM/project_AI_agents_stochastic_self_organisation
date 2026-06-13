@@ -6,6 +6,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, status
 
+from server.guardrails import PromptInjectionError, sanitize_prompt
 from server.llm.anthropic_provider import call_anthropic
 from server.llm.credentials import use_credentials
 from server.llm.groq_provider import call_groq
@@ -35,6 +36,10 @@ router = APIRouter(prefix="/api/test", tags=["Testing"])
 )
 async def test_openai(body: OpenAIPromptRequest) -> PromptResponse:
     try:
+        sanitize_prompt(body.prompt, field_name="prompt")
+    except PromptInjectionError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    try:
         result = await call_openai(body.prompt, model=body.model)
         return PromptResponse(response=result)
     except Exception as exc:
@@ -50,6 +55,10 @@ async def test_openai(body: OpenAIPromptRequest) -> PromptResponse:
 )
 async def test_anthropic(body: AnthropicPromptRequest) -> PromptResponse:
     try:
+        sanitize_prompt(body.prompt, field_name="prompt")
+    except PromptInjectionError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
+    try:
         result = await call_anthropic(body.prompt, model=body.model)
         return PromptResponse(response=result)
     except Exception as exc:
@@ -64,6 +73,10 @@ async def test_anthropic(body: AnthropicPromptRequest) -> PromptResponse:
     dependencies=[Depends(use_credentials)],
 )
 async def test_groq(body: GroqPromptRequest) -> PromptResponse:
+    try:
+        sanitize_prompt(body.prompt, field_name="prompt")
+    except PromptInjectionError as exc:
+        raise HTTPException(status.HTTP_422_UNPROCESSABLE_ENTITY, str(exc)) from exc
     try:
         result = await call_groq(body.prompt, model=body.model)
         return PromptResponse(response=result)
