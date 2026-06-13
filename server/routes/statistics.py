@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections import Counter, defaultdict
 from collections.abc import Sequence
 from typing import Annotated, Any
@@ -13,8 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.db import get_db
 from server.db.tables import agents, connections, experiments, messages, rounds, trials
+from server.llm import call_agent
+from server.llm.credentials import resolve_api_key, use_credentials
+from server.llm.embeddings import cosine, embed_texts
 from server.schemas import (
     AgentStatistics,
+    ConsistencyReport,
     EdgeStatistics,
     ExperimentAgentStatistics,
     ExperimentEdgeStatistics,
@@ -28,11 +33,13 @@ from server.schemas import (
     LangfuseRoundStatistics,
     LangfuseStatisticsResponse,
     LangfuseStatisticsSummary,
+    PairwiseSimilarity,
     RoundStatistics,
     TrialStatisticsSummary,
 )
 
 router = APIRouter(prefix="/api/statistics", tags=["Statistics"])
+logger = logging.getLogger(__name__)
 
 DBDep = Annotated[AsyncConnection, Depends(get_db)]
 
@@ -1101,6 +1108,153 @@ async def experiment_langfuse(exp_id: str, db: DBDep) -> ExperimentLangfuseRespo
         agents=agent_rows,
         models=model_rows,
         rounds=round_rows,
+        available=True,
+        message=None,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Consistency (cross-trial answer similarity)
+# ---------------------------------------------------------------------------
+
+_ANSWER_PRIORITY = (
+    "consensus",
+    "bidding_final_output",
+    "broadcast_no_consensus_outputs",
+    "agent_output",
+)
+
+
+async def _extract_trial_answer(db: AsyncConnection, trial_id: str) -> str | None:
+    """Return the concatenated final-answer messages for a trial."""
+    max_round_idx = await db.scalar(
+        select(func.max(rounds.c.round_index)).where(rounds.c.trial_id == trial_id)
+    )
+    if max_round_idx is None:
+        return None
+
+    for mtype in _ANSWER_PRIORITY:
+        rows = (
+            await db.execute(
+                select(messages.c.message)
+                .select_from(_MSG_ROUNDS)
+                .where(
+                    rounds.c.trial_id == trial_id,
+                    rounds.c.round_index == max_round_idx,
+                    messages.c.message_type == mtype,
+                    messages.c.message.is_not(None),
+                )
+                .order_by(messages.c.id.asc())
+            )
+        ).all()
+        if rows:
+            return "\n\n".join(r.message for r in rows if r.message)
+    return None
+
+
+def _pick_provider_model() -> tuple[str, str] | None:
+    """Return the first configured (provider, model) pair for the AI summary."""
+    candidates = [
+        ("anthropic", "claude-haiku-4-5-20251001"),
+        ("openai", "gpt-4.1-nano"),
+        ("groq", "llama-3.3-70b-versatile"),
+        ("gemini", "gemini-2.0-flash"),
+    ]
+    for provider, model in candidates:
+        try:
+            resolve_api_key(provider)
+            return provider, model
+        except Exception:
+            logger.debug("Provider %s unavailable: no API key configured", provider)
+            continue
+    return None
+
+
+@router.get(
+    "/experiments/{exp_id}/consistency",
+    response_model=ConsistencyReport,
+    dependencies=[Depends(use_credentials)],
+)
+async def experiment_consistency(exp_id: str, db: DBDep) -> ConsistencyReport:
+    await _require_experiment(db, exp_id)
+    trial_ids = await _experiment_trial_ids(db, exp_id)
+
+    answers: list[tuple[str, str]] = []
+    for tid in trial_ids:
+        text = await _extract_trial_answer(db, tid)
+        if text:
+            answers.append((tid, text))
+
+    n = len(trial_ids)
+    na = len(answers)
+
+    if na < 2:
+        msg = (
+            "Need at least 2 completed trials to compute consistency."
+            if n < 2
+            else "Not enough trials with extractable answers yet."
+        )
+        return ConsistencyReport(
+            experiment_id=exp_id,
+            trial_count=n,
+            trials_with_answers=na,
+            avg_cosine_similarity=None,
+            pairwise_scores=[],
+            ai_summary=None,
+            available=False,
+            message=msg,
+        )
+
+    answer_texts = [t for _, t in answers]
+    answer_ids = [tid for tid, _ in answers]
+
+    # Semantic embeddings + pairwise cosine similarities
+    avg_cos: float | None = None
+    pairs: list[PairwiseSimilarity] = []
+    embeddings = await embed_texts(answer_texts)
+    if embeddings and len(embeddings) == len(answer_texts):
+        scores: list[float] = []
+        for i in range(len(embeddings)):
+            for j in range(i + 1, len(embeddings)):
+                sim = cosine(embeddings[i], embeddings[j])
+                pairs.append(
+                    PairwiseSimilarity(
+                        trial_id_a=answer_ids[i],
+                        trial_id_b=answer_ids[j],
+                        cosine_similarity=round(sim, 4),
+                    )
+                )
+                scores.append(sim)
+        avg_cos = round(sum(scores) / len(scores), 4) if scores else None
+
+    # AI-generated consistency summary
+    ai_summary: str | None = None
+    pm = _pick_provider_model()
+    if pm:
+        provider, model = pm
+        answers_block = "\n\n".join(
+            f"Answer {i + 1} (trial {tid}):\n{txt}" for i, (tid, txt) in enumerate(answers)
+        )
+        summary_prompt = (
+            f"Below are {na} answers to the same question, each from an independent "
+            f"run of a multi-agent system.\n\n"
+            f"{answers_block}\n\n"
+            "Briefly assess (3-5 sentences) how consistent these answers are with each "
+            "other. Note key points of agreement, any meaningful divergences, and whether "
+            "the system appears reliable for this question."
+        )
+        try:
+            ai_summary, _ = await call_agent(summary_prompt, provider, model)
+        except Exception:
+            ai_summary = None
+
+    return ConsistencyReport(
+        experiment_id=exp_id,
+        trial_count=n,
+        trials_with_answers=na,
+        avg_cosine_similarity=avg_cos,
+        pairwise_scores=pairs,
+        ai_summary=ai_summary,
         available=True,
         message=None,
     )

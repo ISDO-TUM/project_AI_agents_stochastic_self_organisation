@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ComparisonDashboard } from "@/components/comparison/dashboard";
 import { AgentActivityChart } from "@/components/statistics/agent-activity-chart";
+import { ConsistencySection } from "@/components/statistics/consistency-report";
 import { CommunicationGraph } from "@/components/statistics/communication-graph";
 import { LangfuseObservability } from "@/components/statistics/langfuse-observability";
 import {
@@ -25,11 +26,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useStatistics } from "@/hooks/useStatistics";
-import { fetchExperiments } from "@/lib/api";
+import { fetchExperimentConsistency, fetchExperiments } from "@/lib/api";
 import { LIcon } from "@/lib/icons";
 import { BURG, BURG_DIM, BURG_LT, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
-import type { ExperimentListItem } from "@/lib/types";
+import type { ConsistencyReport, ExperimentListItem } from "@/lib/types";
 
 type ViewId = "collaboration" | "langfuse" | "comparison";
 
@@ -202,6 +203,9 @@ export function StatisticsDashboard() {
   const [experimentId, setExperimentId] = useState<string | null>(null);
   const [experimentsLoading, setExperimentsLoading] = useState(true);
   const [view, setView] = useState<ViewId>("collaboration");
+  const [consistency, setConsistency] = useState<ConsistencyReport | null>(
+    null,
+  );
   const stats = useStatistics(experimentId);
 
   useEffect(() => {
@@ -213,6 +217,17 @@ export function StatisticsDashboard() {
       .catch(() => setExperiments([]))
       .finally(() => setExperimentsLoading(false));
   }, []);
+
+  useEffect(() => {
+    if (!experimentId) {
+      setConsistency(null);
+      return;
+    }
+    setConsistency(null);
+    fetchExperimentConsistency(experimentId)
+      .then(setConsistency)
+      .catch(() => setConsistency(null));
+  }, [experimentId]);
 
   const noExperiments = !experimentsLoading && experiments.length === 0;
   const loading = experimentsLoading || stats.loading;
@@ -480,6 +495,13 @@ export function StatisticsDashboard() {
                 dark={dark}
                 delay={420}
               />
+              {consistency && (
+                <ConsistencySection
+                  report={consistency}
+                  dark={dark}
+                  delay={480}
+                />
+              )}
             </div>
           ) : view === "langfuse" && stats.langfuse ? (
             <LangfuseObservability langfuse={stats.langfuse} dark={dark} />

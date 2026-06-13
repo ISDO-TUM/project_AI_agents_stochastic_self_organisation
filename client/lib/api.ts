@@ -9,6 +9,7 @@ import type {
   Agent,
   AgentStat,
   ConsensusMode,
+  ConsistencyReport,
   EdgeStat,
   ExperimentAgentStat,
   ExperimentEdgeStat,
@@ -20,6 +21,7 @@ import type {
   HistoryTrial,
   KnowledgeFile,
   LangfuseStats,
+  PairwiseSimilarity,
   Provider,
   RoundStat,
   Rule,
@@ -247,12 +249,14 @@ export async function fetchModels(): Promise<ModelEntry[]> {
 
 export interface SimulationResult {
   trialId: string;
+  trialIds: string[];
   status: string;
   consensus?: string;
 }
 
 interface WireSimulationResponse {
   trial_id: string;
+  trial_ids: string[];
   status: string;
 }
 
@@ -323,6 +327,7 @@ export async function runSimulation(
     ruleset?: string;
     topology?: TopologyMode;
     fanout?: number;
+    iterations?: number;
   } = {},
 ): Promise<SimulationResult> {
   const {
@@ -332,6 +337,7 @@ export async function runSimulation(
     ruleset,
     topology = "static",
     fanout = 3,
+    iterations = 1,
   } = options;
   const data = await request<WireSimulationResponse>(
     "POST",
@@ -342,12 +348,14 @@ export async function runSimulation(
       mode,
       topology,
       fanout,
+      iterations,
       ...(agentContext && { agent_context: agentContext }),
       ...(ruleset && ruleset.trim() && { ruleset }),
     },
   );
   return {
     trialId: data.trial_id,
+    trialIds: data.trial_ids,
     status: data.status,
   };
 }
@@ -815,6 +823,46 @@ export async function fetchExperimentLangfuseStats(
       totalCost: row.total_cost,
       averageLatencyMs: row.average_latency_ms,
     })),
+    available: r.available,
+    message: r.message,
+  };
+}
+
+interface WirePairwiseSimilarity {
+  trial_id_a: string;
+  trial_id_b: string;
+  cosine_similarity: number;
+}
+
+interface WireConsistencyReport {
+  experiment_id: string;
+  trial_count: number;
+  trials_with_answers: number;
+  avg_cosine_similarity: number | null;
+  pairwise_scores: WirePairwiseSimilarity[];
+  ai_summary: string | null;
+  available: boolean;
+  message: string | null;
+}
+
+export async function fetchExperimentConsistency(
+  expId: string,
+): Promise<ConsistencyReport> {
+  const r = await request<WireConsistencyReport>(
+    "GET",
+    `/api/statistics/experiments/${expId}/consistency`,
+  );
+  return {
+    experimentId: r.experiment_id,
+    trialCount: r.trial_count,
+    trialsWithAnswers: r.trials_with_answers,
+    avgCosineSimilarity: r.avg_cosine_similarity,
+    pairwiseScores: r.pairwise_scores.map((p) => ({
+      trialIdA: p.trial_id_a,
+      trialIdB: p.trial_id_b,
+      cosineSimilarity: p.cosine_similarity,
+    })),
+    aiSummary: r.ai_summary,
     available: r.available,
     message: r.message,
   };

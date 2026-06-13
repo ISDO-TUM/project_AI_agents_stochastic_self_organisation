@@ -511,6 +511,32 @@ class ExperimentLangfuseResponse(BaseModel):
 
 
 # ---------------------------------------------------------------------------
+# Consistency (cross-trial answer similarity within an experiment)
+# ---------------------------------------------------------------------------
+
+
+class PairwiseSimilarity(BaseModel):
+    """Cosine similarity between the final answers of two trials."""
+
+    trial_id_a: str
+    trial_id_b: str
+    cosine_similarity: float
+
+
+class ConsistencyReport(BaseModel):
+    """Answer consistency report for all trials in one experiment."""
+
+    experiment_id: str
+    trial_count: int
+    trials_with_answers: int
+    avg_cosine_similarity: float | None = None
+    pairwise_scores: list[PairwiseSimilarity]
+    ai_summary: str | None = None
+    available: bool
+    message: str | None = None
+
+
+# ---------------------------------------------------------------------------
 # Knowledge files
 # ---------------------------------------------------------------------------
 
@@ -854,10 +880,20 @@ class SimulationRunRequest(BaseModel):
             "0 means unlimited (no cap) — every relevant peer an agent finds is kept."
         ),
     )
+    iterations: int = Field(
+        default=1,
+        ge=1,
+        le=10,
+        description=(
+            "Number of sequential trial runs to execute under the same experiment. "
+            "All runs share the same setup hash and feed into the same aggregated statistics."
+        ),
+    )
 
 
 class SimulationStartResponse(BaseModel):
     """Response returned immediately after a background simulation is scheduled."""
 
-    trial_id: str = Field(description="ID of the trial whose messages can be polled.")
+    trial_id: str = Field(description="ID of the first trial (used for live message streaming).")
+    trial_ids: list[str] = Field(description="IDs of all scheduled trials.")
     status: str = Field(default="started", description="Background simulation status.")

@@ -303,6 +303,25 @@ export interface ExperimentLangfuseStats {
   message: string | null;
 }
 
+// ─── Consistency ─────────────────────────────────────────────────────────────
+
+export interface PairwiseSimilarity {
+  trialIdA: string;
+  trialIdB: string;
+  cosineSimilarity: number;
+}
+
+export interface ConsistencyReport {
+  experimentId: string;
+  trialCount: number;
+  trialsWithAnswers: number;
+  avgCosineSimilarity: number | null;
+  pairwiseScores: PairwiseSimilarity[];
+  aiSummary: string | null;
+  available: boolean;
+  message: string | null;
+}
+
 export type CanvasAction =
   | { type: "ADD_AGENT"; agent: Agent }
   | { type: "UPDATE_AGENT"; agent: Agent }

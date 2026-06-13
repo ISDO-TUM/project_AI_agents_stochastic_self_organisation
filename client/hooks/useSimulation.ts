@@ -127,6 +127,10 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
   const [activeEdgeReversed, setActEdgeReversed] = useState(false);
   const [particles, setParticles] = useState<AnimatedParticle[]>([]);
   const [outcome, setOutcome] = useState<SimulationResult | null>(null);
+  const [batchProgress, setBatchProgress] = useState<{
+    completed: number;
+    total: number;
+  } | null>(null);
   const particleTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const runSeqRef = useRef(0);
 
@@ -192,6 +196,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
       ruleset?: string,
       topology: TopologyMode = "static",
       fanout: number = 3,
+      iterations: number = 1,
     ) => {
       if (agents.length === 0) return;
 
@@ -201,6 +206,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
       setSteps([]);
       setCur(0);
       setOutcome(null);
+      setBatchProgress(null);
       const runSeq = runSeqRef.current + 1;
       runSeqRef.current = runSeq;
 
@@ -230,8 +236,12 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
           ruleset,
           topology,
           fanout,
+          iterations,
         });
         setOutcome(result);
+        const isBatch = result.trialIds.length > 1;
+        if (isBatch)
+          setBatchProgress({ completed: 0, total: result.trialIds.length });
         let lastMessageId = 0;
         let complete = false;
         while (!complete && runSeqRef.current === runSeq) {
@@ -253,13 +263,38 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
               return next;
             });
           }
-          const trial = await fetchHistoryTrial(result.trialId);
-          setOutcome({ trialId: trial.id, status: trial.status });
-          complete = trial.status === "completed" || trial.status === "failed";
+          if (isBatch) {
+            const allTrials = await Promise.all(
+              result.trialIds.map((tid) => fetchHistoryTrial(tid)),
+            );
+            const doneCount = allTrials.filter(
+              (t) => t.status === "completed" || t.status === "failed",
+            ).length;
+            setBatchProgress({
+              completed: doneCount,
+              total: result.trialIds.length,
+            });
+            setOutcome({
+              trialId: result.trialId,
+              trialIds: result.trialIds,
+              status: allTrials[0].status,
+            });
+            complete = doneCount === result.trialIds.length;
+          } else {
+            const trial = await fetchHistoryTrial(result.trialId);
+            setOutcome({
+              trialId: trial.id,
+              trialIds: result.trialIds,
+              status: trial.status,
+            });
+            complete =
+              trial.status === "completed" || trial.status === "failed";
+          }
           if (!complete) {
             await new Promise<void>((r) => setTimeout(r, 750));
           }
         }
+        if (isBatch) setBatchProgress(null);
         setTurns((prev) => [
           ...prev,
           { prompt, mode, answer: result.consensus ?? null },
@@ -296,6 +331,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     setActEdgeReversed(false);
     setParticles([]);
     setOutcome(null);
+    setBatchProgress(null);
   }, []);
 
   // Reset the conversation — drop accumulated turns and exit the run view
@@ -322,6 +358,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     stopSim,
     resetContext,
     outcome,
+    batchProgress,
     dynamicEdges,
   };
 }
