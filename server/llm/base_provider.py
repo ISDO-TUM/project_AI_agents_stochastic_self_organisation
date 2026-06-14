@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from abc import ABC, abstractmethod
 from typing import Any
 
@@ -14,6 +15,32 @@ logger = logging.getLogger(__name__)
 # Maximum wall-clock seconds for a single complete agent call (all tool
 # iterations included).  Prevents runaway loops from blocking indefinitely.
 _DEFAULT_TIMEOUT_SECONDS = 60
+
+# Default ceiling on output tokens per LLM call, shared by every provider.
+# 1024 truncated multi-round reasoning together with the trailing REASON/VOTE
+# lines the simulation depends on, so the vote parser silently fell back to an
+# abstention. 4096 leaves headroom; override per-deployment with LLM_MAX_TOKENS.
+_DEFAULT_MAX_TOKENS = 4096
+
+
+def default_max_tokens() -> int:
+    """Resolve the per-call output token ceiling.
+
+    Reads ``LLM_MAX_TOKENS`` at call time (not import time) so values loaded
+    from ``.env`` after the provider modules are imported are still honoured.
+    A non-positive or non-integer value is ignored with a warning.
+    """
+    raw = os.getenv("LLM_MAX_TOKENS")
+    if raw:
+        try:
+            value = int(raw)
+        except ValueError:
+            logger.warning("Ignoring invalid LLM_MAX_TOKENS=%r (not an integer)", raw)
+        else:
+            if value > 0:
+                return value
+            logger.warning("Ignoring non-positive LLM_MAX_TOKENS=%r", raw)
+    return _DEFAULT_MAX_TOKENS
 
 
 class BaseLLMProvider(ABC):

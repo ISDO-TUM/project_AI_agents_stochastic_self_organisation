@@ -1,5 +1,6 @@
 """Tests for the agents CRUD endpoints."""
 
+import pytest
 from httpx import AsyncClient
 
 _AGENT_PAYLOAD = {
@@ -95,3 +96,31 @@ async def test_create_agent_invalid_provider(client: AsyncClient) -> None:
     payload = {**_AGENT_PAYLOAD, "provider": "google"}
     response = await client.post("/api/agents", json=payload)
     assert response.status_code == 422
+
+
+async def test_bulk_delete_requires_confirmation_header(client: AsyncClient) -> None:
+    await client.post("/api/agents", json=_AGENT_PAYLOAD)
+
+    # Without the confirmation header the wipe is refused and data is preserved.
+    response = await client.delete("/api/agents")
+    assert response.status_code == 428
+    assert len((await client.get("/api/agents")).json()) == 1
+
+
+async def test_bulk_delete_with_confirmation_header(client: AsyncClient) -> None:
+    await client.post("/api/agents", json=_AGENT_PAYLOAD)
+
+    response = await client.delete("/api/agents", headers={"X-Confirm-Delete": "all"})
+    assert response.status_code == 204
+    assert (await client.get("/api/agents")).json() == []
+
+
+async def test_bulk_delete_disabled_by_env(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("ALLOW_BULK_DELETE", "false")
+    await client.post("/api/agents", json=_AGENT_PAYLOAD)
+
+    response = await client.delete("/api/agents", headers={"X-Confirm-Delete": "all"})
+    assert response.status_code == 403
+    assert len((await client.get("/api/agents")).json()) == 1

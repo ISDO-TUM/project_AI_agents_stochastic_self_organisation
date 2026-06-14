@@ -2,7 +2,7 @@ from typing import Any
 
 from openai import AsyncOpenAI
 
-from .base_provider import BaseLLMProvider
+from .base_provider import BaseLLMProvider, default_max_tokens
 from .credentials import resolve_api_key, resolve_base_url
 from .langfuse_setup import observe, update_current_generation
 from .normalizer import NormalizedToolCall, extract_openai_tool_calls
@@ -12,7 +12,6 @@ from .normalizer import NormalizedToolCall, extract_openai_tool_calls
 _NEW_PARAM_MODELS: frozenset[str] = frozenset(
     {"gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}
 )
-_DEFAULT_MAX_TOKENS = 1024
 
 
 def _get_openai_client() -> AsyncOpenAI:
@@ -46,11 +45,12 @@ class OpenAIProvider(BaseLLMProvider):
         tools: list[dict[str, Any]] | None,
     ) -> dict[str, Any]:
         kwargs: dict[str, Any] = {"model": model, "messages": messages}
+        max_tokens = default_max_tokens()
         if model in _NEW_PARAM_MODELS:
             # gpt-5/5.4 family: temperature is deprecated; token limit uses new param name
-            kwargs["max_completion_tokens"] = _DEFAULT_MAX_TOKENS
+            kwargs["max_completion_tokens"] = max_tokens
         else:
-            kwargs["max_tokens"] = _DEFAULT_MAX_TOKENS
+            kwargs["max_tokens"] = max_tokens
         if tools:
             kwargs["tools"] = tools
         return kwargs

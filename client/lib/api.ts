@@ -90,8 +90,9 @@ async function request<T>(
   method: string,
   path: string,
   body?: unknown,
+  extraHeaders?: Record<string, string>,
 ): Promise<T> {
-  const headers: Record<string, string> = { ...llmHeaders };
+  const headers: Record<string, string> = { ...llmHeaders, ...extraHeaders };
   if (body) headers["Content-Type"] = "application/json";
   const res = await fetch(path, {
     method,
@@ -147,7 +148,10 @@ export async function deleteAgentApi(id: string): Promise<void> {
 }
 
 export async function clearAll(): Promise<void> {
-  await request<void>("DELETE", "/api/agents");
+  // The backend requires explicit confirmation for this irreversible bulk wipe.
+  await request<void>("DELETE", "/api/agents", undefined, {
+    "X-Confirm-Delete": "all",
+  });
 }
 
 export async function patchAgentTools(

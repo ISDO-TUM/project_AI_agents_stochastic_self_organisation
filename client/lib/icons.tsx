@@ -1,13 +1,8 @@
 import { LucideProps } from "lucide-react";
 import * as Icons from "lucide-react";
 
+// Keyed by registered tool name (see TOOLS in lib/utils.ts)
 export const TOOL_ICON: Record<string, string> = {
-  "Web Search": "Globe",
-  "Database Query": "Database",
-  Calculator: "Calculator",
-  "Document Reader": "FileText",
-  "API Call": "Zap",
-  // Keyed by registered tool name (see TOOLS in lib/utils.ts)
   files: "FileText",
   table_query: "Table2",
   table_mutate: "Table2",

@@ -20,12 +20,10 @@ from typing import Any, cast
 
 import httpx
 
-from .base_provider import BaseLLMProvider
+from .base_provider import BaseLLMProvider, default_max_tokens
 from .credentials import resolve_api_key, resolve_base_url
 from .langfuse_setup import observe, update_current_generation
 from .normalizer import NormalizedToolCall, extract_gemini_tool_calls
-
-_DEFAULT_MAX_TOKENS = 1024
 
 
 def _get_base_url() -> str:
@@ -57,7 +55,7 @@ class GeminiProvider(BaseLLMProvider):
     ) -> dict[str, Any]:
         body: dict[str, Any] = {
             "contents": messages,
-            "generationConfig": {"maxOutputTokens": _DEFAULT_MAX_TOKENS},
+            "generationConfig": {"maxOutputTokens": default_max_tokens()},
         }
         if tools:
             body["tools"] = [{"functionDeclarations": tools}]

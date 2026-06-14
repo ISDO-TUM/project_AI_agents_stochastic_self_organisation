@@ -37,7 +37,6 @@ from __future__ import annotations
 import asyncio
 import json
 import re
-import uuid
 from collections.abc import Awaitable
 from dataclasses import dataclass, field
 from datetime import date, datetime
@@ -467,12 +466,12 @@ _VOTE_INSTRUCTION = (
     "        VOTE: Dylan\n"
     "  BAD:  VOTE: The manager is Dylan\n"
     "if you dont have an answer, vote with: 'unknown'\n"
-    "if you dont think there is a correct answer, vote with: none"
+    "if you dont think there is a correct answer, vote with: none\n"
     "Examples:\n"
-    "  GOOD: REASON: No information regarding the question was found "
+    "  GOOD: REASON: No information regarding the question was found\n"
     "        VOTE: unknown\n"
     "  BAD:  unknown\n"
-    "  GOOD: REASON: No other agent has provided any valid alternative answer"
+    "  GOOD: REASON: No other agent has provided any valid alternative answer\n"
     "        VOTE: none\n"
     "  BAD: none\n"
 )

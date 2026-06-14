@@ -16,7 +16,8 @@ key > env ``LLM_PROXY_API_KEY``.
 from __future__ import annotations
 
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
+from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import Annotated
 
@@ -70,6 +71,23 @@ def current_credentials() -> RequestCredentials:
     """Credentials for the active request, or an env-only fallback."""
     creds = _current.get()
     return creds if creds is not None else RequestCredentials()
+
+
+@contextmanager
+def bind_credentials(creds: RequestCredentials) -> Iterator[None]:
+    """Publish *creds* on the ContextVar for the duration of the block.
+
+    Used to re-establish request-scoped BYOK credentials inside a FastAPI
+    background task. The ``use_credentials`` dependency resets the ContextVar
+    when the request ends, which happens *before* background tasks run (FastAPI
+    >= 0.106), so a task must capture the credentials at request time via
+    :func:`current_credentials` and rebind them here while it executes.
+    """
+    token = _current.set(creds)
+    try:
+        yield
+    finally:
+        _current.reset(token)
 
 
 def resolve_api_key(provider: str) -> str:

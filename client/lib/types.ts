@@ -1,10 +1,6 @@
 export type Provider = "openai" | "anthropic" | "groq" | "gemini";
 export type SourceType = "text" | "document" | "dataset";
-export type SimStepType =
-  | "system"
-  | "agent-to-agent"
-  | "tool"
-  | "agent-to-source";
+export type SimStepType = "system" | "agent-to-agent" | "tool";
 
 export type ConsensusMode =
   | "broadcast_no_consensus"

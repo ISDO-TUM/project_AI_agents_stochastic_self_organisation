@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 import subprocess
 import sys
 from collections import defaultdict
@@ -270,8 +271,6 @@ def _render_coverage_table(detail: str) -> None:
 
 
 def _find_uv() -> str:
-    import shutil
-
     if found := shutil.which("uv"):
         return found
     home = os.path.expanduser("~")
@@ -281,13 +280,11 @@ def _find_uv() -> str:
     ):
         if os.path.isfile(candidate):
             return candidate
-    return "uv"
+    raise RuntimeError("uv not found — install it from https://github.com/astral-sh/uv")
 
 
 def _find_pre_commit(repo_root: str) -> list[str] | None:
     """Return a runnable pre-commit command with local-first fallbacks."""
-    import shutil
-
     candidates = [
         os.path.join(repo_root, "server", ".venv", "bin", "pre-commit"),
         os.path.join(repo_root, "api", ".venv", "bin", "pre-commit"),
@@ -403,7 +400,11 @@ def main() -> None:
         print(f"{RED}{BOLD}pre-commit: could not locate repo root:{RESET} {exc}")
         sys.exit(1)
 
-    uv = _find_uv()
+    try:
+        uv = _find_uv()
+    except RuntimeError as exc:
+        print(f"{RED}{BOLD}pre-commit:{RESET} {exc}")
+        sys.exit(1)
 
     pre_commit_cmd = _find_pre_commit(repo_root)
     if not pre_commit_cmd:

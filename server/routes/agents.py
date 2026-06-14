@@ -4,10 +4,11 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import uuid
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, Header, HTTPException, status
 from sqlalchemy import delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
@@ -47,6 +48,41 @@ router = APIRouter(prefix="/api/agents", tags=["Agents"])
 
 DBDep = Annotated[AsyncConnection, Depends(get_db)]
 _PATCHABLE_COLUMNS: frozenset[str] = frozenset(AgentUpdate.model_fields.keys())
+
+# The bulk-wipe endpoint (DELETE /api/agents) is irreversible and the app ships
+# without authentication, so it is guarded by an explicit confirmation header
+# plus an operator kill-switch. The header blocks accidental and drive-by
+# triggering; the env flag lets a production deployment disable it outright.
+_BULK_DELETE_CONFIRMATION = "all"
+_DISABLED_VALUES: frozenset[str] = frozenset({"false", "0", "no", "off"})
+
+
+def _bulk_delete_enabled() -> bool:
+    return os.getenv("ALLOW_BULK_DELETE", "true").strip().lower() not in _DISABLED_VALUES
+
+
+async def require_bulk_delete_confirmation(
+    x_confirm_delete: Annotated[str | None, Header()] = None,
+) -> None:
+    """Gate the destructive bulk-delete behind an env flag and a confirm header.
+
+    Raises:
+        HTTPException: 403 if disabled by ``ALLOW_BULK_DELETE``; 428 if the
+        ``X-Confirm-Delete: all`` header is absent or wrong.
+    """
+    if not _bulk_delete_enabled():
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="Bulk delete is disabled on this deployment.",
+        )
+    if x_confirm_delete != _BULK_DELETE_CONFIRMATION:
+        raise HTTPException(
+            status_code=status.HTTP_428_PRECONDITION_REQUIRED,
+            detail=(
+                "This operation permanently wipes all agents, files, and history. "
+                "Resend the request with header 'X-Confirm-Delete: all' to confirm."
+            ),
+        )
 
 
 @router.post(
@@ -230,6 +266,7 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: DBDep) -> AgentResp
     "",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Delete all agents, knowledge files, and simulation history",
+    dependencies=[Depends(require_bulk_delete_confirmation)],
 )
 async def delete_all(db: DBDep) -> None:
     """Wipe every agent, knowledge file, and simulation record from the database.

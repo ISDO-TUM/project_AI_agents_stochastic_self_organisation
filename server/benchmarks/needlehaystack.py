@@ -74,7 +74,7 @@ _DEMO_SOURCE_TEMPLATES = [
     },
     {
         "id": "f3333333-3333-4333-8333-333333333333",
-        "name": "org_structures_2.txt",
+        "name": "org_structures_3.txt",
         "position": CanvasPosition(x=760, y=460),
     },
 ]

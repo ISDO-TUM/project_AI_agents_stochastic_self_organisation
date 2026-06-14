@@ -49,7 +49,11 @@ export function AgentPanel({
   const { keys } = useApiKeys();
 
   useEffect(() => {
-    fetchModels().then(setAvailableModels).catch(console.error);
+    // On failure, fall back to an empty list rather than leaking the raw error
+    // to the console; the provider/model selectors degrade gracefully.
+    fetchModels()
+      .then(setAvailableModels)
+      .catch(() => setAvailableModels([]));
   }, [keys]);
 
   const providers = useMemo(() => {

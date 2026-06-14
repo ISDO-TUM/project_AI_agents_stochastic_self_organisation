@@ -94,6 +94,7 @@ app.add_middleware(
         "X-LLM-API-Key",
         "X-LLM-Model",
         "X-Request-ID",
+        "X-Confirm-Delete",
     ],
 )
 

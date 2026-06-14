@@ -65,7 +65,7 @@ class GroqProvider(OpenAIProvider):
             {
                 "role": "assistant",
                 "content": message.content,
-                "tool_calls": [tc.model_dump() for tc in message.tool_calls],
+                "tool_calls": [tc.model_dump() for tc in (message.tool_calls or [])],
             }
         )
         for tc, result in tool_results:

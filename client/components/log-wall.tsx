@@ -62,10 +62,6 @@ function isImportantStep(step: SimStep): boolean {
     return /(error|failed|blocked|not found|not available)/i.test(step.msg);
   }
 
-  if (step.type === "agent-to-source") {
-    return true;
-  }
-
   if (step.type === "system") {
     if (step.icon === "TriangleAlert") return true;
     // Hide only the noisiest internal trace entries.
@@ -96,7 +92,6 @@ function typeIcon(type: SimStep["type"]): string {
     system: "Eye",
     "agent-to-agent": "Send",
     tool: "Wrench",
-    "agent-to-source": "FileText",
   };
   return map[type] ?? "Eye";
 }
@@ -120,8 +115,6 @@ function typeColor(
       return dark ? "#7A7ACC" : "#4444AA";
     case "tool":
       return dark ? "#4A9A6A" : "#1A5A3A";
-    case "agent-to-source":
-      return dark ? "#9A7A4A" : "#5A4012";
     default:
       return textDim;
   }
