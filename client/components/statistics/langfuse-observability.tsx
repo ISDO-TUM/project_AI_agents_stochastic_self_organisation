@@ -85,6 +85,7 @@ export function LlmUsageSummaryCards({
         label="Slowest model"
         icon="Snail"
         value={langfuse.summary.slowestModel ?? "Unknown"}
+        variant="text"
         dark={dark}
         delay={delay + 200}
       />
