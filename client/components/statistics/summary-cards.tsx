@@ -134,7 +134,7 @@ export function SummaryCards({
         style={{
           display: "grid",
           gridTemplateColumns:
-            "repeat(auto-fit, minmax(min(150px, 100%), 1fr))",
+            "repeat(auto-fit, minmax(min(140px, 100%), 1fr))",
           gap: 12,
         }}
       >
