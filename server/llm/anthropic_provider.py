@@ -9,7 +9,7 @@ from .normalizer import NormalizedToolCall, extract_anthropic_tool_calls
 
 # max_tokens is required by the Anthropic API (no server-side default).
 # Haiku 4.5 caps at 64k output; Sonnet 4.6 and Opus 4.7 cap at 64k output.
-_DEFAULT_MAX_TOKENS = 1024
+_DEFAULT_MAX_TOKENS = 20000
 
 
 def _get_anthropic_client() -> AsyncAnthropic:

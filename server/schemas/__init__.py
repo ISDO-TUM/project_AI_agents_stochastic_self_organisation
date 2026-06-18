@@ -254,6 +254,8 @@ class ConnectionResponse(BaseModel):
     round_id: int
     from_agent_id: str | None
     to_agent_id: str | None
+    from_agent_name: str | None = None
+    to_agent_name: str | None = None
 
 
 # ---------------------------------------------------------------------------

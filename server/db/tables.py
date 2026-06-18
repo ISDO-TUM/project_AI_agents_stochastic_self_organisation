@@ -86,13 +86,23 @@ rounds = Table(
     UniqueConstraint("trial_id", "round_index", "phase", name="uq_rounds_trial_round_phase"),
 )
 
+# NOTE: ``from_agent_id``/``to_agent_id`` deliberately carry NO foreign key to
+# ``agents``. The run history is an immutable event log: clearing the canvas
+# deletes the agents, but the history that powers the statistics views must
+# survive. A CASCADE would delete these rows and a SET NULL would erase the
+# agent identity the per-agent stats aggregate on — so the columns are plain
+# denormalised snapshots of the agent id, paired with ``from_agent_name``/
+# ``to_agent_name`` snapshots taken at write time so the history stays both
+# attributable and human-readable after the referenced agents are gone.
 connections = Table(
     "connections",
     metadata,
     Column("id", Integer, primary_key=True, autoincrement=True),
     Column("round_id", Integer, ForeignKey("rounds.id", ondelete="CASCADE"), nullable=False),
-    Column("from_agent_id", Text, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True),
-    Column("to_agent_id", Text, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True),
+    Column("from_agent_id", Text, nullable=True),
+    Column("to_agent_id", Text, nullable=True),
+    Column("from_agent_name", Text),
+    Column("to_agent_name", Text),
     UniqueConstraint("round_id", "from_agent_id", "to_agent_id", name="uq_connections_edge"),
 )
 
@@ -104,8 +114,10 @@ messages = Table(
         "connection_id", Integer, ForeignKey("connections.id", ondelete="CASCADE"), nullable=False
     ),
     Column("round_id", Integer, ForeignKey("rounds.id", ondelete="CASCADE"), nullable=False),
-    Column("from_agent_id", Text, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True),
-    Column("to_agent_id", Text, ForeignKey("agents.id", ondelete="CASCADE"), nullable=True),
+    Column("from_agent_id", Text, nullable=True),
+    Column("to_agent_id", Text, nullable=True),
+    Column("from_agent_name", Text),
+    Column("to_agent_name", Text),
     Column("message_type", Text, nullable=False),
     Column("message", Text),
     Column("created_at", Text, nullable=False),

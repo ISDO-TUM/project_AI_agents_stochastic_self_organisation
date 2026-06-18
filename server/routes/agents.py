@@ -21,11 +21,7 @@ from server.db import (
 from server.db.tables import (
     agent_files,
     agents,
-    connections,
     knowledge_files,
-    messages,
-    rounds,
-    trials,
 )
 from server.guardrails import sanitize_prompt, validate_llm_output
 from server.guardrails.input_sanitizer import PromptInjectionError
@@ -229,16 +225,20 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: DBDep) -> AgentResp
 @router.delete(
     "",
     status_code=status.HTTP_204_NO_CONTENT,
-    summary="Delete all agents, knowledge files, and simulation history",
+    summary="Clear the canvas: delete all agents and knowledge files",
 )
 async def delete_all(db: DBDep) -> None:
-    """Wipe every agent, knowledge file, and simulation record from the database.
+    """Clear the board — delete every agent and knowledge file.
 
-    Deletion order respects foreign-key constraints:
-    messages → connections → rounds → trials → agents (cascades agent_files) → knowledge_files.
+    Run history (trials, rounds, connections, messages) is intentionally
+    preserved so statistics from previous runs remain available for comparison.
+    The agent foreign keys on connections/messages are ``ON DELETE SET NULL`` and
+    agent names are snapshotted onto those rows, so the history stays intact and
+    readable after the agents are removed. Deleting agents cascades to
+    ``agent_files``; knowledge files are then removed explicitly.
     """
-    for table in (messages, connections, rounds, trials, agents, knowledge_files):
-        await db.execute(delete(table))
+    await db.execute(delete(agents))
+    await db.execute(delete(knowledge_files))
     await db.commit()
 
 

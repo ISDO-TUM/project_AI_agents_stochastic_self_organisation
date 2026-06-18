@@ -11,7 +11,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from server.db import cleanup_stale_data, close_db, get_engine, init_db
+from server.db import cleanup_stale_data, close_db, get_engine, init_db, prune_trials
 from server.llm.credentials import MissingCredentialsError
 from server.routes import (
     agents_router,
@@ -32,7 +32,7 @@ _STALE_AFTER_HOURS = 24
 
 
 async def _cleanup_loop() -> None:
-    """Background task: wait an hour, then delete agents and files older than 24 h."""
+    """Background task: hourly, drop stale agents/files and prune old run history."""
     while True:
         await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
         try:
@@ -41,6 +41,12 @@ async def _cleanup_loop() -> None:
                 logger.info("Periodic cleanup: removed %d stale agent(s)", deleted)
         except Exception:
             logger.exception("Periodic cleanup failed — will retry next cycle")
+        try:
+            pruned = await prune_trials(get_engine())
+            if pruned:
+                logger.info("Periodic cleanup: pruned %d trial(s) from history", pruned)
+        except Exception:
+            logger.exception("History pruning failed — will retry next cycle")
 
 
 load_dotenv()

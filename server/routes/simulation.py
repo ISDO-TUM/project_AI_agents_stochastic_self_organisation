@@ -2,17 +2,20 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from server.db import create_trial, get_db, update_trial_status
+from server.db import create_trial, get_db, get_engine, prune_trials, update_trial_status
 from server.db.tables import agents
 from server.llm.credentials import use_credentials
 from server.schemas import SimulationRunRequest, SimulationStartResponse
 from server.simulation import ConsensusMode, run_topology
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/simulation", tags=["Simulation"])
 
@@ -45,6 +48,13 @@ async def _run_simulation_background(
     except Exception:
         await update_trial_status(db, trial_id, "failed")
         raise
+    finally:
+        # Keep the run history bounded as new trials accumulate. Best-effort:
+        # a pruning failure must not fail the run.
+        try:
+            await prune_trials(get_engine())
+        except Exception:
+            logger.exception("History pruning after run failed — leaving history as-is")
     await update_trial_status(db, trial_id, "completed")
 
 
