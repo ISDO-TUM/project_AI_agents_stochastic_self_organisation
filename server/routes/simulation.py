@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.db import create_trial, get_db, update_trial_status
 from server.db.tables import agents
-from server.llm.credentials import use_credentials
+from server.llm.credentials import RequestCredentials, current_credentials, use_credentials
 from server.schemas import SimulationRunRequest, SimulationStartResponse
 from server.simulation import ConsensusMode, run_topology
 from server.swarm.blackboard import Blackboard
@@ -223,7 +223,15 @@ async def _run_simulation_background(
     ruleset: str | None,
     topology: str,
     fanout: int,
+    credentials: RequestCredentials,
 ) -> None:
+    # Re-publish the request credentials onto the ContextVar so that
+    # provider clients inside run_topology can resolve API keys.
+    # (BackgroundTasks run after the response is sent, so the original
+    # request-scoped ContextVar has already been reset.)
+    from server.llm.credentials import _current as _creds_var
+
+    token = _creds_var.set(credentials)
     try:
         await run_topology(
             prompt,
@@ -239,6 +247,8 @@ async def _run_simulation_background(
     except Exception:
         await update_trial_status(db, trial_id, "failed")
         raise
+    finally:
+        _creds_var.reset(token)
     await update_trial_status(db, trial_id, "completed")
 
 
@@ -266,6 +276,9 @@ async def run_simulation(
         )
 
     trial_id = await create_trial(db, body.prompt, f"{body.mode} run", body.mode)
+    # Capture credentials now — the ContextVar is reset once the response is sent,
+    # so the background task would otherwise see empty/env-only credentials.
+    captured_creds = current_credentials()
     background_tasks.add_task(
         _run_simulation_background,
         body.prompt,
@@ -277,5 +290,6 @@ async def run_simulation(
         body.ruleset,
         body.topology,
         body.fanout,
+        captured_creds,
     )
     return SimulationStartResponse(trial_id=trial_id)
