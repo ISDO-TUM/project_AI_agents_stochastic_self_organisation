@@ -190,7 +190,7 @@ function ModeCard({ mode, selected, onHover, onClick, dark }: ModeCardProps) {
             letterSpacing: "-0.01em",
           }}
         >
-          {isTopology ? "Topology" : "Swarm"}
+          {isTopology ? "Topology" : "Market Hive"}
         </span>
         <span
           style={{
@@ -412,7 +412,7 @@ export function ModeGate({ onSelect }: ModeGateProps) {
               "translateY(0)";
           }}
         >
-          Enter {chosen === "topology" ? "Topology" : "Swarm"} mode
+          Enter {chosen === "topology" ? "Topology" : "Market Hive"} mode
           <ArrowRight size={16} strokeWidth={2} />
         </button>
         <span
