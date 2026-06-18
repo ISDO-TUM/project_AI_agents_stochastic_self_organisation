@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useRef, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { BlackboardState, ConfirmedEntry, DraftEntry } from "@/lib/types";
 import { useTheme } from "@/lib/theme-context";
 import { getTheme, BURG, BURG_LT, BURG_DIM } from "@/lib/theme";
@@ -12,6 +13,8 @@ import {
   Layers,
   FlaskConical,
   GripHorizontal,
+  Maximize2,
+  X,
 } from "lucide-react";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 
@@ -157,6 +160,7 @@ export function BlackboardCanvas({
 
   // Tab: "confirmed" | "draft"
   const [tab, setTab] = useState<"confirmed" | "draft">("confirmed");
+  const [expanded, setExpanded] = useState(false);
 
   const dragStart = useRef<{
     mx: number;
@@ -404,6 +408,23 @@ export function BlackboardCanvas({
               </span>
             </>
           )}
+          {/* Expand to fullscreen */}
+          <button
+            onClick={() => setExpanded(true)}
+            title="Expand blackboard"
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              padding: "2px 4px",
+              display: "flex",
+              alignItems: "center",
+              opacity: 0.6,
+              color: BURG_LT,
+            }}
+          >
+            <Maximize2 size={11} strokeWidth={2} />
+          </button>
         </div>
       </div>
 
@@ -630,6 +651,307 @@ export function BlackboardCanvas({
           />
         </svg>
       </div>
+
+      {/* ── Fullscreen modal ── */}
+      {expanded &&
+        typeof document !== "undefined" &&
+        createPortal(
+          <div
+            onClick={(e) => {
+              if (e.target === e.currentTarget) setExpanded(false);
+            }}
+            style={{
+              position: "fixed",
+              inset: 0,
+              zIndex: 9999,
+              backdropFilter: "blur(14px)",
+              WebkitBackdropFilter: "blur(14px)",
+              background: dark ? "rgba(0,0,0,0.6)" : "rgba(255,255,255,0.45)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+            }}
+          >
+            <div
+              style={{
+                width: "min(860px, 90vw)",
+                maxHeight: "85vh",
+                display: "flex",
+                flexDirection: "column",
+                background: dark
+                  ? "rgba(6,5,12,0.97)"
+                  : "rgba(248,246,255,0.99)",
+                border: "1px solid rgba(139,26,47,0.35)",
+                borderRadius: 16,
+                overflow: "hidden",
+                boxShadow: "0 28px 90px rgba(0,0,0,0.5)",
+              }}
+            >
+              {/* Modal header */}
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "12px 18px",
+                  borderBottom: "1px solid rgba(139,26,47,0.2)",
+                  flexShrink: 0,
+                  background: dark
+                    ? "rgba(139,26,47,0.12)"
+                    : "rgba(139,26,47,0.06)",
+                }}
+              >
+                <Layers size={14} strokeWidth={1.8} color={BURG_LT} />
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 800,
+                    color: BURG_LT,
+                    letterSpacing: "0.1em",
+                    textTransform: "uppercase",
+                    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+                  }}
+                >
+                  Blackboard
+                </span>
+                {activeThread && (
+                  <>
+                    <span
+                      style={{ fontSize: 11, color: "rgba(139,26,47,0.45)" }}
+                    >
+                      ·
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 12,
+                        color: BURG,
+                        fontFamily: "'Space Grotesk', system-ui, sans-serif",
+                        fontWeight: 600,
+                      }}
+                    >
+                      {activeThread.title}
+                    </span>
+                  </>
+                )}
+                {runId && (
+                  <span
+                    style={{
+                      marginLeft: 4,
+                      fontSize: 10,
+                      color: t.textDim,
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >
+                    {runId.slice(0, 8)}
+                  </span>
+                )}
+                <button
+                  onClick={() => setExpanded(false)}
+                  style={{
+                    marginLeft: "auto",
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: "4px 6px",
+                    display: "flex",
+                    alignItems: "center",
+                    color: t.textDim,
+                    borderRadius: 6,
+                  }}
+                  title="Close"
+                >
+                  <X size={15} strokeWidth={2} />
+                </button>
+              </div>
+
+              {/* Modal tab bar */}
+              {runId && (
+                <div
+                  style={{
+                    display: "flex",
+                    gap: 4,
+                    padding: "8px 18px",
+                    borderBottom: "1px solid rgba(139,26,47,0.15)",
+                    flexShrink: 0,
+                  }}
+                >
+                  <button
+                    style={tabStyle(tab === "confirmed")}
+                    onClick={() => setTab("confirmed")}
+                  >
+                    Confirmed
+                    {state.confirmed.length > 0 &&
+                      ` (${state.confirmed.length})`}
+                  </button>
+                  <button
+                    style={tabStyle(tab === "draft")}
+                    onClick={() => setTab("draft")}
+                  >
+                    Draft
+                    {visibleDraft.length > 0 && ` (${visibleDraft.length})`}
+                  </button>
+                </div>
+              )}
+
+              {/* Modal body */}
+              <div
+                style={{
+                  flex: 1,
+                  overflowY: "auto",
+                  padding: "16px 20px",
+                }}
+                className="pscroll"
+              >
+                {!runId && (
+                  <div
+                    style={{
+                      textAlign: "center",
+                      padding: "60px 0",
+                      color: t.textDim,
+                      fontSize: 13,
+                      fontFamily: "'Space Grotesk', system-ui",
+                    }}
+                  >
+                    No active run.
+                  </div>
+                )}
+                {runId && state.loading && (
+                  <div
+                    style={{
+                      textAlign: "center",
+                      padding: "60px 0",
+                      color: t.textDim,
+                      fontSize: 13,
+                      fontFamily: "'Space Grotesk', system-ui",
+                    }}
+                  >
+                    Loading blackboard…
+                  </div>
+                )}
+                {runId && !state.loading && state.error && (
+                  <div
+                    style={{
+                      textAlign: "center",
+                      padding: "24px 0",
+                      color: "#c0392b",
+                      fontSize: 13,
+                    }}
+                  >
+                    {state.error}
+                  </div>
+                )}
+                {runId &&
+                  !state.loading &&
+                  !state.error &&
+                  tab === "confirmed" && (
+                    <>
+                      {state.confirmed.length === 0 ? (
+                        <div
+                          style={{
+                            textAlign: "center",
+                            padding: "60px 0",
+                            color: t.textDim,
+                            fontSize: 13,
+                            fontFamily: "'Space Grotesk', system-ui",
+                          }}
+                        >
+                          No confirmed entries yet.
+                        </div>
+                      ) : (
+                        state.confirmed.map((entry) => {
+                          const es = entryTypeStyle(entry.entry_type);
+                          return (
+                            <div
+                              key={entry.id}
+                              style={{
+                                background: es.bg,
+                                border: `1px solid ${es.border}`,
+                                borderRadius: 9,
+                                padding: "10px 14px",
+                                marginBottom: 8,
+                              }}
+                            >
+                              <div
+                                style={{
+                                  display: "flex",
+                                  alignItems: "center",
+                                  gap: 6,
+                                  marginBottom: 6,
+                                }}
+                              >
+                                {es.icon}
+                                <span
+                                  style={{
+                                    fontSize: 10,
+                                    fontWeight: 800,
+                                    color: es.color,
+                                    letterSpacing: "0.08em",
+                                    textTransform: "uppercase",
+                                    fontFamily: "'Space Grotesk', system-ui",
+                                  }}
+                                >
+                                  {es.label}
+                                </span>
+                                {entry.entry_type !== "anchor" && (
+                                  <span
+                                    style={{ fontSize: 10, color: t.textDim }}
+                                  >
+                                    Round {entry.round_confirmed}
+                                  </span>
+                                )}
+                                {entry.citation_count > 0 && (
+                                  <span
+                                    style={{
+                                      marginLeft: "auto",
+                                      fontSize: 10,
+                                      color: t.textDim,
+                                    }}
+                                  >
+                                    ♡ {entry.citation_count}
+                                  </span>
+                                )}
+                              </div>
+                              <div
+                                style={{
+                                  fontSize: 13.5,
+                                  color: t.text,
+                                  lineHeight: 1.6,
+                                }}
+                              >
+                                <MarkdownRenderer content={entry.content} />
+                              </div>
+                            </div>
+                          );
+                        })
+                      )}
+                    </>
+                  )}
+                {runId && !state.loading && !state.error && tab === "draft" && (
+                  <>
+                    {visibleDraft.length === 0 ? (
+                      <div
+                        style={{
+                          textAlign: "center",
+                          padding: "60px 0",
+                          color: t.textDim,
+                          fontSize: 13,
+                          fontFamily: "'Space Grotesk', system-ui",
+                        }}
+                      >
+                        No draft entries yet.
+                      </div>
+                    ) : (
+                      visibleDraft.map((entry) => (
+                        <DraftCard key={entry.id} entry={entry} depth={0} />
+                      ))
+                    )}
+                  </>
+                )}
+              </div>
+            </div>
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }

@@ -35,7 +35,6 @@ import { TweaksPanel } from "@/components/tweaks-panel";
 
 import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
-import { BlackboardPanel } from "@/components/blackboard-panel";
 import { useBlackboard } from "@/hooks/useBlackboard";
 import { ModeGate, AppMode } from "@/components/mode-gate";
 import { getTheme } from "@/lib/theme";
@@ -493,12 +492,7 @@ export function App() {
 
       <div
         style={{
-          width:
-            appMode === "swarm"
-              ? "70%"
-              : simMode
-                ? `calc(100vw - ${logSidebarWidth}px)`
-                : "100%",
+          width: simMode ? `calc(100vw - ${logSidebarWidth}px)` : "100%",
           height: "100%",
           display: "flex",
           position: "relative",
@@ -598,12 +592,6 @@ export function App() {
           sidebarWidth={logSidebarWidth}
           onSidebarWidthChange={handleSidebarWidthChange}
         />
-      )}
-
-      {appMode === "swarm" && (
-        <div style={{ flex: 1, height: "100%", overflow: "hidden" }}>
-          <BlackboardPanel runId={runId} onRunIdChange={setRunId} />
-        </div>
       )}
 
       {showTweaks && (
