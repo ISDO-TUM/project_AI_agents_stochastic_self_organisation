@@ -136,7 +136,7 @@ export function SummaryCards({
         style={{
           display: "grid",
           gridTemplateColumns:
-            "repeat(auto-fit, minmax(min(150px, 100%), 1fr))",
+            "repeat(auto-fit, minmax(min(140px, 100%), 1fr))",
           gap: 12,
         }}
       >
@@ -167,17 +167,6 @@ export function SummaryCards({
           value={summary.totalEdges}
           dark={dark}
           delay={delay + 160}
-        />
-        <Kpi
-          label="Status"
-          icon="CircleDot"
-          value={
-            <div style={{ paddingTop: 3 }}>
-              <StatusBadge status={summary.status} dark={dark} />
-            </div>
-          }
-          dark={dark}
-          delay={delay + 200}
         />
       </div>
     </div>

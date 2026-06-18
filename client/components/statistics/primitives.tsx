@@ -135,14 +135,19 @@ export function Kpi({
   icon,
   dark,
   delay = 0,
+  variant = "number",
 }: {
   label: string;
   value: React.ReactNode;
   icon?: string;
   dark: boolean;
   delay?: number;
+  // "number" shows the big metric figure; "text" is for string values
+  // (e.g. a model name) that would otherwise overflow the card.
+  variant?: "number" | "text";
 }) {
   const t = getTheme(dark);
+  const isText = variant === "text";
   return (
     <div
       style={{
@@ -169,13 +174,22 @@ export function Kpi({
         {icon && <LIcon name={icon} size={13} color={t.textDim} />}
       </div>
       <div
+        title={isText && typeof value === "string" ? value : undefined}
         style={{
           color: t.text,
-          fontSize: 24,
-          fontWeight: 700,
-          letterSpacing: -0.4,
-          lineHeight: 1.15,
+          fontSize: isText ? 15 : 24,
+          fontWeight: isText ? 650 : 700,
+          letterSpacing: isText ? 0 : -0.4,
+          lineHeight: isText ? 1.35 : 1.15,
           overflowWrap: "anywhere",
+          ...(isText
+            ? {
+                display: "-webkit-box",
+                WebkitLineClamp: 2,
+                WebkitBoxOrient: "vertical",
+                overflow: "hidden",
+              }
+            : null),
         }}
       >
         {value}

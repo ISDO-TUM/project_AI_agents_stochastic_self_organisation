@@ -25,6 +25,13 @@ coverage.xml
 # Docker
 .docker/
 
+# Docs — PRD and progress are tracked on this branch; non-essential dirs ignored
+docs/superpowers/
+
+# Claude / Superpowers
+.claude/
+**/.claude/
+
 # misc
 .DS_Store
 *.pem
