@@ -4,6 +4,7 @@ import logging
 import os
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
@@ -43,7 +44,26 @@ async def _cleanup_loop() -> None:
             logger.exception("Periodic cleanup failed — will retry next cycle")
 
 
-load_dotenv()
+# Search upward from this file so the .env at the repo root is always found,
+# regardless of which directory uvicorn / uv run is invoked from.
+load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", override=False)
+load_dotenv(override=False)  # also pick up any local server/.env if present
+
+# Remove empty-string BASE_URL vars so SDK clients fall back to their own
+# defaults.  The .env template ships these lines uncommented but empty as
+# placeholders; passing "" to the OpenAI/Anthropic/Groq/Gemini constructors
+# causes them to build request URLs without an http(s):// scheme, which then
+# raises "Connection error." at runtime.
+_BASE_URL_VARS = (
+    "OPENAI_BASE_URL",
+    "ANTHROPIC_BASE_URL",
+    "GROQ_BASE_URL",
+    "GEMINI_BASE_URL",
+    "LLM_PROXY_API_KEY",
+)
+for _var in _BASE_URL_VARS:
+    if not os.environ.get(_var):  # missing or empty → clean up
+        os.environ.pop(_var, None)
 
 
 @asynccontextmanager

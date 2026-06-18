@@ -9,9 +9,11 @@ TEXT so the application keeps owning (de)serialisation via :mod:`json`.
 from __future__ import annotations
 
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Column,
     DateTime,
+    Float,
     ForeignKey,
     Integer,
     MetaData,
@@ -109,4 +111,138 @@ messages = Table(
     Column("message_type", Text, nullable=False),
     Column("message", Text),
     Column("created_at", Text, nullable=False),
+)
+
+# ── ECSAS swarm tables ────────────────────────────────────────────────────────
+
+swarm_runs = Table(
+    "swarm_runs",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column(
+        "status",
+        Text,
+        nullable=False,
+        server_default=text("'running'"),
+    ),
+    Column("mode", Text, nullable=False, server_default=text("'swarm'")),
+    Column("termination_reason", Text),
+    Column("termination_round", Integer),
+    Column("amendment_count", Integer, nullable=False, server_default=text("0")),
+    Column("token_usage", Text, nullable=False, server_default=text("'{}'")),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+    Column("completed_at", DateTime(timezone=True)),
+    CheckConstraint(
+        "status IN ('running','completed','failed','aborted')",
+        name="ck_swarm_runs_status",
+    ),
+    CheckConstraint("mode IN ('swarm','topology')", name="ck_swarm_runs_mode"),
+)
+
+contracts = Table(
+    "contracts",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("run_id", Text, ForeignKey("swarm_runs.id"), nullable=False),
+    Column("original_prompt", Text, nullable=False),
+    Column("task_type", Text, nullable=False),
+    Column("task_nature", Text, nullable=False, server_default=text("'single'")),
+    Column("required_expertise", Text, nullable=False, server_default=text("'[]'")),
+    Column("complexity", Text, nullable=False, server_default=text("'medium'")),
+    Column("confidence", Float, nullable=False, server_default=text("0.0")),
+    Column("contract_embedding", Text),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+    CheckConstraint("task_nature IN ('single','multi')", name="ck_contracts_task_nature"),
+    CheckConstraint("complexity IN ('low','medium','high')", name="ck_contracts_complexity"),
+)
+
+threads = Table(
+    "threads",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("contract_id", Text, ForeignKey("contracts.id"), nullable=False),
+    Column("run_id", Text, ForeignKey("swarm_runs.id"), nullable=False),
+    Column("title", Text, nullable=False),
+    Column("description", Text, nullable=False),
+    Column("required_expertise", Text, nullable=False, server_default=text("'[]'")),
+    Column("complexity", Text, nullable=False, server_default=text("'medium'")),
+    Column("thread_embedding", Text),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+)
+
+draft_entries = Table(
+    "draft_entries",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("run_id", Text, ForeignKey("swarm_runs.id"), nullable=False),
+    Column("thread_id", Text, ForeignKey("threads.id"), nullable=False),
+    Column("round", Integer, nullable=False),
+    Column("author_id", Text, ForeignKey("agents.id"), nullable=False),
+    Column(
+        "entry_type",
+        Text,
+        nullable=False,
+    ),
+    Column("content", Text, nullable=False),
+    Column("content_embedding", Text),
+    Column("reply_to", Text, ForeignKey("draft_entries.id")),
+    Column("mention_agents", Text, nullable=False, server_default=text("'[]'")),
+    Column("is_visible", Boolean, nullable=False, server_default=text("true")),
+    Column("deleted_at", DateTime(timezone=True)),
+    Column("last_cited_round", Integer, nullable=False, server_default=text("0")),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+    CheckConstraint(
+        "entry_type IN ('proposal','reply','vote','system')",
+        name="ck_draft_entries_type",
+    ),
+)
+
+citations = Table(
+    "citations",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("run_id", Text, ForeignKey("swarm_runs.id"), nullable=False),
+    Column("citing_agent_id", Text, ForeignKey("agents.id"), nullable=False),
+    Column("cited_entry_id", Text, ForeignKey("draft_entries.id"), nullable=False),
+    Column("citing_entry_id", Text, ForeignKey("draft_entries.id")),
+    Column("round", Integer, nullable=False),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+    UniqueConstraint("citing_agent_id", "cited_entry_id", "round", name="uq_citations_per_round"),
+)
+
+votes = Table(
+    "votes",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("run_id", Text, ForeignKey("swarm_runs.id"), nullable=False),
+    Column("voter_agent_id", Text, ForeignKey("agents.id"), nullable=False),
+    Column("voted_entry_id", Text, ForeignKey("draft_entries.id"), nullable=False),
+    Column("thread_id", Text, ForeignKey("threads.id"), nullable=False),
+    Column("round", Integer, nullable=False, server_default=text("1")),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+    UniqueConstraint("voter_agent_id", "voted_entry_id", name="uq_votes_per_entry"),
+)
+
+confirmed_entries = Table(
+    "confirmed_entries",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("run_id", Text, ForeignKey("swarm_runs.id"), nullable=False),
+    Column("thread_id", Text, ForeignKey("threads.id"), nullable=False),
+    Column("source_draft_id", Text, ForeignKey("draft_entries.id")),
+    Column("content", Text, nullable=False),
+    Column("content_embedding", Text),
+    Column(
+        "entry_type",
+        Text,
+        nullable=False,
+        server_default=text("'finding'"),
+    ),
+    Column("citation_count", Integer, nullable=False, server_default=text("0")),
+    Column("round_confirmed", Integer, nullable=False),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+    CheckConstraint(
+        "entry_type IN ('anchor','finding','system')",
+        name="ck_confirmed_entries_type",
+    ),
 )

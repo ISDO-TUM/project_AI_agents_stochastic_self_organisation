@@ -72,17 +72,23 @@ class BaseLLMProvider(ABC):
         tools: list[dict[str, Any]] | None = None,
         tool_handler: Any | None = None,
     ) -> str:
+        logger.debug("LLM call start — model=%s tools=%s", model, list(tools or []))
         try:
-            return await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 self._call_inner(prompt, model, system_prompt, tools, tool_handler),
                 timeout=self.timeout_seconds,
             )
+            logger.debug("LLM call complete — model=%s", model)
+            return result
         except TimeoutError as err:
-            logger.warning("LLM call timed out after %ds (model=%s)", self.timeout_seconds, model)
+            logger.error("LLM call timed out after %ds — model=%s", self.timeout_seconds, model)
             raise TimeoutError(
                 f"The LLM call exceeded the maximum allowed time ({self.timeout_seconds}s). "
                 "Please try again with a shorter prompt or fewer tools."
             ) from err
+        except Exception:
+            logger.exception("LLM call failed — model=%s", model)
+            raise
 
     async def _call_inner(
         self,
@@ -96,7 +102,8 @@ class BaseLLMProvider(ABC):
         kwargs = self._build_kwargs(model, messages, tools)
 
         response: Any = None
-        for _ in range(self.max_iterations):
+        for iteration in range(self.max_iterations):
+            logger.debug("LLM send iteration %d — model=%s", iteration + 1, model)
             response = await self._send(kwargs)
             tool_calls = self._extract_tool_calls(response)
 
@@ -105,6 +112,7 @@ class BaseLLMProvider(ABC):
 
             results: list[tuple[NormalizedToolCall, str]] = []
             for tc in tool_calls:
+                logger.debug("Tool call — name=%s args=%s", tc.name, tc.arguments)
                 result = await tool_handler(tc.name, tc.arguments) if tool_handler else ""
                 results.append((tc, result))
 

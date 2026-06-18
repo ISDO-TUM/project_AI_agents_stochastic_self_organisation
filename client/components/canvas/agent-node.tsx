@@ -13,6 +13,8 @@ interface AgentNodeProps {
   selected: boolean;
   active: boolean;
   simMode: boolean;
+  swarmMode?: boolean;
+  zoom: number;
   onSelect: (id: string, e: React.MouseEvent) => void;
   onDragEnd: (id: string, position: { x: number; y: number }) => void;
   onConnectStart: (id: string, e: React.MouseEvent) => void;
@@ -24,6 +26,8 @@ export function AgentNode({
   selected,
   active,
   simMode,
+  swarmMode = false,
+  zoom,
   onSelect,
   onDragEnd,
   onConnectStart,
@@ -35,6 +39,7 @@ export function AgentNode({
     onSelect,
     onDragEnd,
     simMode,
+    zoom,
   );
 
   const handleConnectMouseDown = useCallback(
@@ -66,7 +71,7 @@ export function AgentNode({
         : "0 4px 20px rgba(0,0,0,0.1)";
 
   const nodeBg = dark
-    ? "radial-gradient(circle at 35% 35%, rgba(255,255,255,0.06) 0%, rgba(0,0,0,0.2) 100%)"
+    ? "radial-gradient(circle at 35% 35%, rgba(60,50,90,0.55) 0%, rgba(18,14,32,0.88) 100%)"
     : "radial-gradient(circle at 35% 35%, rgba(255,255,255,0.95) 0%, rgba(235,232,248,0.85) 100%)";
 
   return (
@@ -157,7 +162,7 @@ export function AgentNode({
             ))}
           </div>
         )}
-        {!simMode && (
+        {!simMode && !swarmMode && (
           <div
             className="connect-handle"
             onMouseDown={handleConnectMouseDown}
