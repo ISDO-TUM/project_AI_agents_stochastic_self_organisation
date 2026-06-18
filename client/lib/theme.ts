@@ -21,18 +21,18 @@ interface ThemeTokens {
 export function getTheme(dark: boolean): ThemeTokens {
   if (dark) {
     return {
-      bg: "#060608",
-      pill: "rgba(10,8,18,0.84)",
-      pillBorder: "rgba(139,26,47,0.18)",
-      surface: "rgba(12,10,20,0.96)",
-      border: "rgba(255,255,255,0.07)",
-      borderHi: "rgba(255,255,255,0.12)",
+      bg: "#111018",
+      pill: "rgba(20,18,30,0.90)",
+      pillBorder: "rgba(139,26,47,0.28)",
+      surface: "rgba(22,20,34,0.97)",
+      border: "rgba(255,255,255,0.13)",
+      borderHi: "rgba(255,255,255,0.24)",
       text: "#eceaf5",
       textSub: "#9694b0",
-      textDim: "#5c5a78",
-      inputBg: "rgba(0,0,0,0.38)",
-      hover: "rgba(255,255,255,0.04)",
-      dotColor: "rgba(255,255,255,0.07)",
+      textDim: "#6a688a",
+      inputBg: "rgba(0,0,0,0.3)",
+      hover: "rgba(255,255,255,0.06)",
+      dotColor: "rgba(255,255,255,0.11)",
     };
   }
   return {

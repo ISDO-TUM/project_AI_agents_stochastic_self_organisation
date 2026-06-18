@@ -243,3 +243,70 @@ export type CanvasAction =
   | { type: "CLEAR" }
   | { type: "LOAD"; state: CanvasState }
   | { type: "AUTO_LAYOUT" };
+
+// ── ECSAS swarm types ─────────────────────────────────────────────────────
+
+export type SwarmSimStepType =
+  | SimStepType
+  | "bid"
+  | "abstain"
+  | "bb-post"
+  | "bb-cite"
+  | "bb-vote"
+  | "bb-promote"
+  | "bb-delete"
+  | "bb-mention"
+  | "amendment"
+  | "amendment-approved"
+  | "amendment-rejected"
+  | "convergence";
+
+export interface ThreadInfo {
+  id: string;
+  contract_id: string;
+  run_id: string;
+  title: string;
+  description: string;
+  required_expertise: string[];
+  complexity: "low" | "medium" | "high";
+  created_at: string;
+}
+
+export interface ConfirmedEntry {
+  id: string;
+  run_id: string;
+  thread_id: string;
+  source_draft_id: string | null;
+  content: string;
+  entry_type: "anchor" | "finding" | "system";
+  citation_count: number;
+  round_confirmed: number;
+  created_at: string;
+}
+
+export interface DraftEntry {
+  id: string;
+  run_id: string;
+  thread_id: string;
+  round: number;
+  author_id: string;
+  author_name: string;
+  entry_type: "proposal" | "reply" | "vote" | "system";
+  content: string;
+  reply_to: string | null;
+  mention_agents: string[];
+  is_visible: boolean;
+  deleted_at: string | null;
+  last_cited_round: number;
+  citation_count: number;
+  created_at: string;
+  children: DraftEntry[];
+}
+
+export interface BlackboardState {
+  threads: ThreadInfo[];
+  confirmed: ConfirmedEntry[];
+  draft: DraftEntry[];
+  loading: boolean;
+  error: string | null;
+}

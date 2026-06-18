@@ -615,7 +615,7 @@ function ImportDropdown({
       <div style={{ position: "relative" }}>
         <TBtn
           onClick={() => setOpen((x) => !x)}
-          icon="Download"
+          icon="Upload"
           title="Import"
           active={open}
           t={t}
@@ -841,7 +841,7 @@ export function Toolbar({
             >
               Layout
             </TBtn>
-            <TBtn onClick={onExport} icon="Upload" title="Export JSON" t={t}>
+            <TBtn onClick={onExport} icon="Download" title="Export JSON" t={t}>
               Export
             </TBtn>
             <ImportDropdown onImport={onImport} t={t} />

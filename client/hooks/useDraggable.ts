@@ -7,9 +7,12 @@ export function useDraggable(
   onSelect: (id: string, e: React.MouseEvent) => void,
   onDragEnd: (id: string, pos: Position) => void,
   simMode: boolean,
+  zoom: number = 1,
 ) {
   const dragging = useRef(false);
-  const dragOffset = useRef({ x: 0, y: 0 });
+  // store start screen position and start world position separately
+  const startClient = useRef({ x: 0, y: 0 });
+  const startWorld = useRef({ x: 0, y: 0 });
 
   const onMouseDown = useCallback(
     (e: React.MouseEvent) => {
@@ -19,15 +22,13 @@ export function useDraggable(
       onSelect(id, e);
       if (simMode) return;
       dragging.current = true;
-      dragOffset.current = {
-        x: e.clientX - position.x,
-        y: e.clientY - position.y,
-      };
+      startClient.current = { x: e.clientX, y: e.clientY };
+      startWorld.current = { x: position.x, y: position.y };
       const onMove = (me: MouseEvent) => {
         if (!dragging.current) return;
         onDragEnd(id, {
-          x: me.clientX - dragOffset.current.x,
-          y: me.clientY - dragOffset.current.y,
+          x: startWorld.current.x + (me.clientX - startClient.current.x) / zoom,
+          y: startWorld.current.y + (me.clientY - startClient.current.y) / zoom,
         });
       };
       const onUp = () => {
@@ -38,7 +39,7 @@ export function useDraggable(
       window.addEventListener("mousemove", onMove);
       window.addEventListener("mouseup", onUp);
     },
-    [id, position, onSelect, onDragEnd, simMode],
+    [id, position, onSelect, onDragEnd, simMode, zoom],
   );
 
   return { onMouseDown };
