@@ -49,6 +49,22 @@ async def _cleanup_loop() -> None:
 load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", override=False)
 load_dotenv(override=False)  # also pick up any local server/.env if present
 
+# Remove empty-string BASE_URL vars so SDK clients fall back to their own
+# defaults.  The .env template ships these lines uncommented but empty as
+# placeholders; passing "" to the OpenAI/Anthropic/Groq/Gemini constructors
+# causes them to build request URLs without an http(s):// scheme, which then
+# raises "Connection error." at runtime.
+_BASE_URL_VARS = (
+    "OPENAI_BASE_URL",
+    "ANTHROPIC_BASE_URL",
+    "GROQ_BASE_URL",
+    "GEMINI_BASE_URL",
+    "LLM_PROXY_API_KEY",
+)
+for _var in _BASE_URL_VARS:
+    if not os.environ.get(_var):  # missing or empty → clean up
+        os.environ.pop(_var, None)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
