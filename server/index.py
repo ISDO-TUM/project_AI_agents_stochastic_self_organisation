@@ -4,6 +4,7 @@ import logging
 import os
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
@@ -43,7 +44,10 @@ async def _cleanup_loop() -> None:
             logger.exception("Periodic cleanup failed — will retry next cycle")
 
 
-load_dotenv()
+# Search upward from this file so the .env at the repo root is always found,
+# regardless of which directory uvicorn / uv run is invoked from.
+load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", override=False)
+load_dotenv(override=False)  # also pick up any local server/.env if present
 
 
 @asynccontextmanager
