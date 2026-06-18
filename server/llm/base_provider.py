@@ -15,10 +15,6 @@ logger = logging.getLogger(__name__)
 # iterations included).  Prevents runaway loops from blocking indefinitely.
 _DEFAULT_TIMEOUT_SECONDS = 60
 
-# Retry config for transient network errors (APIConnectionError etc.)
-_MAX_RETRIES = 3
-_RETRY_BASE_DELAY = 1.0  # seconds; doubles each attempt
-
 
 class BaseLLMProvider(ABC):
     """Template for LLM providers — subclasses override formatting hooks."""
@@ -76,45 +72,25 @@ class BaseLLMProvider(ABC):
         tools: list[dict[str, Any]] | None = None,
         tool_handler: Any | None = None,
     ) -> str:
+        logger.debug("LLM call start — model=%s tools=%s", model, list(tools or []))
         try:
-            return await asyncio.wait_for(
+            result = await asyncio.wait_for(
                 self._call_inner(prompt, model, system_prompt, tools, tool_handler),
                 timeout=self.timeout_seconds,
             )
+            logger.debug("LLM call complete — model=%s", model)
+            return result
         except TimeoutError as err:
-            logger.warning("LLM call timed out after %ds (model=%s)", self.timeout_seconds, model)
+            logger.error(
+                "LLM call timed out after %ds — model=%s", self.timeout_seconds, model
+            )
             raise TimeoutError(
                 f"The LLM call exceeded the maximum allowed time ({self.timeout_seconds}s). "
                 "Please try again with a shorter prompt or fewer tools."
             ) from err
-
-    async def _send_with_retry(self, kwargs: dict[str, Any]) -> Any:
-        """Call _send with exponential-backoff retries on transient errors."""
-        last_exc: Exception | None = None
-        for attempt in range(_MAX_RETRIES):
-            try:
-                return await self._send(kwargs)
-            except Exception as exc:
-                msg = str(exc).lower()
-                # Retry only on transient connectivity / rate-limit errors
-                transient_keywords = (
-                    "connection error", "connection", "timeout",
-                    "rate limit", "529", "503", "502",
-                )
-                if any(k in msg for k in transient_keywords):
-                    delay = _RETRY_BASE_DELAY * (2**attempt)
-                    logger.warning(
-                        "Transient LLM error (attempt %d/%d): %s — retrying in %.1fs",
-                        attempt + 1,
-                        _MAX_RETRIES,
-                        exc,
-                        delay,
-                    )
-                    await asyncio.sleep(delay)
-                    last_exc = exc
-                else:
-                    raise  # non-transient error — don't retry
-        raise last_exc  # type: ignore[misc]
+        except Exception:
+            logger.exception("LLM call failed — model=%s", model)
+            raise
 
     async def _call_inner(
         self,
@@ -128,8 +104,9 @@ class BaseLLMProvider(ABC):
         kwargs = self._build_kwargs(model, messages, tools)
 
         response: Any = None
-        for _ in range(self.max_iterations):
-            response = await self._send_with_retry(kwargs)
+        for iteration in range(self.max_iterations):
+            logger.debug("LLM send iteration %d — model=%s", iteration + 1, model)
+            response = await self._send(kwargs)
             tool_calls = self._extract_tool_calls(response)
 
             if not tool_calls:
@@ -137,6 +114,7 @@ class BaseLLMProvider(ABC):
 
             results: list[tuple[NormalizedToolCall, str]] = []
             for tc in tool_calls:
+                logger.debug("Tool call — name=%s args=%s", tc.name, tc.arguments)
                 result = await tool_handler(tc.name, tc.arguments) if tool_handler else ""
                 results.append((tc, result))
 

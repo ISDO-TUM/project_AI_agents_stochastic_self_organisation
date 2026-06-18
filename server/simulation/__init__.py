@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import uuid
 from collections.abc import Awaitable
@@ -63,6 +64,8 @@ from server.llm.langfuse_setup import langfuse_metadata
 from server.schemas import ToolCall
 from server.tools.builtin.registry import RegistryIndex
 from server.tools.builtin.table import TableStore
+
+logger = logging.getLogger(__name__)
 
 ConsensusMode = Literal[
     "broadcast_no_consensus",
@@ -1054,6 +1057,11 @@ async def _run_broadcast_no_consensus(
                 {"round_index": 2, "phase": "broadcast_no_consensus_outputs"},
             )
         except Exception as exc:
+            logger.exception(
+                "Agent call failed — agent=%s model=%s phase=broadcast_no_consensus",
+                agent.get("name", agent_id),
+                agent.get("model", "unknown"),
+            )
             err = f"[error: {exc}]"
             return err, [("agent_error", err)]
         return response, _self_messages(response, tools_used)
@@ -1112,6 +1120,11 @@ async def _run_broadcast_no_consensus(
                     {"round_index": current_round_index, "phase": "discussion"},
                 )
             except Exception as exc:
+                logger.exception(
+                    "Agent call failed — agent=%s model=%s phase=discussion_no_consensus",
+                    agent.get("name", agent_id),
+                    agent.get("model", "unknown"),
+                )
                 err = f"[error: {exc}]"
                 return agent_id, deliveries, [("agent_error", err)], err
 
@@ -1205,6 +1218,11 @@ async def _run_weighted_opinion_pool(
                 {"round_index": 2, "phase": "weighted_opinion_pooling_broadcast_outputs"},
             )
         except Exception as exc:
+            logger.exception(
+                "Agent call failed — agent=%s model=%s phase=weighted_opinion_pooling_broadcast",
+                agent.get("name", agent_id),
+                agent.get("model", "unknown"),
+            )
             err = f"[error: {exc}]"
             return err, [("agent_error", err)]
         return response, _self_messages(response, tools)
@@ -1369,6 +1387,12 @@ async def _run_weighted_opinion_pool(
                     },
                 )
             except Exception as exc:
+                logger.exception(
+                    "Agent call failed — agent=%s model=%s"
+                    " phase=weighted_opinion_pooling_discussion",
+                    agent.get("name", agent_id),
+                    agent.get("model", "unknown"),
+                )
                 err = f"[error: {exc}]"
                 return agent_id, deliveries, [("agent_error", err)], err
 
@@ -1586,6 +1610,11 @@ async def _run_voting(
                 {"round_index": 2, "phase": "plurality_voting_broadcast_outputs"},
             )
         except Exception as exc:
+            logger.exception(
+                "Agent call failed — agent=%s model=%s phase=plurality_voting_broadcast",
+                agent.get("name", agent_id),
+                agent.get("model", "unknown"),
+            )
             err = f"[error: {exc}]"
             return err, None, None, [("agent_error", err)]
         vote = _extract_vote(response)
@@ -1724,6 +1753,11 @@ async def _run_voting(
                     },
                 )
             except Exception as exc:
+                logger.exception(
+                    "Agent call failed — agent=%s model=%s phase=plurality_voting_discussion",
+                    agent.get("name", agent_id),
+                    agent.get("model", "unknown"),
+                )
                 err = f"[error: {exc}]"
                 return agent_id, deliveries, delivery_type, [("agent_error", err)], err, None, None
             v = _extract_vote(resp)
@@ -2515,6 +2549,11 @@ async def _run_parallel_consensus(
         try:
             response, tools_used = await call(agent, turn_prompt)
         except Exception as exc:
+            logger.exception(
+                "Agent call failed — agent=%s model=%s phase=bidding_draft",
+                agent.get("name", agent_id),
+                agent.get("model", "unknown"),
+            )
             return agent_id, f"[error: {exc}]", []
         return agent_id, response, tools_used
 
@@ -2619,6 +2658,11 @@ async def _run_bidding(
         try:
             response, tools_used = await call(agent, full_prompt)
         except Exception as exc:
+            logger.exception(
+                "Agent call failed — agent=%s model=%s phase=bidding_bid",
+                agent.get("name", agent_id),
+                agent.get("model", "unknown"),
+            )
             err = f"[error: {exc}]"
             return agent_id, [("agent_error", err)], None
 
@@ -2721,6 +2765,11 @@ async def _run_bidding(
             try:
                 response, tools_used = await call(agent, match_prompt)
             except Exception as exc:
+                logger.exception(
+                    "Agent call failed — agent=%s model=%s phase=bidding_match",
+                    agent.get("name", agent_id),
+                    agent.get("model", "unknown"),
+                )
                 err = f"[error: {exc}]"
                 return agent_id, [("agent_error", err)], {}
 
