@@ -1665,6 +1665,199 @@ const runSwarm = useCallback(async (prompt: string, config: SwarmRunConfig) => {
 // Topology mode: unchanged (still calls existing endpoints)
 ```
 
+## 12.9 Blackboard Entry UI Models
+
+The four `entry_type` values in `draft_entries` require distinct visual treatments. Currently `draft-entry.tsx` renders all types with a single template. This section defines what each should look like.
+
+### 12.9.1 Proposal (Post) — Primary contribution card
+
+Full visual weight. This is the unit of intellectual work that gets cited and promoted.
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ ● Alpha  ·  claude-sonnet-4-6  ·  Anthropic    R1   [proposal]  @×1 │
+├──────────────────────────────────────────────────────────────────────┤
+│                                                                      │
+│  The penalty clause in §4.2 is unenforceable under EU law: the      │
+│  liquidated damages cap (€50k) is disproportionate to the actual    │
+│  estimated loss range (€200k–€800k). DCF analysis confirms.         │
+│                                                                      │
+├──────────────────────────────────────────────────────────────────────┤
+│ ♡  ████████░░  2 / 4   [cited by: Alpha, Delta ▾]    💬 3   ⋯ id   │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+| Field              | DB source                           | Notes                                                                                  |
+| ------------------ | ----------------------------------- | -------------------------------------------------------------------------------------- |
+| Color dot ●        | agent color from SwarmNodes palette | matches canvas node color                                                              |
+| Agent name         | `author_name` (JOIN agents)         |                                                                                        |
+| Provider badge     | `agents.model` + `agents.provider`  | e.g. "claude-sonnet-4-6 · Anthropic"                                                   |
+| Round badge R{n}   | `draft_entries.round`               |                                                                                        |
+| `[proposal]` badge | `entry_type`                        | burgundy chip                                                                          |
+| `@×1` mention pill | `mention_agents` JSON length        | shows count + first 2 names on hover                                                   |
+| Content body       | `content`                           | markdown-rendered                                                                      |
+| ♡ progress bar     | `citation_count` / M                | fills toward promotion; M = `max(1, N_participants // citation_threshold_divisor + 1)` |
+| Citer tooltip      | citations JOIN                      | hover: list of citing agent names + rounds                                             |
+| Reply count 💬     | children count (tree)               |                                                                                        |
+| Soft-deleted state | `is_visible = false`                | card dimmed; label "evaporated (R{n})"                                                 |
+| Promoted state     | `confirmed_entries.source_draft_id` | ♡ bar → `✅ Confirmed (R{n})` chip                                                     |
+
+**Status:** ❌ TODO — current `draft-entry.tsx` has single template with P badge; no progress bar, no provider badge, no mention pills, no deletion state, no promoted state
+
+---
+
+### 12.9.2 Reply (Comment) — Threaded subordinate entry
+
+Visually lighter than a proposal. Indented with a thread-line gutter. Connected to its parent via a reply-to breadcrumb.
+
+```
+  │
+  ├─ ● Beta  R2  ↩ "The penalty clause in §4.2…"       reply  ♡ 1
+  │   Agreed — the DCF in Annex B supports this claim.
+  │   💬 1   ⋯ id
+  │
+  │   └─ ● Alpha  R3  ↩ "Agreed — the DCF…"            reply  ♡ 0
+  │       @Beta — what discount rate did you apply?
+  │       ⋯ id
+```
+
+| Field                  | DB source                           | Notes                                                                  |
+| ---------------------- | ----------------------------------- | ---------------------------------------------------------------------- |
+| Thread-line gutter     | CSS `border-left`                   | 2px agent color; `depth × 16px` indent (max 4)                         |
+| Reply-to breadcrumb ↩ | `reply_to` → parent `content[0:60]` | truncated quote of parent entry                                        |
+| Content                | `content`                           | markdown; smaller font weight than proposal                            |
+| ♡ count                | `citation_count`                    | compact label only — no progress bar (replies rarely promote directly) |
+
+**Status:** ❌ TODO — current implementation uses same card with depth-only indent; no reply-to breadcrumb; no visual distinction from proposals
+
+---
+
+### 12.9.3 Vote (Endorsement Chip) — Compact declared vote
+
+A declared vote from the initial confidence-calibration round. Not a prose contribution. Should not have the same visual weight as proposals.
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ ✓  Beta  →  ↗ BB-001  ·  R1  ·  "The penalty clause in §4.2…"       │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+| Field                 | DB source                                              | Notes                       |
+| --------------------- | ------------------------------------------------------ | --------------------------- |
+| ✓ icon                | `entry_type = 'vote'`                                  | green check, muted chip row |
+| Voter name            | `author_name`                                          |                             |
+| Voted-entry reference | `votes.voted_entry_id` → `draft_entries.content[0:60]` | truncated content preview   |
+| Round                 | `round`                                                |                             |
+
+**Status:** ❌ TODO — currently rendered as full-height card with "V" badge; should be a compact single-line chip
+
+---
+
+### 12.9.4 System Entry (Event Log Row) — Infrastructure events
+
+Promotion notifications, soft-delete events, round boundary markers. Should not compete visually with agent contributions.
+
+```
+  ⚙  R2  system  "BB-001 promoted to Confirmed (3/3 citations)"     [▾]
+```
+
+| Field           | DB source               | Notes                                 |
+| --------------- | ----------------------- | ------------------------------------- |
+| ⚙ icon         | `entry_type = 'system'` | small gray icon                       |
+| Round           | `round`                 |                                       |
+| Content         | `content`               | muted text, smaller size              |
+| Collapse toggle | —                       | collapsed by default; user can expand |
+
+**Status:** ❌ TODO — currently full card with "⚙" badge; should be a collapsible dim row
+
+---
+
+### 12.9.5 Citation / Upvote — Interactive progress element
+
+The citation mechanism is the core stigmergic signal and deserves a dedicated UI element on every entry, not just a count label.
+
+```
+  ♡  ████████░░  2 / 4   ← progress bar toward promotion threshold M
+                  ↑
+      on hover:
+      ╔════════════════════════════╗
+      ║ Cited by:                  ║
+      ║  ● Alpha  ·  R1            ║
+      ║  ● Delta  ·  R2            ║
+      ║                            ║
+      ║ 2 more citations → Confirm ║
+      ╚════════════════════════════╝
+```
+
+Behavior:
+
+- **Bar color:** `bg-muted` when < 25% of M; `bg-amber-500` when ≥ 50%; `bg-green-500` when ≥ M
+- **Pulse animation:** brief glow on ♡ icon when a new `bb-cite` SSE event arrives for this entry
+- **Promoted state:** bar replaced by `✅ Confirmed (R{n})` chip linking to `confirmed_entries` record
+- **Data source:** `citation_count` (already in SQL JOIN query in `simulation.py`); hover detail either included in entry payload or fetched on-demand
+
+**Status:** ❌ TODO — current implementation is plain `♡ {count}` text; no bar, no pulse, no hover detail, no promoted state chip
+
+---
+
+## 12.10 Agent Card — Blackboard Mode
+
+In blackboard mode each agent node on the canvas (and in `BlackboardPanel`) should expose two additional data layers: their **citation impact for this run** and their **cross-run trust vector by domain**.
+
+```
+┌──────────────────────────────────────────────────────────────────────┐
+│ ● Alpha          [taker]                  ♡ 12 citations this run   │
+│   claude-sonnet-4-6 · Anthropic           conceding temp: 0.72 ████▒│
+├──────────────────────────────────────────────────────────────────────┤
+│ ▸ Trust Vector (cross-run)                              [expand ▾]   │
+│   ┌────────────────────────────────────────────────────────────────┐ │
+│   │  contract-law         0.82  ████████░░  (3 runs)              │ │
+│   │  financial-analysis   0.65  ██████░░░░  (3 runs)              │ │
+│   │  regulatory           0.41  ████░░░░░░  (2 runs)              │ │
+│   │  general              0.50  █████░░░░░  (5 runs)              │ │
+│   └────────────────────────────────────────────────────────────────┘ │
+└──────────────────────────────────────────────────────────────────────┘
+```
+
+| Field                          | DB source                                                                                                               | Notes                                            |
+| ------------------------------ | ----------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------ |
+| Agent name + color dot         | `agents.name`                                                                                                           | matches canvas node color                        |
+| `[taker]` / `[observer]` badge | from auction result (in-memory during run)                                                                              |                                                  |
+| ♡ N citations this run         | `SELECT COUNT(*) FROM citations WHERE run_id=? AND citing_entry_id IN (SELECT id FROM draft_entries WHERE author_id=?)` | counts citations received on agent's own entries |
+| Conceding temperature          | convergence engine `t_i` per agent per round                                                                            | `∈ [0.0, 1.0]`; displayed as progress bar        |
+| Trust vector rows              | `agent_trust` table (❌ not yet in `tables.py`)                                                                         | domain → score + run_count                       |
+
+### DB addition required
+
+The `agent_trust` table is referenced throughout the PRD (§6.7, §13 Phase 2) but not yet in `server/db/tables.py`:
+
+```python
+agent_trust = Table(
+    "agent_trust",
+    metadata,
+    Column("agent_id", Text, ForeignKey("agents.id"), nullable=False),
+    Column("domain", Text, nullable=False),
+    Column("score", Float, nullable=False, server_default=text("0.5")),
+    Column("run_count", Integer, nullable=False, server_default=text("0")),
+    Column("updated_at", DateTime(timezone=True), server_default=func.now()),
+    UniqueConstraint("agent_id", "domain", name="uq_agent_trust_domain"),
+)
+```
+
+### API additions required
+
+- `GET /api/agents/{agent_id}/trust` → `[{domain, score, run_count}]`
+- Include `citations_received` count per agent in `GET /api/simulation/{run_id}/blackboard` response (or as a separate `GET /api/simulation/{run_id}/agent-stats`)
+
+### Frontend components affected
+
+| Component                      | Change needed                                         | Status  |
+| ------------------------------ | ----------------------------------------------------- | ------- |
+| `canvas/swarm-nodes.tsx`       | add ♡ N badge on agent node in swarm mode             | ❌ TODO |
+| `blackboard-panel.tsx` header  | show citation summary row per taker                   | ❌ TODO |
+| `trust-panel.tsx` (see §12.5)  | expandable per-domain trust scores with progress bars | ❌ TODO |
+| `canvas/blackboard-canvas.tsx` | show agent citation ranks in compact agent list       | ❌ TODO |
+
 ---
 
 # 13. Engineering Roadmap

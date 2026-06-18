@@ -234,6 +234,7 @@ async def _run_simulation_background(
     # Open a fresh DB connection — the request-scoped connection is closed
     # by the time the background task runs.
     from server.db import get_engine
+
     async with get_engine().connect() as db:
         try:
             await run_topology(
