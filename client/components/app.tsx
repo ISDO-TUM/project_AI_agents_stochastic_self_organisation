@@ -600,7 +600,7 @@ export function App() {
         />
       )}
 
-      {appMode === "topology" && (
+      {appMode === "swarm" && (
         <div style={{ flex: 1, height: "100%", overflow: "hidden" }}>
           <BlackboardPanel runId={runId} onRunIdChange={setRunId} />
         </div>
