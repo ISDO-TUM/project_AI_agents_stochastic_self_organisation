@@ -15,6 +15,10 @@ logger = logging.getLogger(__name__)
 # iterations included).  Prevents runaway loops from blocking indefinitely.
 _DEFAULT_TIMEOUT_SECONDS = 60
 
+# Retry config for transient network errors (APIConnectionError etc.)
+_MAX_RETRIES = 3
+_RETRY_BASE_DELAY = 1.0  # seconds; doubles each attempt
+
 
 class BaseLLMProvider(ABC):
     """Template for LLM providers — subclasses override formatting hooks."""
@@ -84,6 +88,34 @@ class BaseLLMProvider(ABC):
                 "Please try again with a shorter prompt or fewer tools."
             ) from err
 
+    async def _send_with_retry(self, kwargs: dict[str, Any]) -> Any:
+        """Call _send with exponential-backoff retries on transient errors."""
+        last_exc: Exception | None = None
+        for attempt in range(_MAX_RETRIES):
+            try:
+                return await self._send(kwargs)
+            except Exception as exc:
+                msg = str(exc).lower()
+                # Retry only on transient connectivity / rate-limit errors
+                transient_keywords = (
+                    "connection error", "connection", "timeout",
+                    "rate limit", "529", "503", "502",
+                )
+                if any(k in msg for k in transient_keywords):
+                    delay = _RETRY_BASE_DELAY * (2**attempt)
+                    logger.warning(
+                        "Transient LLM error (attempt %d/%d): %s — retrying in %.1fs",
+                        attempt + 1,
+                        _MAX_RETRIES,
+                        exc,
+                        delay,
+                    )
+                    await asyncio.sleep(delay)
+                    last_exc = exc
+                else:
+                    raise  # non-transient error — don't retry
+        raise last_exc  # type: ignore[misc]
+
     async def _call_inner(
         self,
         prompt: str,
@@ -97,7 +129,7 @@ class BaseLLMProvider(ABC):
 
         response: Any = None
         for _ in range(self.max_iterations):
-            response = await self._send(kwargs)
+            response = await self._send_with_retry(kwargs)
             tool_calls = self._extract_tool_calls(response)
 
             if not tool_calls:
