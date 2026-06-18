@@ -494,7 +494,7 @@ export function App() {
       <div
         style={{
           width:
-            appMode === "topology"
+            appMode === "swarm"
               ? "70%"
               : simMode
                 ? `calc(100vw - ${logSidebarWidth}px)`
