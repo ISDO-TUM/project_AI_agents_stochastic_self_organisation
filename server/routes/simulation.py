@@ -215,7 +215,6 @@ async def seed_blackboard(body: SeedRequest, db: DBDep) -> SeedResponse:
 
 async def _run_simulation_background(
     prompt: str,
-    db: AsyncConnection,
     rounds: int,
     mode: ConsensusMode,
     agent_context: dict[str, str] | None,
@@ -232,24 +231,28 @@ async def _run_simulation_background(
     from server.llm.credentials import _current as _creds_var
 
     token = _creds_var.set(credentials)
-    try:
-        await run_topology(
-            prompt,
-            db,
-            rounds=rounds,
-            mode=mode,
-            agent_context=agent_context,
-            trial_id=trial_id,
-            ruleset=ruleset,
-            topology=topology,
-            fanout=fanout,
-        )
-    except Exception:
-        await update_trial_status(db, trial_id, "failed")
-        raise
-    finally:
-        _creds_var.reset(token)
-    await update_trial_status(db, trial_id, "completed")
+    # Open a fresh DB connection — the request-scoped connection is closed
+    # by the time the background task runs.
+    from server.db import get_engine
+    async with get_engine().connect() as db:
+        try:
+            await run_topology(
+                prompt,
+                db,
+                rounds=rounds,
+                mode=mode,
+                agent_context=agent_context,
+                trial_id=trial_id,
+                ruleset=ruleset,
+                topology=topology,
+                fanout=fanout,
+            )
+        except Exception:
+            await update_trial_status(db, trial_id, "failed")
+            raise
+        finally:
+            _creds_var.reset(token)
+        await update_trial_status(db, trial_id, "completed")
 
 
 @router.post(
@@ -282,7 +285,6 @@ async def run_simulation(
     background_tasks.add_task(
         _run_simulation_background,
         body.prompt,
-        db,
         body.rounds,
         body.mode,
         body.agent_context,
