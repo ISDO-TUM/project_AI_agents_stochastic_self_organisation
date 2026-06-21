@@ -12,7 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, s
 from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from server.db import create_trial, get_db, update_trial_status
+from server.db import create_trial, get_db, get_engine, update_trial_status
 from server.db.tables import agents
 from server.llm.credentials import RequestCredentials, current_credentials, use_credentials
 from server.schemas import SimulationRunRequest, SimulationStartResponse
@@ -233,7 +233,6 @@ async def _run_simulation_background(
     token = _creds_var.set(credentials)
     # Open a fresh DB connection — the request-scoped connection is closed
     # by the time the background task runs.
-    from server.db import get_engine
 
     async with get_engine().connect() as db:
         try:

@@ -21,7 +21,7 @@ class BaseLLMProvider(ABC):
 
     # Reduced from 10: limits how many tool-call round-trips a single agent
     # call may perform, capping both cost and latency exposure.
-    max_iterations: int = 5
+    max_iterations: int = 20
 
     # Per-call timeout in seconds.  Subclasses may override.
     timeout_seconds: int = _DEFAULT_TIMEOUT_SECONDS
