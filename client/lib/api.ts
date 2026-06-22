@@ -21,7 +21,6 @@ import type {
   HistoryTrial,
   KnowledgeFile,
   LangfuseStats,
-  PairwiseSimilarity,
   Provider,
   RoundStat,
   Rule,

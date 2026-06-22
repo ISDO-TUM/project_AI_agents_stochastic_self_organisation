@@ -219,14 +219,21 @@ export function StatisticsDashboard() {
   }, []);
 
   useEffect(() => {
-    if (!experimentId) {
-      setConsistency(null);
-      return;
-    }
-    setConsistency(null);
+    if (!experimentId) return;
+
+    let cancelled = false;
     fetchExperimentConsistency(experimentId)
-      .then(setConsistency)
-      .catch(() => setConsistency(null));
+      .then((data) => {
+        if (!cancelled) setConsistency(data);
+      })
+      .catch(() => {
+        if (!cancelled) setConsistency(null);
+      });
+
+    return () => {
+      cancelled = true;
+      setConsistency(null);
+    };
   }, [experimentId]);
 
   const noExperiments = !experimentsLoading && experiments.length === 0;
