@@ -1,3 +1,8 @@
+"""Tests for the simulation REST endpoints."""
+
+from __future__ import annotations
+
+import os
 from typing import Any
 
 import pytest
@@ -27,6 +32,92 @@ from server.simulation import (
     _parse_connect,
     _tally,
 )
+
+os.environ.setdefault("DEBUG", "true")
+
+
+async def _create_agent(client: AsyncClient, name: str = "Alpha") -> str:
+    resp = await client.post(
+        "/api/agents",
+        json={
+            "name": name,
+            "description": "Test agent",
+            "system_prompt": "You are a test agent.",
+            "provider": "openai",
+            "model": "gpt-4o",
+            "tools": [],
+            "connections": [],
+        },
+    )
+    assert resp.status_code == 201
+    return str(resp.json()["id"])
+
+
+async def test_get_blackboard_unknown_run_returns_404(client: AsyncClient) -> None:
+    resp = await client.get("/api/simulation/nonexistent-run-id/blackboard")
+    assert resp.status_code == 404
+
+
+async def test_seed_creates_run_and_returns_ids(client: AsyncClient) -> None:
+    agent_id = await _create_agent(client)
+    resp = await client.post(
+        "/api/simulation/seed",
+        json={"prompt": "Test prompt", "agent_ids": [agent_id]},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "run_id" in data
+    assert "thread_id" in data
+
+
+async def test_get_blackboard_after_seed_returns_entries(client: AsyncClient) -> None:
+    agent_id = await _create_agent(client)
+    seed_resp = await client.post(
+        "/api/simulation/seed",
+        json={"prompt": "Analyze this contract", "agent_ids": [agent_id]},
+    )
+    run_id = seed_resp.json()["run_id"]
+    thread_id = seed_resp.json()["thread_id"]
+
+    resp = await client.get(f"/api/simulation/{run_id}/blackboard")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "confirmed" in data
+    assert "draft" in data
+    assert "threads" in data
+    assert len(data["confirmed"]) >= 1  # anchor entry
+    assert len(data["threads"]) == 1
+    assert data["threads"][0]["id"] == thread_id
+
+
+async def test_get_blackboard_thread_filter(client: AsyncClient) -> None:
+    agent_id = await _create_agent(client)
+    seed_resp = await client.post(
+        "/api/simulation/seed",
+        json={"prompt": "Test", "agent_ids": [agent_id]},
+    )
+    run_id = seed_resp.json()["run_id"]
+    thread_id = seed_resp.json()["thread_id"]
+
+    resp = await client.get(
+        f"/api/simulation/{run_id}/blackboard",
+        params={"thread_id": thread_id, "layer": "confirmed"},
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert all(e["thread_id"] == thread_id for e in data["confirmed"])
+    assert data["draft"] == []
+
+
+async def test_seed_disabled_without_debug_flag(
+    client: AsyncClient, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.delenv("DEBUG", raising=False)
+    resp = await client.post(
+        "/api/simulation/seed",
+        json={"prompt": "Test", "agent_ids": []},
+    )
+    assert resp.status_code == 403
 
 
 def test_tally_ignores_unknown_votes() -> None:
@@ -122,6 +213,65 @@ async def test_create_connection_reuses_system_connection(client: AsyncClient) -
         second_id = await create_connection(conn, round_id, None, "agent_a")
 
     assert second_id == first_id
+
+
+async def test_clear_board_preserves_history_and_stats(client: AsyncClient) -> None:
+    """Clearing the canvas deletes agents but keeps the run history + statistics.
+
+    Regression test: previously ``DELETE /api/agents`` wiped every trial and the
+    FK cascade erased the per-message history, so past-run statistics vanished.
+    """
+
+    async def _make_agent(name: str) -> str:
+        resp = await client.post(
+            "/api/agents",
+            json={
+                "name": name,
+                "description": "A test agent.",
+                "system_prompt": "Answer briefly.",
+                "provider": "openai",
+                "model": "gpt-4o",
+                "tools": [],
+                "connections": [],
+            },
+        )
+        assert resp.status_code == 201
+        return str(resp.json()["id"])
+
+    agent_a = await _make_agent("Agent A")
+    agent_b = await _make_agent("Agent B")
+
+    # Persist a trial with one real agent-to-agent message exchange.
+    async with get_engine().connect() as conn:
+        trial_id = await create_trial(conn, "Prompt", "Test trial", "broadcast_no_consensus")
+        round_id = await create_round(conn, trial_id, 1, "discussion")
+        await sim.record_message(conn, round_id, agent_a, agent_b, "agent_output", "hi B")
+        await sim.record_message(conn, round_id, agent_b, agent_a, "agent_output", "hi A")
+
+    # Clear the board.
+    cleared = await client.delete("/api/agents")
+    assert cleared.status_code == 204
+    assert (await client.get("/api/agents")).json() == []
+
+    # The trial and its messages survive.
+    trials = (await client.get("/api/history/trials")).json()
+    assert any(t["id"] == trial_id for t in trials)
+
+    msgs = (await client.get("/api/history/messages", params={"trial_id": trial_id})).json()
+    assert len(msgs) == 2
+    # Identity and names are still attributable after the agents are gone.
+    assert {m["from_agent_id"] for m in msgs} == {agent_a, agent_b}
+    assert {m["from_agent_name"] for m in msgs} == {"Agent A", "Agent B"}
+
+    # Per-agent statistics still resolve names from the snapshots.
+    agent_stats = (await client.get(f"/api/statistics/trials/{trial_id}/agents")).json()
+    assert {s["agent_name"] for s in agent_stats} == {"Agent A", "Agent B"}
+
+    # Edge statistics survive with readable endpoints.
+    edges = (await client.get(f"/api/statistics/trials/{trial_id}/edges")).json()
+    edge_names = {(e["from_agent_name"], e["to_agent_name"]) for e in edges}
+    assert ("Agent A", "Agent B") in edge_names
+    assert ("Agent B", "Agent A") in edge_names
 
 
 # ── _jaccard ─────────────────────────────────────────────────────────────────

@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
-from sqlalchemy import select
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.db import (
@@ -35,6 +35,21 @@ async def list_trials(db: DBDep) -> list[TrialResponse]:
     return [TrialResponse(**deserialise_trial_row(row)) for row in result.mappings().all()]
 
 
+@router.delete(
+    "/trials",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Clear all run history",
+)
+async def clear_history(db: DBDep) -> None:
+    """Delete every trial and all of its history (rounds, connections, messages).
+
+    Agents and knowledge files are left untouched. Deletion cascades from the
+    ``trials`` table through the dependent history tables.
+    """
+    await db.execute(delete(trials))
+    await db.commit()
+
+
 @router.get("/trials/{trial_id}", response_model=TrialResponse)
 async def get_trial(trial_id: str, db: DBDep) -> TrialResponse:
     result = await db.execute(select(trials).where(trials.c.id == trial_id))
@@ -42,6 +57,20 @@ async def get_trial(trial_id: str, db: DBDep) -> TrialResponse:
     if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Trial not found.")
     return TrialResponse(**deserialise_trial_row(row))
+
+
+@router.delete(
+    "/trials/{trial_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Delete a single trial and its history",
+)
+async def delete_trial(trial_id: str, db: DBDep) -> None:
+    """Delete one trial and its cascading history (rounds, connections, messages)."""
+    existing = await db.execute(select(trials.c.id).where(trials.c.id == trial_id))
+    if existing.first() is None:
+        raise HTTPException(status.HTTP_404_NOT_FOUND, "Trial not found.")
+    await db.execute(delete(trials).where(trials.c.id == trial_id))
+    await db.commit()
 
 
 @router.get("/trials/{trial_id}/rounds", response_model=list[RoundResponse])
@@ -107,6 +136,13 @@ async def list_messages(
     from_agent = agents.alias("from_agent")
     to_agent = agents.alias("to_agent")
 
+    # Prefer the name snapshotted on the message (survives agent deletion); fall
+    # back to the live agents table for legacy rows written before snapshots.
+    from_agent_name = func.coalesce(messages.c.from_agent_name, from_agent.c.name).label(
+        "from_agent_name"
+    )
+    to_agent_name = func.coalesce(messages.c.to_agent_name, to_agent.c.name).label("to_agent_name")
+
     stmt = (
         select(
             messages.c.id,
@@ -117,9 +153,9 @@ async def list_messages(
             rounds.c.phase,
             messages.c.connection_id,
             messages.c.from_agent_id,
-            from_agent.c.name.label("from_agent_name"),
+            from_agent_name,
             messages.c.to_agent_id,
-            to_agent.c.name.label("to_agent_name"),
+            to_agent_name,
             messages.c.message_type,
             messages.c.message,
             messages.c.created_at,

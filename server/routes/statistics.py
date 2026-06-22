@@ -128,6 +128,8 @@ async def trial_agents(trial_id: str, db: DBDep) -> list[AgentStatistics]:
                 messages.c.from_agent_id,
                 messages.c.to_agent_id,
                 messages.c.message_type,
+                messages.c.from_agent_name,
+                messages.c.to_agent_name,
             )
             .select_from(_MSG_ROUNDS)
             .where(rounds.c.trial_id == trial_id)
@@ -135,7 +137,12 @@ async def trial_agents(trial_id: str, db: DBDep) -> list[AgentStatistics]:
     ).all()
     connection_rows = (
         await db.execute(
-            select(connections.c.from_agent_id, connections.c.to_agent_id)
+            select(
+                connections.c.from_agent_id,
+                connections.c.to_agent_id,
+                connections.c.from_agent_name,
+                connections.c.to_agent_name,
+            )
             .select_from(_CONN_ROUNDS)
             .where(rounds.c.trial_id == trial_id)
         )
@@ -147,8 +154,16 @@ async def trial_agents(trial_id: str, db: DBDep) -> list[AgentStatistics]:
     out_targets: defaultdict[str, set[str]] = defaultdict(set)
     in_sources: defaultdict[str, set[str]] = defaultdict(set)
     involved: set[str] = set()
+    # Names snapshotted on the history rows, so they survive agent deletion.
+    names: dict[str, str] = {}
 
-    for frm, to in connection_rows:
+    def _remember(agent_id: str | None, name: str | None) -> None:
+        if agent_id is not None and name:
+            names.setdefault(agent_id, name)
+
+    for frm, to, frm_name, to_name in connection_rows:
+        _remember(frm, frm_name)
+        _remember(to, to_name)
         if frm is not None:
             involved.add(frm)
         if to is not None:
@@ -157,7 +172,9 @@ async def trial_agents(trial_id: str, db: DBDep) -> list[AgentStatistics]:
             out_targets[frm].add(to)
             in_sources[to].add(frm)
 
-    for frm, to, mtype in message_rows:
+    for frm, to, mtype, frm_name, to_name in message_rows:
+        _remember(frm, frm_name)
+        _remember(to, to_name)
         if frm is not None:
             sent[frm] += 1
             involved.add(frm)
@@ -167,7 +184,11 @@ async def trial_agents(trial_id: str, db: DBDep) -> list[AgentStatistics]:
             received[to] += 1
             involved.add(to)
 
-    names = await _agent_names(db, involved)
+    # Fall back to the live agents table for ids without a snapshotted name
+    # (legacy rows written before name snapshots existed).
+    missing = involved - names.keys()
+    if missing:
+        names.update(await _agent_names(db, missing))
 
     return [
         AgentStatistics(
@@ -448,21 +469,30 @@ async def trial_langfuse(trial_id: str, db: DBDep) -> LangfuseStatisticsResponse
 async def trial_edges(trial_id: str, db: DBDep) -> list[EdgeStatistics]:
     await _require_trial(db, trial_id)
 
+    # Prefer the name snapshotted on the connection; fall back to the live agent
+    # row (legacy data) and finally to "Unknown" once the agent is gone. The
+    # agent joins are OUTER so edges survive their agents being deleted.
     from_agent = agents.alias("from_agent")
     to_agent = agents.alias("to_agent")
+    from_name = func.coalesce(connections.c.from_agent_name, from_agent.c.name, "Unknown").label(
+        "from_agent_name"
+    )
+    to_name = func.coalesce(connections.c.to_agent_name, to_agent.c.name, "Unknown").label(
+        "to_agent_name"
+    )
     stmt = (
         select(
             connections.c.from_agent_id,
-            from_agent.c.name.label("from_agent_name"),
+            from_name,
             connections.c.to_agent_id,
-            to_agent.c.name.label("to_agent_name"),
+            to_name,
             func.count(messages.c.id).label("message_count"),
         )
         .select_from(
             connections.join(rounds, rounds.c.id == connections.c.round_id)
             .outerjoin(messages, messages.c.connection_id == connections.c.id)
-            .join(from_agent, from_agent.c.id == connections.c.from_agent_id)
-            .join(to_agent, to_agent.c.id == connections.c.to_agent_id)
+            .outerjoin(from_agent, from_agent.c.id == connections.c.from_agent_id)
+            .outerjoin(to_agent, to_agent.c.id == connections.c.to_agent_id)
         )
         .where(
             rounds.c.trial_id == trial_id,
@@ -472,9 +502,9 @@ async def trial_edges(trial_id: str, db: DBDep) -> list[EdgeStatistics]:
         )
         .group_by(
             connections.c.from_agent_id,
-            from_agent.c.name,
+            from_name,
             connections.c.to_agent_id,
-            to_agent.c.name,
+            to_name,
         )
         .order_by(func.count(messages.c.id).desc())
     )

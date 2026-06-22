@@ -35,8 +35,10 @@ select = ["E", "W", "F", "I", "N", "UP", "B", "S", "C4", "RUF"]
 ignore = []
 
 [tool.ruff.lint.per-file-ignores]
-"**/__init__.py" = ["F401"]  # re-exports in __init__ are intentional
-"**/test_*.py" = ["S101"]   # assert is acceptable in test files
+"**/__init__.py" = ["F401"]        # re-exports in __init__ are intentional
+"**/test_*.py" = ["S101"]          # assert is acceptable in test files
+"**/routes/simulation.py" = ["S608"]   # clause vars are hardcoded strings, not user input
+"**/swarm/blackboard.py" = ["S112", "S608"]  # S112: UNIQUE-constraint swallow is intentional; S608: hardcoded strings
 
 [tool.ruff.lint.isort]
 known-first-party = ["server"]

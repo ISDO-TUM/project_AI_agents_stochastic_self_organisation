@@ -61,7 +61,7 @@ export function EdgeLayer({
   const { dark } = useTheme();
   const accent = tweaks.accentColor;
   const ew = tweaks.edgeWidth;
-  const base = dark ? "rgba(255,255,255,0.09)" : "rgba(0,0,0,0.13)";
+  const base = dark ? "rgba(255,255,255,0.22)" : "rgba(0,0,0,0.13)";
   const posMap = buildPositionMap(agents, sources);
 
   return (

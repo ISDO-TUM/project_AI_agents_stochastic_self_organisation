@@ -25,7 +25,7 @@ from .credentials import resolve_api_key, resolve_base_url
 from .langfuse_setup import observe, update_current_generation
 from .normalizer import NormalizedToolCall, extract_gemini_tool_calls
 
-_DEFAULT_MAX_TOKENS = 1024
+_DEFAULT_MAX_TOKENS = 20_000
 
 
 def _get_base_url() -> str:

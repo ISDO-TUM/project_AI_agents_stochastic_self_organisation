@@ -4,6 +4,7 @@ import logging
 import os
 from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import Any
 
 from dotenv import load_dotenv
@@ -11,7 +12,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from server.db import cleanup_stale_data, close_db, get_engine, init_db
+from server.db import cleanup_stale_data, close_db, get_engine, init_db, prune_trials
 from server.llm.credentials import MissingCredentialsError
 from server.routes import (
     agents_router,
@@ -32,7 +33,7 @@ _STALE_AFTER_HOURS = 24
 
 
 async def _cleanup_loop() -> None:
-    """Background task: wait an hour, then delete agents and files older than 24 h."""
+    """Background task: hourly, drop stale agents/files and prune old run history."""
     while True:
         await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
         try:
@@ -41,9 +42,34 @@ async def _cleanup_loop() -> None:
                 logger.info("Periodic cleanup: removed %d stale agent(s)", deleted)
         except Exception:
             logger.exception("Periodic cleanup failed — will retry next cycle")
+        try:
+            pruned = await prune_trials(get_engine())
+            if pruned:
+                logger.info("Periodic cleanup: pruned %d trial(s) from history", pruned)
+        except Exception:
+            logger.exception("History pruning failed — will retry next cycle")
 
 
-load_dotenv()
+# Search upward from this file so the .env at the repo root is always found,
+# regardless of which directory uvicorn / uv run is invoked from.
+load_dotenv(dotenv_path=Path(__file__).parent.parent / ".env", override=False)
+load_dotenv(override=False)  # also pick up any local server/.env if present
+
+# Remove empty-string BASE_URL vars so SDK clients fall back to their own
+# defaults.  The .env template ships these lines uncommented but empty as
+# placeholders; passing "" to the OpenAI/Anthropic/Groq/Gemini constructors
+# causes them to build request URLs without an http(s):// scheme, which then
+# raises "Connection error." at runtime.
+_BASE_URL_VARS = (
+    "OPENAI_BASE_URL",
+    "ANTHROPIC_BASE_URL",
+    "GROQ_BASE_URL",
+    "GEMINI_BASE_URL",
+    "LLM_PROXY_API_KEY",
+)
+for _var in _BASE_URL_VARS:
+    if not os.environ.get(_var):  # missing or empty → clean up
+        os.environ.pop(_var, None)
 
 
 @asynccontextmanager

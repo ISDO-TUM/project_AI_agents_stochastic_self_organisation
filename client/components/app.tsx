@@ -35,6 +35,8 @@ import { TweaksPanel } from "@/components/tweaks-panel";
 
 import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
+import { useBlackboard } from "@/hooks/useBlackboard";
+import { ModeGate, AppMode } from "@/components/mode-gate";
 import { getTheme } from "@/lib/theme";
 
 const defaultTweaks: Tweaks = {
@@ -115,6 +117,33 @@ export function App() {
   const [rules, setRules] = useState<Rule[]>([]);
   const [selectedRules, setSelectedRules] = useState<Set<string>>(new Set());
   const [importError, setImportError] = useState<string | null>(null);
+  const [runId, setRunId] = useState<string | null>(null);
+  const [appMode, setAppMode] = useState<AppMode | null>(null);
+  const [seeding, setSeeding] = useState(false);
+  const { state: blackboardState } = useBlackboard(
+    appMode === "swarm" ? runId : null,
+  );
+
+  const handleSeed = useCallback(async () => {
+    setSeeding(true);
+    try {
+      const res = await fetch("/api/simulation/seed", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          prompt: "Test blackboard seeding",
+          agent_ids: [],
+        }),
+      });
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = (await res.json()) as { run_id: string; thread_id: string };
+      setRunId(data.run_id);
+    } catch (err) {
+      console.error("Seed failed:", err);
+    } finally {
+      setSeeding(false);
+    }
+  }, []);
 
   // Run configuration — edited in the Settings panel, read at run start.
   const [consensusMode, setConsensusMode] =
@@ -425,6 +454,10 @@ export function App() {
   const t = getTheme(dark);
   const hasNodes = agents.length > 0 || sources.length > 0;
 
+  if (!appMode) {
+    return <ModeGate onSelect={setAppMode} />;
+  }
+
   return (
     <div
       style={{
@@ -465,6 +498,7 @@ export function App() {
           height: "100%",
           display: "flex",
           position: "relative",
+          flexShrink: 0,
         }}
         onClick={(e) => {
           const el = (e.target as HTMLElement).closest(
@@ -493,6 +527,11 @@ export function App() {
           tweaks={tweaks}
           onCanvasClick={onCanvasClick}
           panAdjust={panAdjust}
+          blackboardState={blackboardState}
+          appMode={appMode}
+          swarmRunId={appMode === "swarm" ? runId : null}
+          onSeed={handleSeed}
+          seeding={seeding}
           phonebook={
             topology === "dynamic"
               ? {
@@ -545,6 +584,7 @@ export function App() {
         />
       </div>
 
+      {/* Log wall — only shows during active simulation (topology or swarm) */}
       {simMode && (
         <LogWall
           steps={steps}
