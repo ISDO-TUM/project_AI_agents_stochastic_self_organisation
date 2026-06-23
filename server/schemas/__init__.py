@@ -804,8 +804,18 @@ _TopologyMode = Literal["static", "dynamic"]
 
 
 class SimulationRunRequest(BaseModel):
-    """Request body for running a topology simulation."""
+    """Request body for ``POST /api/simulation/run``.
 
+    ``engine`` selects the reasoning engine. ``topology`` (default) runs the V0
+    engine as a background task with REST polling for live updates. ``swarm``
+    runs the ECSAS engine and streams ``SimulationStep`` events over SSE
+    (groundwork; the concrete pipeline lands in a later PR).
+    """
+
+    engine: Literal["topology", "swarm"] = Field(
+        default="topology",
+        description="Reasoning engine: 'topology' (V0, background+poll) or 'swarm' (ECSAS, SSE).",
+    )
     prompt: str = Field(
         description="The prompt broadcast to all agents.",
         min_length=1,

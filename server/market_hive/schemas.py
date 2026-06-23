@@ -195,6 +195,38 @@ class SwarmFinalOutput(BaseModel):
     metadata: dict[str, Any] = {}
 
 
+# ── SSE stream (swarm run) ────────────────────────────────────────────────────
+# The swarm orchestrator yields these as Server-Sent Events (PRD §7.2 / §11.1).
+# The blackboard *board* is still read via REST polling (GET …/blackboard); this
+# stream carries the live activity log + canvas animation triggers.
+SwarmSimStepType = Literal[
+    "system",
+    "bid",
+    "abstain",
+    "bb-post",
+    "bb-cite",
+    "bb-vote",
+    "bb-promote",
+    "bb-delete",
+    "bb-mention",
+    "amendment",
+    "amendment-approved",
+    "amendment-rejected",
+    "convergence",
+]
+
+
+class SimulationStep(BaseModel):
+    """One Server-Sent Event emitted during a swarm run."""
+
+    type: SwarmSimStepType
+    msg: str
+    node_id: str | None = None  # agent id, for canvas node highlight
+    thread_id: str | None = None
+    entry_id: str | None = None
+    data: dict[str, Any] | None = None  # structured payload (e.g. final output)
+
+
 class BlackboardResponse(BaseModel):
     threads: list[ThreadSchema]
     confirmed: list[ConfirmedEntrySchema]
