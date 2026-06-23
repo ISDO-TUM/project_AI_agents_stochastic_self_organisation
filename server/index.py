@@ -14,17 +14,16 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from server.db import cleanup_stale_data, close_db, get_engine, init_db, prune_trials
 from server.llm.credentials import MissingCredentialsError
+from server.market_hive.routes import router as market_hive_router
 from server.routes import (
     agents_router,
-    benchmark_router,
-    history_router,
     knowledge_files_router,
     models_router,
-    rules_router,
     simulation_router,
-    statistics_router,
     test_router,
 )
+from server.topology.benchmarks import benchmark_router
+from server.topology.routes import history_router, rules_router, statistics_router
 
 logger = logging.getLogger(__name__)
 
@@ -148,15 +147,21 @@ async def _missing_credentials_handler(
     return JSONResponse(status_code=400, content={"detail": str(exc)})
 
 
+# Shared platform routes (owned by neither engine).
 app.include_router(agents_router)
 app.include_router(knowledge_files_router)
-app.include_router(history_router)
 app.include_router(models_router)
-app.include_router(benchmark_router)
-app.include_router(rules_router)
 app.include_router(simulation_router)
-app.include_router(statistics_router)
 app.include_router(test_router)
+
+# Topology engine routes.
+app.include_router(history_router)
+app.include_router(statistics_router)
+app.include_router(rules_router)
+app.include_router(benchmark_router)
+
+# Market-Hive (ECSAS) engine routes.
+app.include_router(market_hive_router)
 
 
 @app.get("/api/health", tags=["Health"], summary="Health check")

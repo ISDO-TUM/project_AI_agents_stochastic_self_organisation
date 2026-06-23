@@ -34,22 +34,32 @@ frontend (`client/`). It exposes **two reasoning engines**, selected at runtime 
 `mode` field on `POST /api/simulation/run` — the user picks the mode in the UI. They are
 in-process modules, **not** separately deployable services.
 
-| Engine          | Mode value | Code                  | Behavior                                                                                                               |
-| --------------- | ---------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------- |
-| **Topology**    | `topology` | `server/topology/`    | The V0 baseline documented in §7–§9 (topology + consensus). Read-only.                                                 |
-| **Market-Hive** | `swarm`    | `server/market_hive/` | ECSAS: free-market bidding + append-only blackboard + citation-based consensus. See `docs/blackboard/PRD-ECSAS-v3.md`. |
+| Engine          | Mode value | Code                  | Owns                                                                                                                                                                                                                                          |
+| --------------- | ---------- | --------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| **Topology**    | `topology` | `server/topology/`    | The V0 baseline (§7–§9). Engine in `__init__.py`; routes in `topology/routes/` (history, statistics, rules); evaluation harness in `topology/benchmarks/`.                                                                                    |
+| **Market-Hive** | `swarm`    | `server/market_hive/` | ECSAS: free-market bidding + append-only blackboard + citation-based consensus. Engine logic, `schemas.py`, blackboard `tools.py`, and `routes.py` (blackboard / audit / status / seed / agent-trust). See `docs/blackboard/PRD-ECSAS-v3.md`. |
+
+Each engine package is self-contained for its **behavior**: its domain logic, HTTP
+routes, tools and benchmarks live inside the package, so the two systems read as
+independent at a glance.
 
 Everything else is **shared platform**, used by both engines and owned by neither:
 
 - `server/db/` — persistence: **PostgreSQL via SQLAlchemy Core** (asyncpg) in
   production/Docker, configured by `DATABASE_URL`; the test suite points the same Core
-  schema at an in-memory SQLite database. Schema lives in `server/db/tables.py`.
-- `server/llm/` — multi-provider model layer · `server/tools/` — tool abstraction &
-  registry · `server/guardrails/` — input/output validation · `server/schemas/` — shared
-  request/response models · `server/routes/` — the HTTP/SSE layer that dispatches on `mode`.
+  schema at an in-memory SQLite database. The **schema for both engines** lives in the
+  single `server/db/tables.py` (shared `agents`/`knowledge_files`; topology `trials`/
+  `rounds`/`connections`/`messages`; the ECSAS swarm tables) so migrations stay in one place.
+- `server/llm/` — multi-provider model layer · `server/tools/` — the `Tool` ABC, registry
+  and cross-engine builtins (`files`, `table`, `registry`) · `server/guardrails/` —
+  input/output validation · `server/schemas/` — shared request/response models ·
+  `server/routes/` — shared HTTP routes (agent CRUD, files, models, health) plus the
+  mode-dispatched `POST /api/simulation/run`, which routes to the selected engine.
 
-Design rule: domain logic lives in the two engine packages; shared infrastructure stays
-flat under `server/`. There is no `common/` wrapper — `server.` is already the namespace.
+Design rule: engine **behavior** (logic, routes, tools, benchmarks) lives in the two
+engine packages; shared infrastructure — including the one-file DB schema and the mode
+dispatcher — stays flat under `server/`. There is no `common/` wrapper — `server.` is
+already the namespace.
 
 ---
 
