@@ -37,8 +37,8 @@ ignore = []
 [tool.ruff.lint.per-file-ignores]
 "**/__init__.py" = ["F401"]        # re-exports in __init__ are intentional
 "**/test_*.py" = ["S101"]          # assert is acceptable in test files
-"**/routes/simulation.py" = ["S608"]   # clause vars are hardcoded strings, not user input
-"**/swarm/blackboard.py" = ["S112", "S608"]  # S112: UNIQUE-constraint swallow is intentional; S608: hardcoded strings
+"**/market_hive/routes.py" = ["S608"]  # clause/table vars are hardcoded strings, not user input
+"**/market_hive/blackboard.py" = ["S112", "S608"]  # S112: UNIQUE-constraint swallow is intentional; S608: hardcoded strings
 
 [tool.ruff.lint.isort]
 known-first-party = ["server"]
@@ -49,6 +49,15 @@ strict = true
 ignore_missing_imports = true
 # FastAPI decorators use complex generics; relax untyped decorator checks
 disallow_untyped_decorators = false
+
+# server.tools.base.Tool resolves to Any when subclassed from a *sibling* package
+# (mypy runs as `cd server && mypy .`, so the cross-package `server.tools.base`
+# spec is unfollowable). The in-package builtins dodge this with relative
+# `from ..base import Tool`; market_hive cannot. Runtime subclassing is correct
+# and exercised by the tests — only the `misc` "cannot subclass Any" is silenced.
+[[tool.mypy.overrides]]
+module = ["market_hive.tools", "server.market_hive.tools"]
+disable_error_code = ["misc"]
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"

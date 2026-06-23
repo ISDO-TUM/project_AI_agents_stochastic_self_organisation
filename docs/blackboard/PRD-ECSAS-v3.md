@@ -58,35 +58,35 @@ The system is built on top of the existing V0 repository (`project_AI_agents_sto
 
 ## 2.1 What V0 Delivers (Preserved Unchanged)
 
-| Component                                    | Location                               | Status                                    |
-| -------------------------------------------- | -------------------------------------- | ----------------------------------------- |
-| FastAPI application                          | `api/index.py`                         | ✅ Unchanged                              |
-| Agent CRUD REST API                          | `api/routes/agents.py`                 | ✅ Unchanged                              |
-| Knowledge Files API                          | `api/routes/files.py`                  | ✅ Unchanged                              |
-| LLM provider layer (OpenAI, Anthropic, Groq) | `api/llm/`                             | ✅ Unchanged                              |
-| `BaseLLMProvider` + tool-call loop           | `api/llm/base_provider.py`             | ✅ Unchanged                              |
-| Tool abstraction (`Tool` ABC)                | `api/tools/base.py`                    | ✅ Unchanged                              |
-| Tool registry                                | `api/tools/registry.py`                | ✅ Extended (new tools registered)        |
-| Files tool (`FilesTool`)                     | `api/tools/builtin/files.py`           | ✅ Unchanged                              |
-| V0 topology simulation                       | `api/simulation/__init__.py`           | ✅ Unchanged (preserved as B-02 baseline) |
-| Visual canvas (Builder + Simulator)          | `app/components/canvas/`               | ✅ Extended (new node types, new mode)    |
-| Agent / Source panels                        | `app/components/panels/`               | ✅ Unchanged                              |
-| Log wall                                     | `app/components/log-wall.tsx`          | ✅ Extended (secondary role)              |
-| Theme (dark/light, `#8B1A2F`)                | `app/lib/theme.ts`                     | ✅ Unchanged                              |
-| Markdown renderer                            | `app/components/markdown-renderer.tsx` | ✅ Unchanged                              |
+| Component                                    | Location                                  | Status                                    |
+| -------------------------------------------- | ----------------------------------------- | ----------------------------------------- |
+| FastAPI application                          | `server/index.py`                         | ✅ Unchanged                              |
+| Agent CRUD REST API                          | `server/routes/agents.py`                 | ✅ Unchanged                              |
+| Knowledge Files API                          | `server/routes/files.py`                  | ✅ Unchanged                              |
+| LLM provider layer (OpenAI, Anthropic, Groq) | `server/llm/`                             | ✅ Unchanged                              |
+| `BaseLLMProvider` + tool-call loop           | `server/llm/base_provider.py`             | ✅ Unchanged                              |
+| Tool abstraction (`Tool` ABC)                | `server/tools/base.py`                    | ✅ Unchanged                              |
+| Tool registry                                | `server/tools/registry.py`                | ✅ Extended (new tools registered)        |
+| Files tool (`FilesTool`)                     | `server/tools/builtin/files.py`           | ✅ Unchanged                              |
+| V0 topology simulation                       | `server/topology/__init__.py`             | ✅ Unchanged (preserved as B-02 baseline) |
+| Visual canvas (Builder + Simulator)          | `client/components/canvas/`               | ✅ Extended (new node types, new mode)    |
+| Agent / Source panels                        | `client/components/panels/`               | ✅ Unchanged                              |
+| Log wall                                     | `client/components/log-wall.tsx`          | ✅ Extended (secondary role)              |
+| Theme (dark/light, `#8B1A2F`)                | `client/lib/theme.ts`                     | ✅ Unchanged                              |
+| Markdown renderer                            | `client/components/markdown-renderer.tsx` | ✅ Unchanged                              |
 
 ## 2.2 What Changes
 
-| Change                                | Scope                        | Reason                                                                                                |
-| ------------------------------------- | ---------------------------- | ----------------------------------------------------------------------------------------------------- |
-| SQLite: in-memory → file-backed       | `api/db/__init__.py`         | Blackboard must persist across request boundaries                                                     |
-| `agents` table: two new columns       | `api/db/__init__.py`         | `capability_embedding`, `created_at`                                                                  |
-| Seven new DB tables                   | New migration                | Contracts, threads, bids, draft entries, confirmed entries, votes, citations, reputation, agent_trust |
-| New module: `api/swarm/`              | New                          | All ECSAS backend logic                                                                               |
-| New route: `api/routes/simulation.py` | New                          | `/api/simulation/swarm` (SSE) and blackboard/audit endpoints                                          |
-| `useSimulation.ts` refactored         | `app/hooks/useSimulation.ts` | SSE consumption in Swarm mode; topology mode unchanged                                                |
-| New frontend components               | `app/components/`            | BlackboardPanel, ThreadTabs, SwarmConfigModal, new canvas nodes                                       |
-| New canvas mode (Swarm)               | `app/components/canvas/`     | Market Maker node, Blackboard node, swarm-specific animations                                         |
+| Change                                           | Scope                           | Reason                                                                                                                        |
+| ------------------------------------------------ | ------------------------------- | ----------------------------------------------------------------------------------------------------------------------------- |
+| Persistent store: PostgreSQL via SQLAlchemy Core | `server/db/`                    | Blackboard must persist across request boundaries (Postgres in prod/Docker via `DATABASE_URL`; in-memory SQLite for tests)    |
+| `agents` table: two new columns                  | `server/db/tables.py`           | `capability_embedding`, `created_at`                                                                                          |
+| Eleven new DB tables                             | `server/db/tables.py`           | swarm_runs, contracts, threads, bids, draft_entries, citations, votes, confirmed_entries, reputation, agent_trust, amendments |
+| New module: `server/market_hive/`                | New                             | All ECSAS backend logic (the "market-hive" engine)                                                                            |
+| New route: `server/routes/simulation.py`         | New                             | `POST /api/simulation/run` (SSE, mode-dispatched) and blackboard/audit endpoints                                              |
+| `useSimulation.ts` refactored                    | `client/hooks/useSimulation.ts` | SSE consumption in Swarm mode; topology mode unchanged                                                                        |
+| New frontend components                          | `client/components/`            | BlackboardPanel, ThreadTabs, SwarmConfigModal, new canvas nodes                                                               |
+| New canvas mode (Swarm)                          | `client/components/canvas/`     | Market Maker node, Blackboard node, swarm-specific animations                                                                 |
 
 ---
 
@@ -157,24 +157,24 @@ The system is built on top of the existing V0 repository (`project_AI_agents_sto
 
 ## 5.1 Dual Execution Mode
 
-| Mode              | Engine                                      | Trigger                                 |
-| ----------------- | ------------------------------------------- | --------------------------------------- |
-| **Topology (V0)** | `api/simulation/__init__.py:run_topology()` | Mode selector = "Topology" in PromptBar |
-| **Swarm (ECSAS)** | `api/swarm/orchestrator.py:run_swarm()`     | Mode selector = "Swarm" in PromptBar    |
+| Mode              | Engine                                           | Trigger                                 |
+| ----------------- | ------------------------------------------------ | --------------------------------------- |
+| **Topology (V0)** | `server/topology/__init__.py:run_topology()`     | Mode selector = "Topology" in PromptBar |
+| **Swarm (ECSAS)** | `server/market_hive/orchestrator.py:run_swarm()` | Mode selector = "Swarm" in PromptBar    |
 
 Both modes stream `SimulationStep` events via SSE from `POST /api/simulation/run`. The `mode` field in the request body selects the engine.
 
 ## 5.2 The Seven ECSAS Backend Components
 
-| Component          | Module                      | Responsibility                                                             |
-| ------------------ | --------------------------- | -------------------------------------------------------------------------- |
-| Market Maker       | `api/swarm/market_maker.py` | Prompt → Contract + Threads. Votes on amendments.                          |
-| Auction Engine     | `api/swarm/auction.py`      | Invites agents, manages self-selection, assigns takers to threads.         |
-| Blackboard         | `api/swarm/blackboard.py`   | Append-only storage, attention queries, soft delete, citation tracking.    |
-| Convergence Engine | `api/swarm/convergence.py`  | Promotion logic, citation threshold checks, temperature updates.           |
-| Contract Amendment | `api/swarm/amendment.py`    | Handles `request_expertise` proposals, majority vote, new thread creation. |
-| Termination Engine | `api/swarm/termination.py`  | Equilibrium detection, budget tracking, final output selection.            |
-| Trust Registry     | `api/swarm/trust.py`        | Cross-run `agent_trust` updates at run end.                                |
+| Component          | Module                               | Responsibility                                                             |
+| ------------------ | ------------------------------------ | -------------------------------------------------------------------------- |
+| Market Maker       | `server/market_hive/market_maker.py` | Prompt → Contract + Threads. Votes on amendments.                          |
+| Auction Engine     | `server/market_hive/auction.py`      | Invites agents, manages self-selection, assigns takers to threads.         |
+| Blackboard         | `server/market_hive/blackboard.py`   | Append-only storage, attention queries, soft delete, citation tracking.    |
+| Convergence Engine | `server/market_hive/convergence.py`  | Promotion logic, citation threshold checks, temperature updates.           |
+| Contract Amendment | `server/market_hive/amendment.py`    | Handles `request_expertise` proposals, majority vote, new thread creation. |
+| Termination Engine | `server/market_hive/termination.py`  | Equilibrium detection, budget tracking, final output selection.            |
+| Trust Registry     | `server/market_hive/trust.py`        | Cross-run `agent_trust` updates at run end.                                |
 
 ## 5.3 Information Flow
 
@@ -281,7 +281,7 @@ USER PROMPT
 
 ## 6.1 Market Maker
 
-**Module:** `api/swarm/market_maker.py`
+**Module:** `server/market_hive/market_maker.py`
 
 **Responsibilities:**
 
@@ -315,7 +315,7 @@ class MarketMaker:
 
 ## 6.2 Auction Engine
 
-**Module:** `api/swarm/auction.py`
+**Module:** `server/market_hive/auction.py`
 
 **Phase 1 — Invitation (server-side, no LLM):**
 
@@ -397,7 +397,7 @@ Default: `alpha=0.5`, `beta=0.4`, `gamma=0.1`. Sum = 1.0.
 
 ## 6.3 Blackboard
 
-**Module:** `api/swarm/blackboard.py`
+**Module:** `server/market_hive/blackboard.py`
 
 ### Structure
 
@@ -500,7 +500,7 @@ When `post_to_blackboard(mention_agents=["agent_id_X"])` is called:
 
 ## 6.4 Convergence Engine
 
-**Module:** `api/swarm/convergence.py`
+**Module:** `server/market_hive/convergence.py`
 
 ### Confidence Score
 
@@ -556,7 +556,7 @@ reputation clamped to [0.0, 1.0]
 
 ## 6.5 Contract Amendment Engine
 
-**Module:** `api/swarm/amendment.py`
+**Module:** `server/market_hive/amendment.py`
 
 **Trigger:** A taker calls `request_expertise(domain, reason, thread_id)`.
 
@@ -595,7 +595,7 @@ reputation clamped to [0.0, 1.0]
 
 ## 6.6 Termination Engine
 
-**Module:** `api/swarm/termination.py`
+**Module:** `server/market_hive/termination.py`
 
 **Equilibrium condition:**
 
@@ -646,7 +646,7 @@ class SwarmFinalOutput(BaseModel):
 
 ## 6.7 Trust Registry
 
-**Module:** `api/swarm/trust.py`
+**Module:** `server/market_hive/trust.py`
 
 Called once at run end.
 
@@ -676,11 +676,15 @@ async def update_trust(run_id: str, db: Connection) -> None:
 
 ## 7.1 Migration Plan
 
-**MIG-01 — File-backed SQLite:**
-Change `aiosqlite.connect(":memory:")` to `aiosqlite.connect(DB_PATH)` in `api/db/__init__.py`.
-`DB_PATH = os.getenv("DB_PATH", "./data/swarm.db")`.
-`os.makedirs(dirname(DB_PATH), exist_ok=True)` in `init_db()`.
-Test fixtures pass `DB_PATH=":memory:"` to preserve test isolation.
+**MIG-01 — Persistent store (already satisfied):**
+The codebase uses **PostgreSQL via SQLAlchemy Core**, configured through `DATABASE_URL`
+in `server/db/__init__.py` (Postgres in production/Docker; the test suite points the
+same Core schema at an in-memory SQLite database via `conftest.py`). Persistence across
+request boundaries and restarts is therefore already provided by Postgres — there is no
+`aiosqlite`/`DB_PATH`/`./data/swarm.db` step. The schema is defined once as SQLAlchemy
+`Table` objects in `server/db/tables.py` and created on startup via `metadata.create_all`,
+with additive `ALTER TABLE … IF NOT EXISTS` guards in `_apply_column_migrations` for
+columns added to already-provisioned databases.
 
 **MIG-02 — Agents table additions:**
 
@@ -868,7 +872,7 @@ CREATE INDEX IF NOT EXISTS idx_trust_agent_domain
     ON agent_trust(agent_id, domain);
 ```
 
-## 7.2 Pydantic Schemas (`api/swarm/schemas.py`)
+## 7.2 Pydantic Schemas (`server/market_hive/schemas.py`)
 
 ```python
 from datetime import datetime
@@ -985,7 +989,7 @@ SimStepType = Literal[
 
 # 8. Tool Registry
 
-All ECSAS tools are registered in `api/tools/registry.py` alongside existing tools.
+All ECSAS tools are registered in `server/tools/registry.py` alongside existing tools.
 Each tool follows the existing `Tool` ABC pattern with Pydantic input models and `to_openai()`/`to_anthropic()` adapters.
 
 ## 8.1 Complete Tool Catalogue
@@ -1864,22 +1868,22 @@ agent_trust = Table(
 
 ## Phase 1 — Foundation (Weeks 1–2)
 
-| Task                                                                            | Owner | Exit Criteria                                       |
-| ------------------------------------------------------------------------------- | ----- | --------------------------------------------------- |
-| MIG-01: file-backed SQLite + `DB_PATH`                                          | BB    | DB survives server restart                          |
-| MIG-03: all ECSAS tables created                                                | BB    | Schema visible in `sqlite3 ./data/swarm.db .schema` |
-| MIG-02: `capability_embedding` + `created_at` on agents                         | AB    | Agents table extended                               |
-| `POST /api/simulation/run` SSE stub (swarm mode returns empty stream)           | All   | Endpoint exists, returns `text/event-stream`        |
-| `POST /api/simulation/run` topology mode: wrap existing `run_topology()` in SSE | TO    | V0 mode streams correctly to frontend               |
-| Frontend: `useSimulation` SSE refactor (topology path first)                    | FE    | Topology simulation works via SSE                   |
-| Frontend: Mode selector (Topology / Swarm) in `PromptBar`                       | FE    | Toggle renders, selects mode                        |
-| Frontend: `SwarmConfigModal` (layout only, no functionality yet)                | FE    | Modal appears over blurred canvas                   |
+| Task                                                                            | Owner | Exit Criteria                                           |
+| ------------------------------------------------------------------------------- | ----- | ------------------------------------------------------- |
+| MIG-01: PostgreSQL via SQLAlchemy Core (already satisfied)                      | BB    | DB survives server restart (Postgres)                   |
+| MIG-03: all ECSAS tables created                                                | BB    | All 11 ECSAS tables present after `metadata.create_all` |
+| MIG-02: `capability_embedding` + `created_at` on agents                         | AB    | Agents table extended                                   |
+| `POST /api/simulation/run` SSE stub (swarm mode returns empty stream)           | All   | Endpoint exists, returns `text/event-stream`            |
+| `POST /api/simulation/run` topology mode: wrap existing `run_topology()` in SSE | TO    | V0 mode streams correctly to frontend                   |
+| Frontend: `useSimulation` SSE refactor (topology path first)                    | FE    | Topology simulation works via SSE                       |
+| Frontend: Mode selector (Topology / Swarm) in `PromptBar`                       | FE    | Toggle renders, selects mode                            |
+| Frontend: `SwarmConfigModal` (layout only, no functionality yet)                | FE    | Modal appears over blurred canvas                       |
 
 ## Phase 2 — Market Maker + Auction (Weeks 3–4)
 
 | Task                                                              | Owner | Exit Criteria                                  |
 | ----------------------------------------------------------------- | ----- | ---------------------------------------------- |
-| Embedding service (`api/swarm/embeddings.py`)                     | AB    | `embed(text)` returns `list[float]`            |
+| Embedding service (`server/market_hive/embeddings.py`)            | AB    | `embed(text)` returns `list[float]`            |
 | `capability_embedding` computed at `POST /api/agents/`            | AB    | New agents have embeddings                     |
 | Market Maker: prompt → Contract + Threads                         | MM    | Contracts table populated, SSE events emitted  |
 | Auction engine: invitation, self-selection, taker assignment      | AB    | Takers selected, bids table populated          |
@@ -1921,15 +1925,15 @@ agent_trust = Table(
 
 ## Phase 5 — Evaluation (Weeks 9–10)
 
-| Task                                                                           | Owner | Exit Criteria                                |
-| ------------------------------------------------------------------------------ | ----- | -------------------------------------------- |
-| Benchmark tasks BT-01/02/03 (50 synthetic energy contracts)                    | EV    | Tasks defined, ground truth labelled         |
-| Baseline B-01: single LLM call                                                 | EV    | Implemented in `api/evaluation/baselines.py` |
-| Baseline B-02: V0 `run_topology()`                                             | EV    | Reuses existing infrastructure               |
-| Baseline B-03: deterministic orchestrated pipeline                             | EV    | Hard-coded routing, no bidding               |
-| Evaluation runner: 5 runs × 3 tasks × 4 systems                                | EV    | Seeded, reproducible, JSON output            |
-| Statistical analysis: bootstrap, mean ± std                                    | EV    | Results table produced                       |
-| Additional ECSAS metrics: promotion rate, discussion depth, citation diversity | EV    | Reported alongside accuracy/cost/latency     |
+| Task                                                                           | Owner | Exit Criteria                                   |
+| ------------------------------------------------------------------------------ | ----- | ----------------------------------------------- |
+| Benchmark tasks BT-01/02/03 (50 synthetic energy contracts)                    | EV    | Tasks defined, ground truth labelled            |
+| Baseline B-01: single LLM call                                                 | EV    | Implemented in `server/evaluation/baselines.py` |
+| Baseline B-02: V0 `run_topology()`                                             | EV    | Reuses existing infrastructure                  |
+| Baseline B-03: deterministic orchestrated pipeline                             | EV    | Hard-coded routing, no bidding                  |
+| Evaluation runner: 5 runs × 3 tasks × 4 systems                                | EV    | Seeded, reproducible, JSON output               |
+| Statistical analysis: bootstrap, mean ± std                                    | EV    | Results table produced                          |
+| Additional ECSAS metrics: promotion rate, discussion depth, citation diversity | EV    | Reported alongside accuracy/cost/latency        |
 
 ## Phase 6 — Paper + Polish (Weeks 11–12)
 
@@ -1945,30 +1949,30 @@ agent_trust = Table(
 
 # 14. Non-Functional Requirements
 
-| ID           | Requirement                                                                           |
-| ------------ | ------------------------------------------------------------------------------------- |
-| NFR-PERF-01  | Swarm run SHOULD complete under 5 minutes wall-clock with 3–6 agents and 5 rounds     |
-| NFR-PERF-02  | Median token cost SHOULD stay within 3× a single GPT-4o call on the same task         |
-| NFR-PERF-03  | SSE events MUST be emitted within 200ms of the action generating them                 |
-| NFR-PERF-04  | `read_blackboard` MUST return in <100ms (indexed SQL + pre-computed embeddings)       |
-| NFR-PERF-05  | Soft delete and promotion checks are batched at round end — NOT per tool call         |
-| NFR-REL-01   | Single agent timeout/error = abstention for that round. Swarm continues.              |
-| NFR-REL-02   | Blackboard persists to file-backed SQLite after every write                           |
-| NFR-REL-03   | If SSE stream disconnects, frontend shows steps received so far; Next/Back still work |
-| NFR-MAINT-01 | All ECSAS logic in `api/swarm/`. V0 `api/simulation/` is read-only                    |
-| NFR-MAINT-02 | All inter-component interfaces via Pydantic schemas in `api/swarm/schemas.py`         |
-| NFR-MAINT-03 | `api/swarm/README.md` documents component interfaces and execution model              |
-| NFR-OBS-01   | Every LLM call logged: prompt hash, model, provider, latency, tokens, run_id, round   |
-| NFR-OBS-02   | Every tool call logged: tool_name, agent_id, arguments hash, result hash, run_id      |
-| NFR-OBS-03   | `GET /api/simulation/{run_id}/audit` returns EVERYTHING scoped to the run             |
-| NFR-SEC-01   | `DB_PATH` resolved within project directory. Path traversal prevented.                |
-| NFR-SEC-02   | API keys from env vars only. Never committed.                                         |
-| NFR-SEC-03   | Token budget enforced. Graceful halt on exhaustion.                                   |
-| NFR-STACK-01 | Backend: Python ≥ 3.11 (existing: 3.13)                                               |
-| NFR-STACK-02 | LLM: OpenAI primary, Anthropic primary, Groq experimental (do NOT remove)             |
-| NFR-STACK-03 | No LangChain, LangGraph, or any orchestration framework. SDKs only.                   |
-| NFR-STACK-04 | Frontend: Next.js App Router + React + shadcn/ui + Tailwind                           |
-| NFR-STACK-05 | Persistence: file-backed aiosqlite only. No PostgreSQL.                               |
+| ID           | Requirement                                                                                       |
+| ------------ | ------------------------------------------------------------------------------------------------- |
+| NFR-PERF-01  | Swarm run SHOULD complete under 5 minutes wall-clock with 3–6 agents and 5 rounds                 |
+| NFR-PERF-02  | Median token cost SHOULD stay within 3× a single GPT-4o call on the same task                     |
+| NFR-PERF-03  | SSE events MUST be emitted within 200ms of the action generating them                             |
+| NFR-PERF-04  | `read_blackboard` MUST return in <100ms (indexed SQL + pre-computed embeddings)                   |
+| NFR-PERF-05  | Soft delete and promotion checks are batched at round end — NOT per tool call                     |
+| NFR-REL-01   | Single agent timeout/error = abstention for that round. Swarm continues.                          |
+| NFR-REL-02   | Blackboard persists to PostgreSQL (committed) after every write                                   |
+| NFR-REL-03   | If SSE stream disconnects, frontend shows steps received so far; Next/Back still work             |
+| NFR-MAINT-01 | All ECSAS logic in `server/market_hive/`. V0 `server/topology/` is read-only                      |
+| NFR-MAINT-02 | All inter-component interfaces via Pydantic schemas in `server/market_hive/schemas.py`            |
+| NFR-MAINT-03 | `server/market_hive/README.md` documents component interfaces and execution model                 |
+| NFR-OBS-01   | Every LLM call logged: prompt hash, model, provider, latency, tokens, run_id, round               |
+| NFR-OBS-02   | Every tool call logged: tool_name, agent_id, arguments hash, result hash, run_id                  |
+| NFR-OBS-03   | `GET /api/simulation/{run_id}/audit` returns EVERYTHING scoped to the run                         |
+| NFR-SEC-01   | `DATABASE_URL` from env only; credentials never committed.                                        |
+| NFR-SEC-02   | API keys from env vars only. Never committed.                                                     |
+| NFR-SEC-03   | Token budget enforced. Graceful halt on exhaustion.                                               |
+| NFR-STACK-01 | Backend: Python ≥ 3.11 (existing: 3.13)                                                           |
+| NFR-STACK-02 | LLM: OpenAI primary, Anthropic primary, Groq experimental (do NOT remove)                         |
+| NFR-STACK-03 | No LangChain, LangGraph, or any orchestration framework. SDKs only.                               |
+| NFR-STACK-04 | Frontend: Next.js App Router + React + shadcn/ui + Tailwind                                       |
+| NFR-STACK-05 | Persistence: PostgreSQL via SQLAlchemy Core (asyncpg) in prod/Docker; in-memory SQLite for tests. |
 
 ---
 

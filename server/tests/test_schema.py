@@ -56,6 +56,10 @@ _ECSAS_TABLES = {
     "citations",
     "votes",
     "confirmed_entries",
+    "bids",
+    "reputation",
+    "agent_trust",
+    "amendments",
 }
 
 
@@ -81,6 +85,7 @@ async def test_agents_columns(db: AsyncConnection) -> None:
         "provider",
         "model",
         "created_at",
+        "capability_embedding",
     ):
         assert expected in cols, f"agents table missing column: {expected}"
 
@@ -105,6 +110,51 @@ async def test_confirmed_entries_columns(db: AsyncConnection) -> None:
     cols = await _get_columns(db, "confirmed_entries")
     for expected in ("id", "run_id", "thread_id", "content", "entry_type", "round_confirmed"):
         assert expected in cols, f"confirmed_entries table missing column: {expected}"
+
+
+async def test_bids_columns(db: AsyncConnection) -> None:
+    cols = await _get_columns(db, "bids")
+    for expected in (
+        "id",
+        "run_id",
+        "contract_id",
+        "thread_id",
+        "agent_id",
+        "justification",
+        "preliminary_score",
+        "is_taker",
+        "is_observer",
+        "abstained",
+    ):
+        assert expected in cols, f"bids table missing column: {expected}"
+
+
+async def test_reputation_columns(db: AsyncConnection) -> None:
+    cols = await _get_columns(db, "reputation")
+    for expected in ("run_id", "agent_id", "domain", "score", "updated_at"):
+        assert expected in cols, f"reputation table missing column: {expected}"
+
+
+async def test_agent_trust_columns(db: AsyncConnection) -> None:
+    cols = await _get_columns(db, "agent_trust")
+    for expected in ("agent_id", "domain", "trust_score", "runs_participated", "updated_at"):
+        assert expected in cols, f"agent_trust table missing column: {expected}"
+
+
+async def test_amendments_columns(db: AsyncConnection) -> None:
+    cols = await _get_columns(db, "amendments")
+    for expected in (
+        "id",
+        "run_id",
+        "proposing_agent_id",
+        "thread_id",
+        "requested_domain",
+        "reason",
+        "status",
+        "approve_votes",
+        "total_voters",
+    ):
+        assert expected in cols, f"amendments table missing column: {expected}"
 
 
 async def test_metadata_create_all_is_idempotent(db: AsyncConnection) -> None:

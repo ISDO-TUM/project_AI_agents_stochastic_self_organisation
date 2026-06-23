@@ -6,9 +6,8 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from server.swarm.blackboard import Blackboard
-
-from ..base import Tool
+from server.market_hive.blackboard import Blackboard
+from server.tools.base import Tool
 
 # ── Input models ─────────────────────────────────────────────────────────────
 
@@ -260,3 +259,25 @@ class AbstainTool(Tool):
         self, validated_input: BaseModel, context: dict[str, Any] | None = None
     ) -> str:
         return '{"ok": true}'
+
+
+# ── self-registration ─────────────────────────────────────────────────────────
+# The engine registers its own tools with the shared registry. Importing this
+# module (via ``server.market_hive`` at app startup) is enough to make the
+# blackboard/auction tools available; the shared registry never imports the engine.
+def _register() -> None:
+    from server.tools.registry import register
+
+    for tool in (
+        ReadBlackboardTool(),
+        PostToBlackboardTool(),
+        CiteTool(),
+        VoteTool(),
+        GetConfirmedTool(),
+        SubmitBidTool(),
+        AbstainTool(),
+    ):
+        register(tool)
+
+
+_register()

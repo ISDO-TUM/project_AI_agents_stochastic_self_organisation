@@ -15,6 +15,7 @@ from sqlalchemy import (
     DateTime,
     Float,
     ForeignKey,
+    Index,
     Integer,
     MetaData,
     Table,
@@ -38,6 +39,10 @@ agents = Table(
     Column("tools", Text, nullable=False, server_default=text("'[]'")),
     Column("connections", Text, nullable=False, server_default=text("'[]'")),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    # JSON-encoded float vector describing the agent's expertise. Used by the
+    # ECSAS auction engine to score agents against a contract embedding. TEXT so
+    # the application owns (de)serialisation, NULL until an embedding is computed.
+    Column("capability_embedding", Text),
     CheckConstraint(
         "provider IN ('openai', 'anthropic', 'groq', 'gemini')",
         name="ck_agents_provider",
@@ -271,3 +276,92 @@ confirmed_entries = Table(
         name="ck_confirmed_entries_type",
     ),
 )
+
+# ── Bids (auction self-selection) ─────────────────────────────────────────────
+# One row per agent's decision in the auction: a submitted bid, an abstention, or
+# the outcome of taker selection. ``contract_id``/``thread_id`` are nullable so a
+# row can scope to the whole contract (single-step) or a specific thread.
+bids = Table(
+    "bids",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("run_id", Text, ForeignKey("swarm_runs.id"), nullable=False),
+    Column("contract_id", Text, ForeignKey("contracts.id")),
+    Column("thread_id", Text, ForeignKey("threads.id")),
+    Column("agent_id", Text, ForeignKey("agents.id"), nullable=False),
+    Column("justification", Text, nullable=False, server_default=text("''")),
+    Column("preliminary_score", Float, nullable=False, server_default=text("0.0")),
+    Column("is_taker", Boolean, nullable=False, server_default=text("false")),
+    Column("is_observer", Boolean, nullable=False, server_default=text("false")),
+    Column("abstained", Boolean, nullable=False, server_default=text("false")),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+)
+
+# ── Per-run reputation ────────────────────────────────────────────────────────
+# An agent's domain credibility *within a single run*. Starts at 0.5 and is reset
+# between runs (hence the run_id in the composite key); feeds conceding
+# temperature in the convergence engine.
+reputation = Table(
+    "reputation",
+    metadata,
+    Column("run_id", Text, ForeignKey("swarm_runs.id"), primary_key=True, nullable=False),
+    Column("agent_id", Text, ForeignKey("agents.id"), primary_key=True, nullable=False),
+    Column("domain", Text, primary_key=True, nullable=False),
+    Column("score", Float, nullable=False, server_default=text("0.5")),
+    Column("updated_at", DateTime(timezone=True), server_default=func.now()),
+    CheckConstraint("score >= 0.0 AND score <= 1.0", name="ck_reputation_score"),
+)
+
+# ── Cross-run trust (persistent) ──────────────────────────────────────────────
+# Per-agent, per-domain credibility that *persists across runs*. Updated at run
+# end (winner gain / observer loss) and fed back into bid scoring. Starts at 0.5.
+agent_trust = Table(
+    "agent_trust",
+    metadata,
+    Column("agent_id", Text, ForeignKey("agents.id"), primary_key=True, nullable=False),
+    Column("domain", Text, primary_key=True, nullable=False),
+    Column("trust_score", Float, nullable=False, server_default=text("0.5")),
+    Column("runs_participated", Integer, nullable=False, server_default=text("0")),
+    Column("updated_at", DateTime(timezone=True), server_default=func.now()),
+    CheckConstraint("trust_score >= 0.0 AND trust_score <= 1.0", name="ck_agent_trust_score"),
+)
+
+# ── Amendment proposals ───────────────────────────────────────────────────────
+# A taker's ``request_expertise`` proposal to widen the contract scope. Resolved
+# by a majority vote of existing takers + the Market Maker.
+amendments = Table(
+    "amendments",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("run_id", Text, ForeignKey("swarm_runs.id"), nullable=False),
+    Column("proposing_agent_id", Text, ForeignKey("agents.id"), nullable=False),
+    Column("thread_id", Text, ForeignKey("threads.id")),
+    Column("requested_domain", Text, nullable=False),
+    Column("reason", Text, nullable=False),
+    Column("status", Text, nullable=False, server_default=text("'pending'")),
+    Column("approve_votes", Integer, nullable=False, server_default=text("0")),
+    Column("total_voters", Integer, nullable=False, server_default=text("0")),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+    CheckConstraint(
+        "status IN ('pending','approved','rejected')",
+        name="ck_amendments_status",
+    ),
+)
+
+# ── Indexes (PRD §7.1) ────────────────────────────────────────────────────────
+# Attention queries, citation counting and confirmed-layer reads run on every
+# round, so the hot lookup paths are indexed explicitly.
+Index(
+    "idx_draft_run_thread_round",
+    draft_entries.c.run_id,
+    draft_entries.c.thread_id,
+    draft_entries.c.round,
+)
+Index("idx_draft_visible", draft_entries.c.run_id, draft_entries.c.is_visible)
+Index("idx_draft_reply_to", draft_entries.c.reply_to)
+Index("idx_citations_cited", citations.c.cited_entry_id, citations.c.run_id)
+Index("idx_citations_agent", citations.c.citing_agent_id, citations.c.run_id)
+Index("idx_confirmed_run_thread", confirmed_entries.c.run_id, confirmed_entries.c.thread_id)
+Index("idx_confirmed_citations", confirmed_entries.c.citation_count.desc())
+Index("idx_bids_run", bids.c.run_id, bids.c.is_taker)
+Index("idx_trust_agent_domain", agent_trust.c.agent_id, agent_trust.c.domain)
