@@ -27,6 +27,32 @@ This architecture covers:
 
 ---
 
+## 1A) Execution Engines & Code Boundaries
+
+The system runs as a **modular monolith**: one FastAPI backend (`server/`) and one
+frontend (`client/`). It exposes **two reasoning engines**, selected at runtime by the
+`mode` field on `POST /api/simulation/run` — the user picks the mode in the UI. They are
+in-process modules, **not** separately deployable services.
+
+| Engine          | Mode value | Code                  | Behavior                                                                                                               |
+| --------------- | ---------- | --------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| **Topology**    | `topology` | `server/topology/`    | The V0 baseline documented in §7–§9 (topology + consensus). Read-only.                                                 |
+| **Market-Hive** | `swarm`    | `server/market_hive/` | ECSAS: free-market bidding + append-only blackboard + citation-based consensus. See `docs/blackboard/PRD-ECSAS-v3.md`. |
+
+Everything else is **shared platform**, used by both engines and owned by neither:
+
+- `server/db/` — persistence: **PostgreSQL via SQLAlchemy Core** (asyncpg) in
+  production/Docker, configured by `DATABASE_URL`; the test suite points the same Core
+  schema at an in-memory SQLite database. Schema lives in `server/db/tables.py`.
+- `server/llm/` — multi-provider model layer · `server/tools/` — tool abstraction &
+  registry · `server/guardrails/` — input/output validation · `server/schemas/` — shared
+  request/response models · `server/routes/` — the HTTP/SSE layer that dispatches on `mode`.
+
+Design rule: domain logic lives in the two engine packages; shared infrastructure stays
+flat under `server/`. There is no `common/` wrapper — `server.` is already the namespace.
+
+---
+
 ## 2) Conceptual Architecture (L1)
 
 This view answers: "What are the core system boundaries and who interacts with whom?"

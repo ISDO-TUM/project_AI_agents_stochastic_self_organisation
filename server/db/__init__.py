@@ -177,6 +177,8 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             " created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL",
             "ALTER TABLE agents ADD COLUMN IF NOT EXISTS"
             " created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL",
+            # ECSAS: agent expertise vector consumed by the auction engine
+            "ALTER TABLE agents ADD COLUMN IF NOT EXISTS capability_embedding TEXT DEFAULT NULL",
             # trials: simulation tracking columns
             "ALTER TABLE trials ADD COLUMN IF NOT EXISTS mode TEXT",
             "ALTER TABLE trials ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'running'",
@@ -219,6 +221,7 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
         for table, col, definition in (
             ("knowledge_files", "created_at", "DATETIME DEFAULT (datetime('now'))"),
             ("agents", "created_at", "DATETIME DEFAULT (datetime('now'))"),
+            ("agents", "capability_embedding", "TEXT DEFAULT NULL"),
             ("trials", "mode", "TEXT"),
             ("trials", "status", "TEXT NOT NULL DEFAULT 'running'"),
             ("trials", "created_at", "TEXT NOT NULL DEFAULT ''"),

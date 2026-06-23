@@ -9,10 +9,10 @@ import pytest
 from httpx import AsyncClient
 from sqlalchemy import insert
 
-import server.simulation as sim
+import server.topology as sim
 from server.db import create_connection, create_round, create_trial, get_engine
 from server.db.tables import agents
-from server.simulation import (
+from server.topology import (
     Reputation,
     TopologyController,
     _aggregate_trust,
@@ -107,6 +107,97 @@ async def test_get_blackboard_thread_filter(client: AsyncClient) -> None:
     data = resp.json()
     assert all(e["thread_id"] == thread_id for e in data["confirmed"])
     assert data["draft"] == []
+
+
+async def test_get_audit_unknown_run_returns_404(client: AsyncClient) -> None:
+    resp = await client.get("/api/simulation/nonexistent-run-id/audit")
+    assert resp.status_code == 404
+
+
+async def test_get_audit_returns_full_trail(client: AsyncClient) -> None:
+    agent_id = await _create_agent(client)
+    seed_resp = await client.post(
+        "/api/simulation/seed",
+        json={"prompt": "Audit me", "agent_ids": [agent_id]},
+    )
+    run_id = seed_resp.json()["run_id"]
+
+    resp = await client.get(f"/api/simulation/{run_id}/audit")
+    assert resp.status_code == 200
+    data = resp.json()
+    # Every audit section is present, even when empty.
+    for key in (
+        "run",
+        "contract",
+        "threads",
+        "bids",
+        "draft_entries",
+        "citations",
+        "votes",
+        "confirmed_entries",
+        "amendments",
+        "reputation",
+    ):
+        assert key in data
+    assert data["run"]["id"] == run_id
+    assert data["contract"]["original_prompt"] == "Audit me"
+    assert len(data["threads"]) == 1
+    assert len(data["confirmed_entries"]) >= 1  # anchor
+    assert len(data["draft_entries"]) == 1  # seeded proposal
+    assert data["final_output"] is None
+
+
+async def test_get_audit_includes_soft_deleted_entries(client: AsyncClient) -> None:
+    """Soft-deleted draft entries must still surface in the audit trail (P-11)."""
+    from sqlalchemy import text
+
+    agent_id = await _create_agent(client)
+    seed_resp = await client.post(
+        "/api/simulation/seed",
+        json={"prompt": "Keep deleted", "agent_ids": [agent_id]},
+    )
+    run_id = seed_resp.json()["run_id"]
+
+    async with get_engine().connect() as conn:
+        await conn.execute(
+            text(
+                "UPDATE draft_entries SET is_visible = false, "
+                "deleted_at = CURRENT_TIMESTAMP WHERE run_id = :id"
+            ),
+            {"id": run_id},
+        )
+        await conn.commit()
+
+    # The visible blackboard view hides it...
+    bb = (await client.get(f"/api/simulation/{run_id}/blackboard")).json()
+    assert bb["draft"] == []
+    # ...but the audit trail preserves it.
+    audit = (await client.get(f"/api/simulation/{run_id}/audit")).json()
+    assert len(audit["draft_entries"]) == 1
+    assert audit["draft_entries"][0]["is_visible"] is False
+
+
+async def test_get_status_unknown_run_returns_404(client: AsyncClient) -> None:
+    resp = await client.get("/api/simulation/nonexistent-run-id/status")
+    assert resp.status_code == 404
+
+
+async def test_get_status_reports_round_and_state(client: AsyncClient) -> None:
+    agent_id = await _create_agent(client)
+    seed_resp = await client.post(
+        "/api/simulation/seed",
+        json={"prompt": "Status check", "agent_ids": [agent_id]},
+    )
+    run_id = seed_resp.json()["run_id"]
+
+    resp = await client.get(f"/api/simulation/{run_id}/status")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert data["run_id"] == run_id
+    assert data["status"] == "running"
+    assert data["current_round"] == 1  # seeded proposal is round 1
+    assert data["termination_reason"] is None
+    assert data["token_usage"] == {}
 
 
 async def test_seed_disabled_without_debug_flag(
@@ -704,7 +795,7 @@ async def test_call_agent_omits_registry_when_index_absent(
 def test_run_topology_exposes_topology_and_fanout_params() -> None:
     import inspect
 
-    from server.simulation import run_topology
+    from server.topology import run_topology
 
     params = inspect.signature(run_topology).parameters
     assert params["topology"].default == "static"

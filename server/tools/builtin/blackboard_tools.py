@@ -6,7 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
-from server.swarm.blackboard import Blackboard
+from server.market_hive.blackboard import Blackboard
 
 from ..base import Tool
 

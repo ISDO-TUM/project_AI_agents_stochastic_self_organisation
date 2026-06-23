@@ -20,6 +20,7 @@ from server.db import (
 )
 from server.db.tables import (
     agent_files,
+    agent_trust,
     agents,
     knowledge_files,
 )
@@ -28,6 +29,7 @@ from server.guardrails.input_sanitizer import PromptInjectionError
 from server.guardrails.output_validator import InjectionEchoError, LLMRefusalError
 from server.llm import call_agent
 from server.llm.credentials import MissingCredentialsError, use_credentials
+from server.market_hive.schemas import AgentTrustEntry
 from server.schemas import (
     AgentCreate,
     AgentResponse,
@@ -134,6 +136,29 @@ async def get_agent(agent_id: str, db: DBDep) -> AgentResponse:
     if row is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
     return AgentResponse(**deserialise_agent_row(row))
+
+
+@router.get(
+    "/{agent_id}/trust",
+    response_model=list[AgentTrustEntry],
+    summary="Get cross-run trust scores for an agent",
+)
+async def get_agent_trust(agent_id: str, db: DBDep) -> list[AgentTrustEntry]:
+    """Return the agent's persistent per-domain trust scores.
+
+    Empty list for an agent that has never participated in a swarm run.
+    """
+    result = await db.execute(
+        select(
+            agent_trust.c.domain,
+            agent_trust.c.trust_score,
+            agent_trust.c.runs_participated,
+            agent_trust.c.updated_at,
+        )
+        .where(agent_trust.c.agent_id == agent_id)
+        .order_by(agent_trust.c.trust_score.desc())
+    )
+    return [AgentTrustEntry(**dict(row)) for row in result.mappings().all()]
 
 
 @router.put(
