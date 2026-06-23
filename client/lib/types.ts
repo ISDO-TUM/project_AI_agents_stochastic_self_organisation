@@ -138,6 +138,190 @@ export interface ConversationTurn {
   answer: string | null;
 }
 
+export interface TrialSummary {
+  trialId: string;
+  userPrompt: string;
+  description: string;
+  mode: ConsensusMode | string | null;
+  status: string;
+  createdAt: string;
+  roundCount: number;
+  agentCount: number;
+  totalMessages: number;
+  totalEdges: number;
+  messageTypeCounts: Record<string, number>;
+}
+
+export interface AgentStat {
+  agentId: string;
+  agentName: string;
+  messagesSent: number;
+  messagesReceived: number;
+  outDegree: number;
+  inDegree: number;
+  toolInvocations: number;
+}
+
+export interface EdgeStat {
+  fromAgentId: string;
+  fromAgentName: string;
+  toAgentId: string;
+  toAgentName: string;
+  messageCount: number;
+}
+
+export interface RoundStat {
+  roundId: number;
+  roundIndex: number;
+  phase: string;
+  messageCount: number;
+  activeEdgeCount: number;
+}
+
+export interface LangfuseSummary {
+  trialId: string;
+  traceCount: number;
+  generationCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  averageLatencyMs: number;
+  slowestAgentName: string | null;
+  slowestModel: string | null;
+}
+
+export interface LangfuseAgentStat {
+  agentId: string;
+  agentName: string;
+  generationCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  averageLatencyMs: number;
+}
+
+export interface LangfuseModelStat {
+  model: string;
+  generationCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  averageLatencyMs: number;
+}
+
+export interface LangfuseRoundStat {
+  roundIndex: number;
+  phase: string;
+  generationCount: number;
+  totalTokens: number;
+  totalCost: number;
+  averageLatencyMs: number;
+}
+
+export interface LangfuseStats {
+  summary: LangfuseSummary;
+  agents: LangfuseAgentStat[];
+  models: LangfuseModelStat[];
+  rounds: LangfuseRoundStat[];
+  available: boolean;
+  message: string | null;
+}
+
+// ─── Experiments ─────────────────────────────────────────────────────────────
+
+export interface ExperimentListItem {
+  id: string;
+  description: string;
+  trialCount: number;
+  createdAt: string;
+  mode: string | null;
+  userPrompt: string | null;
+}
+
+export interface ExperimentSummary {
+  experimentId: string;
+  description: string;
+  mode: string | null;
+  userPrompt: string | null;
+  trialCount: number;
+  trialIds: string[];
+  avgRoundCount: number;
+  avgAgentCount: number;
+  avgTotalMessages: number;
+  avgTotalEdges: number;
+  messageTypeCounts: Record<string, number>;
+}
+
+export interface ExperimentAgentStat {
+  agentId: string;
+  agentName: string;
+  avgMessagesSent: number;
+  avgMessagesReceived: number;
+  avgOutDegree: number;
+  avgInDegree: number;
+  avgToolInvocations: number;
+}
+
+export interface ExperimentEdgeStat {
+  fromAgentId: string;
+  fromAgentName: string;
+  toAgentId: string;
+  toAgentName: string;
+  avgMessageCount: number;
+}
+
+export interface ExperimentRoundStat {
+  roundIndex: number;
+  phase: string;
+  avgMessageCount: number;
+  avgActiveEdgeCount: number;
+}
+
+export interface ExperimentLangfuseSummary {
+  experimentId: string;
+  trialCount: number;
+  traceCount: number;
+  generationCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  averageLatencyMs: number;
+  slowestAgentName: string | null;
+  slowestModel: string | null;
+}
+
+export interface ExperimentLangfuseStats {
+  summary: ExperimentLangfuseSummary;
+  agents: LangfuseAgentStat[];
+  models: LangfuseModelStat[];
+  rounds: LangfuseRoundStat[];
+  available: boolean;
+  message: string | null;
+}
+
+// ─── Consistency ─────────────────────────────────────────────────────────────
+
+export interface PairwiseSimilarity {
+  trialIdA: string;
+  trialIdB: string;
+  cosineSimilarity: number;
+}
+
+export interface ConsistencyReport {
+  experimentId: string;
+  trialCount: number;
+  trialsWithAnswers: number;
+  avgCosineSimilarity: number | null;
+  pairwiseScores: PairwiseSimilarity[];
+  aiSummary: string | null;
+  available: boolean;
+  message: string | null;
+}
+
 export type CanvasAction =
   | { type: "ADD_AGENT"; agent: Agent }
   | { type: "UPDATE_AGENT"; agent: Agent }
@@ -151,3 +335,70 @@ export type CanvasAction =
   | { type: "CLEAR" }
   | { type: "LOAD"; state: CanvasState }
   | { type: "AUTO_LAYOUT" };
+
+// ── ECSAS swarm types ─────────────────────────────────────────────────────
+
+export type SwarmSimStepType =
+  | SimStepType
+  | "bid"
+  | "abstain"
+  | "bb-post"
+  | "bb-cite"
+  | "bb-vote"
+  | "bb-promote"
+  | "bb-delete"
+  | "bb-mention"
+  | "amendment"
+  | "amendment-approved"
+  | "amendment-rejected"
+  | "convergence";
+
+export interface ThreadInfo {
+  id: string;
+  contract_id: string;
+  run_id: string;
+  title: string;
+  description: string;
+  required_expertise: string[];
+  complexity: "low" | "medium" | "high";
+  created_at: string;
+}
+
+export interface ConfirmedEntry {
+  id: string;
+  run_id: string;
+  thread_id: string;
+  source_draft_id: string | null;
+  content: string;
+  entry_type: "anchor" | "finding" | "system";
+  citation_count: number;
+  round_confirmed: number;
+  created_at: string;
+}
+
+export interface DraftEntry {
+  id: string;
+  run_id: string;
+  thread_id: string;
+  round: number;
+  author_id: string;
+  author_name: string;
+  entry_type: "proposal" | "reply" | "vote" | "system";
+  content: string;
+  reply_to: string | null;
+  mention_agents: string[];
+  is_visible: boolean;
+  deleted_at: string | null;
+  last_cited_round: number;
+  citation_count: number;
+  created_at: string;
+  children: DraftEntry[];
+}
+
+export interface BlackboardState {
+  threads: ThreadInfo[];
+  confirmed: ConfirmedEntry[];
+  draft: DraftEntry[];
+  loading: boolean;
+  error: string | null;
+}

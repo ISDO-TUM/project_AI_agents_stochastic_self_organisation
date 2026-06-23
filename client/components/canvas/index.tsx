@@ -7,6 +7,7 @@ import {
   Edge,
   AnimatedParticle,
   Tweaks,
+  BlackboardState,
   SimStep,
 } from "@/lib/types";
 import { clamp } from "@/lib/utils";
@@ -16,6 +17,8 @@ import { AgentNode } from "./agent-node";
 import { SourceNode } from "./source-node";
 import { EdgeLayer } from "./edge-layer";
 import { Minimap } from "./minimap";
+import { BlackboardCanvas } from "./blackboard-canvas";
+import { SwarmNodes } from "./swarm-nodes";
 import { PhonebookPanel } from "../phonebook-panel";
 import { BiddingBoardPanel } from "../bidding-board-panel";
 
@@ -38,9 +41,14 @@ interface CanvasProps {
   animatedParticles: AnimatedParticle[];
   tweaks: Tweaks;
   onCanvasClick: () => void;
-  /** Fired by parent when the available canvas width changes; dx is the
-   *  translation to apply to the current pan so nodes stay put visually. */
   panAdjust?: { dx: number; seq: number };
+  /** Swarm mode: blackboard state to render in-world */
+  blackboardState?: BlackboardState;
+  appMode?: "topology" | "swarm" | null;
+  /** Swarm: current run id — controls whether world nodes are visible */
+  swarmRunId?: string | null;
+  onSeed?: () => void;
+  seeding?: boolean;
   /** When provided, renders the PhonebookPanel inside the world transform so
    *  it pans/zooms with the canvas like any other element. */
   phonebook?: {
@@ -91,6 +99,11 @@ export function Canvas({
   tweaks,
   onCanvasClick,
   panAdjust,
+  blackboardState,
+  appMode,
+  swarmRunId,
+  onSeed,
+  seeding,
   phonebook = null,
   biddingBoard = null,
 }: CanvasProps) {
@@ -103,6 +116,28 @@ export function Canvas({
   const connectingFrom = useRef<ConnectingState | null>(null);
   const [connectLine, setConnectLine] = useState<ConnectLine | null>(null);
   const spaceDown = useRef(false);
+
+  // ── Swarm widget positions (viewport-relative px) ──
+  const MM_SIZE = 88;
+  const BB_DEFAULT_W = 315;
+  const [bbPos, setBbPos] = useState<{ x: number; y: number } | null>(null);
+  const [mmPos, setMmPos] = useState<{ x: number; y: number } | null>(null);
+  const [bbWidth, setBbWidth] = useState(BB_DEFAULT_W);
+  const BB_DEFAULT_H = 300;
+  const [bbHeight, setBbHeight] = useState(BB_DEFAULT_H);
+
+  // Initialise positions from canvas dimensions once mounted
+  useEffect(() => {
+    if (appMode !== "swarm") return;
+    const el = canvasRef.current;
+    if (!el) return;
+    const { width, height } = el.getBoundingClientRect();
+    const cx = width / 2;
+    const cy = height / 2;
+    const gap = 32;
+    setBbPos({ x: cx - BB_DEFAULT_W / 2, y: cy - 120 });
+    setMmPos({ x: cx - BB_DEFAULT_W / 2 - MM_SIZE - gap, y: cy - MM_SIZE / 2 });
+  }, [appMode]);
 
   // Apply external pan delta (e.g. from sidebar resize) to keep nodes stable.
   // panAdjust is a new object reference on every resize tick (seq increments),
@@ -220,6 +255,7 @@ export function Canvas({
 
   const handleConnectStart = useCallback(
     (fromId: string, e: React.MouseEvent) => {
+      if (appMode === "swarm") return; // connections locked to blackboard in swarm mode
       if (!canvasRef.current) return;
       const node = [...agents, ...sources].find((n) => n.id === fromId);
       if (!node) return;
@@ -236,7 +272,7 @@ export function Canvas({
         y2: (e.clientY - rect.top - pan.y) / zoom,
       });
     },
-    [agents, sources, pan, zoom],
+    [appMode, agents, sources, pan, zoom],
   );
 
   const accent = tweaks.accentColor;
@@ -246,7 +282,7 @@ export function Canvas({
   const offY = pan.y % gridSize;
 
   const canvasBg = dark
-    ? `radial-gradient(ellipse 80% 60% at 50% 0%, rgba(139,26,47,0.07) 0%, transparent 70%), #060608`
+    ? `radial-gradient(ellipse 80% 60% at 50% 0%, rgba(139,26,47,0.07) 0%, transparent 70%), #111018`
     : `radial-gradient(ellipse 80% 60% at 50% 0%, rgba(139,26,47,0.04) 0%, transparent 70%), #f0eef8`;
 
   return (
@@ -392,6 +428,8 @@ export function Canvas({
             selected={selectedNode === agent.id}
             active={activeNodeId === agent.id}
             simMode={simMode}
+            swarmMode={appMode === "swarm"}
+            zoom={zoom}
             onSelect={onSelectNode}
             onDragEnd={onMoveNode}
             onConnectStart={handleConnectStart}
@@ -405,6 +443,8 @@ export function Canvas({
             selected={selectedNode === source.id}
             active={activeNodeId === source.id}
             simMode={simMode}
+            swarmMode={appMode === "swarm"}
+            zoom={zoom}
             onSelect={onSelectNode}
             onDragEnd={onMoveNode}
             onConnectStart={handleConnectStart}
@@ -431,8 +471,92 @@ export function Canvas({
         )}
       </div>
 
-      {/* Empty state — hidden when the phonebook panel takes its place */}
-      {!hasNodes && !phonebook && (
+      {/* ── Swarm-mode viewport overlays (not in world transform) ── */}
+      {appMode === "swarm" && (
+        <>
+          {/* Dashed connector between MM and Blackboard */}
+          {bbPos && mmPos && (
+            <svg
+              style={{
+                position: "absolute",
+                inset: 0,
+                width: "100%",
+                height: "100%",
+                pointerEvents: "none",
+                zIndex: 18,
+                overflow: "visible",
+              }}
+            >
+              {/* MM → BB connector */}
+              <line
+                x1={mmPos.x + MM_SIZE * zoom}
+                y1={mmPos.y + (MM_SIZE / 2) * zoom}
+                x2={bbPos.x}
+                y2={bbPos.y + 19 * zoom}
+                stroke="rgba(139,26,47,0.4)"
+                strokeWidth="1.5"
+                strokeDasharray="6,4"
+              />
+              <circle
+                cx={mmPos.x + MM_SIZE * zoom}
+                cy={mmPos.y + (MM_SIZE / 2) * zoom}
+                r="3"
+                fill="rgba(139,26,47,0.5)"
+              />
+              <circle
+                cx={bbPos.x}
+                cy={bbPos.y + 19 * zoom}
+                r="3"
+                fill="rgba(139,26,47,0.5)"
+              />
+              {/* Agent → BB connectors */}
+              {agents.map((agent) => {
+                const ax = agent.position.x * zoom + pan.x;
+                const ay = agent.position.y * zoom + pan.y;
+                const bx = bbPos.x + (bbWidth * zoom) / 2;
+                const by = bbPos.y;
+                return (
+                  <line
+                    key={agent.id}
+                    x1={ax}
+                    y1={ay}
+                    x2={bx}
+                    y2={by}
+                    stroke="rgba(139,26,47,0.25)"
+                    strokeWidth="1"
+                    strokeDasharray="4,5"
+                  />
+                );
+              })}
+            </svg>
+          )}
+          <SwarmNodes pos={mmPos} onPosChange={setMmPos} zoom={zoom} />
+          <BlackboardCanvas
+            state={
+              blackboardState ?? {
+                confirmed: [],
+                draft: [],
+                threads: [],
+                loading: false,
+                error: null,
+              }
+            }
+            runId={swarmRunId ?? null}
+            onSeed={onSeed}
+            seeding={seeding}
+            pos={bbPos}
+            onPosChange={setBbPos}
+            width={bbWidth}
+            onWidthChange={setBbWidth}
+            height={bbHeight}
+            onHeightChange={setBbHeight}
+            zoom={zoom}
+          />
+        </>
+      )}
+
+      {/* Empty state — hidden during swarm mode or when a panel occupies the space */}
+      {!hasNodes && appMode !== "swarm" && !phonebook && (
         <div
           style={{
             position: "absolute",

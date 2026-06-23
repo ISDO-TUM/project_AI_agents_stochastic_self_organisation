@@ -1,12 +1,12 @@
 {
   "name": "self-organising-agentic-system",
   "private": true,
-  "packageManager": "pnpm@11.1.3",
+  "packageManager": "pnpm@11.1.3+sha512.c85357fe17ca12dd23dd7071822666dfd7e3cb76fe214e3370b5ea2fb34f2a231185509b63e717f3cd0acb38dd3f8d82bcd5e8172400ae678b70ea4fbed0896d",
   "scripts": {
     "dev": "pnpm run dev:db && concurrently -c \"green,blue\" -n \"UI,API\" \"pnpm run dev:ui\" \"pnpm run dev:api\"",
     "dev:api": "sh -c 'PATH=$HOME/.local/bin:$PATH uv run --project server uvicorn server.index:app --reload --reload-dir server --port 8000'",
     "dev:ui": "sh -c 'until curl -sf http://localhost:8000/api/health >/dev/null 2>&1; do sleep 1; done && pnpm --filter app run dev'",
-    "dev:db": "docker compose up -d postgres && sh -c 'until docker compose exec -T postgres pg_isready -U app -d app >/dev/null 2>&1; do sleep 1; done'",
+    "dev:db": "docker compose up -d postgres langfuse-db langfuse-web && sh -c 'until docker compose exec -T postgres pg_isready -U app -d app >/dev/null 2>&1; do sleep 1; done'",
     "clean": "rm -rf node_modules client/node_modules server/.venv server/__pycache__"
   },
   "devDependencies": {

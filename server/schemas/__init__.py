@@ -254,6 +254,8 @@ class ConnectionResponse(BaseModel):
     round_id: int
     from_agent_id: str | None
     to_agent_id: str | None
+    from_agent_name: str | None = None
+    to_agent_name: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -303,6 +305,237 @@ class MessageTraceResponse(BaseModel):
     message_type: str
     message: str | None
     created_at: str
+
+
+# ---------------------------------------------------------------------------
+# Statistics (collaboration analytics)
+# ---------------------------------------------------------------------------
+
+
+class TrialStatisticsSummary(BaseModel):
+    """High-level KPIs describing one trial's collaboration."""
+
+    trial_id: str
+    user_prompt: str
+    description: str
+    mode: str | None = None
+    status: str
+    created_at: str
+    round_count: int
+    agent_count: int
+    total_messages: int
+    total_edges: int
+    message_type_counts: dict[str, int]
+
+
+class AgentStatistics(BaseModel):
+    """Per-agent communication activity within a trial."""
+
+    agent_id: str
+    agent_name: str
+    messages_sent: int
+    messages_received: int
+    out_degree: int
+    in_degree: int
+    tool_invocations: int
+
+
+class EdgeStatistics(BaseModel):
+    """Aggregate message volume along one directed agent->agent edge."""
+
+    from_agent_id: str
+    from_agent_name: str
+    to_agent_id: str
+    to_agent_name: str
+    message_count: int
+
+
+class RoundStatistics(BaseModel):
+    """Per-round message and active-edge counts for timeline charts."""
+
+    round_id: int
+    round_index: int
+    phase: str
+    message_count: int
+    active_edge_count: int
+
+
+class LangfuseStatisticsSummary(BaseModel):
+    """LLM observability KPIs sourced from Langfuse for one trial."""
+
+    trial_id: str
+    trace_count: int
+    generation_count: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    total_cost: float
+    average_latency_ms: float
+    slowest_agent_name: str | None
+    slowest_model: str | None
+
+
+class LangfuseAgentStatistics(BaseModel):
+    """Per-agent token, cost, and latency metrics from Langfuse."""
+
+    agent_id: str
+    agent_name: str
+    generation_count: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    total_cost: float
+    average_latency_ms: float
+
+
+class LangfuseModelStatistics(BaseModel):
+    """Per-model token, cost, and latency metrics from Langfuse."""
+
+    model: str
+    generation_count: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    total_cost: float
+    average_latency_ms: float
+
+
+class LangfuseRoundStatistics(BaseModel):
+    """Per-round cost and token metrics from Langfuse metadata."""
+
+    round_index: int
+    phase: str
+    generation_count: int
+    total_tokens: int
+    total_cost: float
+    average_latency_ms: float
+
+
+class LangfuseStatisticsResponse(BaseModel):
+    """Complete Langfuse statistics payload for one trial."""
+
+    summary: LangfuseStatisticsSummary
+    agents: list[LangfuseAgentStatistics]
+    models: list[LangfuseModelStatistics]
+    rounds: list[LangfuseRoundStatistics]
+    available: bool
+    message: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Experiments (groups of trials with identical setup)
+# ---------------------------------------------------------------------------
+
+
+class ExperimentListItem(BaseModel):
+    """Lightweight experiment record for selector lists."""
+
+    id: str
+    description: str
+    trial_count: int
+    created_at: str
+    mode: str | None = None
+    user_prompt: str | None = None
+
+
+class ExperimentSummary(BaseModel):
+    """Averaged KPIs across all trials in one experiment."""
+
+    experiment_id: str
+    description: str
+    mode: str | None = None
+    user_prompt: str | None = None
+    trial_count: int
+    trial_ids: list[str]
+    avg_round_count: float
+    avg_agent_count: float
+    avg_total_messages: float
+    avg_total_edges: float
+    message_type_counts: dict[str, float]
+
+
+class ExperimentAgentStatistics(BaseModel):
+    """Per-agent metrics averaged across all trials in an experiment."""
+
+    agent_id: str
+    agent_name: str
+    avg_messages_sent: float
+    avg_messages_received: float
+    avg_out_degree: float
+    avg_in_degree: float
+    avg_tool_invocations: float
+
+
+class ExperimentEdgeStatistics(BaseModel):
+    """Averaged message volume along one directed agent->agent edge."""
+
+    from_agent_id: str
+    from_agent_name: str
+    to_agent_id: str
+    to_agent_name: str
+    avg_message_count: float
+
+
+class ExperimentRoundStatistics(BaseModel):
+    """Per-round-index averages across all trials in an experiment."""
+
+    round_index: int
+    phase: str
+    avg_message_count: float
+    avg_active_edge_count: float
+
+
+class ExperimentLangfuseSummary(BaseModel):
+    """Aggregated Langfuse KPIs across all trials in an experiment."""
+
+    experiment_id: str
+    trial_count: int
+    trace_count: int
+    generation_count: int
+    input_tokens: int
+    output_tokens: int
+    total_tokens: int
+    total_cost: float
+    average_latency_ms: float
+    slowest_agent_name: str | None
+    slowest_model: str | None
+
+
+class ExperimentLangfuseResponse(BaseModel):
+    """Complete Langfuse payload aggregated for one experiment."""
+
+    summary: ExperimentLangfuseSummary
+    agents: list[LangfuseAgentStatistics]
+    models: list[LangfuseModelStatistics]
+    rounds: list[LangfuseRoundStatistics]
+    available: bool
+    message: str | None = None
+
+
+# ---------------------------------------------------------------------------
+# Consistency (cross-trial answer similarity within an experiment)
+# ---------------------------------------------------------------------------
+
+
+class PairwiseSimilarity(BaseModel):
+    """Cosine similarity between the final answers of two trials."""
+
+    trial_id_a: str
+    trial_id_b: str
+    cosine_similarity: float
+
+
+class ConsistencyReport(BaseModel):
+    """Answer consistency report for all trials in one experiment."""
+
+    experiment_id: str
+    trial_count: int
+    trials_with_answers: int
+    avg_cosine_similarity: float | None = None
+    pairwise_scores: list[PairwiseSimilarity]
+    ai_summary: str | None = None
+    available: bool
+    message: str | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -571,8 +804,18 @@ _TopologyMode = Literal["static", "dynamic"]
 
 
 class SimulationRunRequest(BaseModel):
-    """Request body for running a topology simulation."""
+    """Request body for ``POST /api/simulation/run``.
 
+    ``engine`` selects the reasoning engine. ``topology`` (default) runs the V0
+    engine as a background task with REST polling for live updates. ``swarm``
+    runs the ECSAS engine and streams ``SimulationStep`` events over SSE
+    (groundwork; the concrete pipeline lands in a later PR).
+    """
+
+    engine: Literal["topology", "swarm"] = Field(
+        default="topology",
+        description="Reasoning engine: 'topology' (V0, background+poll) or 'swarm' (ECSAS, SSE).",
+    )
     prompt: str = Field(
         description="The prompt broadcast to all agents.",
         min_length=1,
@@ -649,10 +892,20 @@ class SimulationRunRequest(BaseModel):
             "0 means unlimited (no cap) — every relevant peer an agent finds is kept."
         ),
     )
+    iterations: int = Field(
+        default=1,
+        ge=1,
+        le=10,
+        description=(
+            "Number of sequential trial runs to execute under the same experiment. "
+            "All runs share the same setup hash and feed into the same aggregated statistics."
+        ),
+    )
 
 
 class SimulationStartResponse(BaseModel):
     """Response returned immediately after a background simulation is scheduled."""
 
-    trial_id: str = Field(description="ID of the trial whose messages can be polled.")
+    trial_id: str = Field(description="ID of the first trial (used for live message streaming).")
+    trial_ids: list[str] = Field(description="IDs of all scheduled trials.")
     status: str = Field(default="started", description="Background simulation status.")

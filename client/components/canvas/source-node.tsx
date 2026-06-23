@@ -13,6 +13,8 @@ interface SourceNodeProps {
   selected: boolean;
   active: boolean;
   simMode: boolean;
+  swarmMode?: boolean;
+  zoom: number;
   onSelect: (id: string, e: React.MouseEvent) => void;
   onDragEnd: (id: string, position: { x: number; y: number }) => void;
   onConnectStart: (id: string, e: React.MouseEvent) => void;
@@ -24,6 +26,8 @@ export function SourceNode({
   selected,
   active,
   simMode,
+  swarmMode = false,
+  zoom,
   onSelect,
   onDragEnd,
   onConnectStart,
@@ -35,6 +39,7 @@ export function SourceNode({
     onSelect,
     onDragEnd,
     simMode,
+    zoom,
   );
 
   const handleConnectMouseDown = useCallback(
@@ -78,7 +83,7 @@ export function SourceNode({
           width: 128,
           height: 76,
           borderRadius: 12,
-          background: dark ? "rgba(14,12,22,0.9)" : "rgba(255,255,255,0.92)",
+          background: dark ? "rgba(22,18,38,0.92)" : "rgba(255,255,255,0.92)",
           border: `1px solid ${selected || active ? accent : t.borderHi}`,
           display: "flex",
           flexDirection: "column",
@@ -116,7 +121,7 @@ export function SourceNode({
         >
           {source.type}
         </div>
-        {!simMode && (
+        {!simMode && !swarmMode && (
           <div
             className="connect-handle"
             onMouseDown={handleConnectMouseDown}

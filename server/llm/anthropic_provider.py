@@ -4,11 +4,12 @@ from anthropic import AsyncAnthropic
 
 from .base_provider import BaseLLMProvider
 from .credentials import resolve_api_key, resolve_base_url
+from .langfuse_setup import observe, update_current_generation
 from .normalizer import NormalizedToolCall, extract_anthropic_tool_calls
 
 # max_tokens is required by the Anthropic API (no server-side default).
 # Haiku 4.5 caps at 64k output; Sonnet 4.6 and Opus 4.7 cap at 64k output.
-_DEFAULT_MAX_TOKENS = 1024
+_DEFAULT_MAX_TOKENS = 20_000
 
 
 def _get_anthropic_client() -> AsyncAnthropic:
@@ -77,8 +78,21 @@ class AnthropicProvider(BaseLLMProvider):
 
         return self._extract_text(response) if response else ""
 
+    @observe(as_type="generation", name="anthropic")
     async def _send(self, kwargs: dict[str, Any]) -> Any:
-        return await self._get_client().messages.create(**kwargs)
+        response = await self._get_client().messages.create(**kwargs)
+        usage = getattr(response, "usage", None)
+        update_current_generation(
+            model=kwargs.get("model"),
+            input=kwargs.get("messages"),
+            usage={
+                "input": getattr(usage, "input_tokens", None),
+                "output": getattr(usage, "output_tokens", None),
+            }
+            if usage
+            else None,
+        )
+        return response
 
     def _extract_tool_calls(self, response: Any) -> list[NormalizedToolCall]:
         return extract_anthropic_tool_calls(response)

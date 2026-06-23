@@ -3,6 +3,7 @@ from typing import Any
 from groq import AsyncGroq
 
 from .credentials import resolve_api_key, resolve_base_url
+from .langfuse_setup import observe, update_current_generation
 from .normalizer import NormalizedToolCall
 from .openai_provider import OpenAIProvider
 
@@ -36,6 +37,22 @@ class GroqProvider(OpenAIProvider):
         if tools:
             kwargs["parallel_tool_calls"] = False
         return kwargs
+
+    @observe(as_type="generation", name="groq")
+    async def _send(self, kwargs: dict[str, Any]) -> Any:
+        response = await self._get_client().chat.completions.create(**kwargs)
+        usage = getattr(response, "usage", None)
+        update_current_generation(
+            model=kwargs.get("model"),
+            input=kwargs.get("messages"),
+            usage={
+                "input": getattr(usage, "prompt_tokens", None),
+                "output": getattr(usage, "completion_tokens", None),
+            }
+            if usage
+            else None,
+        )
+        return response
 
     def _append_assistant_and_tool_results(
         self,

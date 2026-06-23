@@ -60,6 +60,9 @@ Both services start concurrently with hot reload:
 # .env
 DATABASE_URL=postgresql+asyncpg://app:app@localhost:5432/app
 OPENAI_API_KEY=sk-...
+LANGFUSE_SECRET_KEY=sk-lf-...
+LANGFUSE_PUBLIC_KEY=pk-lf-...
+LANGFUSE_HOST=https://cloud.langfuse.com
 ```
 
 Variables prefixed with `NEXT_PUBLIC_` are injected into the browser bundle at build time. Everything else is server-side only and never reaches the client.
