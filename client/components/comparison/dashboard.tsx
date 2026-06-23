@@ -21,10 +21,10 @@ import {
   SummaryCards,
 } from "@/components/statistics/summary-cards";
 import { useStatistics } from "@/hooks/useStatistics";
-import { fetchHistoryTrials } from "@/lib/api";
+import { fetchExperiments } from "@/lib/api";
 import { BURG, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
-import type { HistoryTrial, LangfuseStats } from "@/lib/types";
+import type { ExperimentListItem, LangfuseStats } from "@/lib/types";
 
 function formatRunTimestamp(value: string) {
   const date = new Date(value);
@@ -35,24 +35,25 @@ function formatRunTimestamp(value: string) {
   }).format(date);
 }
 
-function formatTrialOption(trial: HistoryTrial) {
-  const label = trial.description?.trim() || trial.id;
-  return `${label} · ${formatRunTimestamp(trial.createdAt)}`;
+function formatExperimentOption(exp: ExperimentListItem) {
+  const label = exp.description?.trim() || exp.id;
+  const runs = `${exp.trialCount} run${exp.trialCount === 1 ? "" : "s"}`;
+  return `${label} · ${runs} · ${formatRunTimestamp(exp.createdAt)}`;
 }
 
 function RunSelect({
   label,
   value,
-  trials,
+  experiments,
   loading,
   onChange,
   dark,
 }: {
   label: string;
   value: string | null;
-  trials: HistoryTrial[];
+  experiments: ExperimentListItem[];
   loading: boolean;
-  onChange: (trialId: string | null) => void;
+  onChange: (expId: string | null) => void;
   dark: boolean;
 }) {
   const t = getTheme(dark);
@@ -70,7 +71,7 @@ function RunSelect({
       <select
         value={value ?? ""}
         onChange={(e) => onChange(e.target.value || null)}
-        disabled={trials.length === 0}
+        disabled={experiments.length === 0}
         style={{
           background: t.inputBg,
           color: t.text,
@@ -82,19 +83,21 @@ function RunSelect({
           minWidth: 0,
           width: "100%",
           outline: "none",
-          cursor: trials.length === 0 ? "not-allowed" : "pointer",
+          cursor: experiments.length === 0 ? "not-allowed" : "pointer",
           appearance: "none",
           backgroundImage: `url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%236B6880'/%3E%3C/svg%3E")`,
           backgroundRepeat: "no-repeat",
           backgroundPosition: "right 13px center",
         }}
       >
-        {trials.length === 0 && (
-          <option value="">{loading ? "Loading runs…" : "No runs yet"}</option>
+        {experiments.length === 0 && (
+          <option value="">
+            {loading ? "Loading experiments…" : "No experiments yet"}
+          </option>
         )}
-        {trials.map((trial) => (
-          <option key={trial.id} value={trial.id}>
-            {formatTrialOption(trial)}
+        {experiments.map((exp) => (
+          <option key={exp.id} value={exp.id}>
+            {formatExperimentOption(exp)}
           </option>
         ))}
       </select>
@@ -222,22 +225,22 @@ function LlmSlot({
 
 export function ComparisonDashboard() {
   const { dark } = useTheme();
-  const [trials, setTrials] = useState<HistoryTrial[]>([]);
-  const [firstTrialId, setFirstTrialId] = useState<string | null>(null);
-  const [secondTrialId, setSecondTrialId] = useState<string | null>(null);
-  const [trialsLoading, setTrialsLoading] = useState(true);
-  const first = useStatistics(firstTrialId);
-  const second = useStatistics(secondTrialId);
+  const [experiments, setExperiments] = useState<ExperimentListItem[]>([]);
+  const [firstExpId, setFirstExpId] = useState<string | null>(null);
+  const [secondExpId, setSecondExpId] = useState<string | null>(null);
+  const [experimentsLoading, setExperimentsLoading] = useState(true);
+  const first = useStatistics(firstExpId);
+  const second = useStatistics(secondExpId);
 
   useEffect(() => {
-    fetchHistoryTrials()
+    fetchExperiments()
       .then((rows) => {
-        setTrials(rows);
-        setFirstTrialId(rows[0]?.id ?? null);
-        setSecondTrialId(rows[1]?.id ?? rows[0]?.id ?? null);
+        setExperiments(rows);
+        setFirstExpId(rows[0]?.id ?? null);
+        setSecondExpId(rows[1]?.id ?? rows[0]?.id ?? null);
       })
-      .catch(() => setTrials([]))
-      .finally(() => setTrialsLoading(false));
+      .catch(() => setExperiments([]))
+      .finally(() => setExperimentsLoading(false));
   }, []);
 
   const ready =
@@ -248,9 +251,10 @@ export function ComparisonDashboard() {
     !first.error &&
     !second.error;
 
-  const firstTitle = first.summary?.description ?? firstTrialId ?? "First run";
+  const firstTitle =
+    first.summary?.description ?? firstExpId ?? "First experiment";
   const secondTitle =
-    second.summary?.description ?? secondTrialId ?? "Second run";
+    second.summary?.description ?? secondExpId ?? "Second experiment";
 
   return (
     <div>
@@ -263,31 +267,31 @@ export function ComparisonDashboard() {
         }}
       >
         <RunSelect
-          label="First run"
-          value={firstTrialId}
-          trials={trials}
-          loading={trialsLoading}
-          onChange={setFirstTrialId}
+          label="First experiment"
+          value={firstExpId}
+          experiments={experiments}
+          loading={experimentsLoading}
+          onChange={setFirstExpId}
           dark={dark}
         />
         <RunSelect
-          label="Second run"
-          value={secondTrialId}
-          trials={trials}
-          loading={trialsLoading}
-          onChange={setSecondTrialId}
+          label="Second experiment"
+          value={secondExpId}
+          experiments={experiments}
+          loading={experimentsLoading}
+          onChange={setSecondExpId}
           dark={dark}
         />
       </div>
 
-      {!trialsLoading && trials.length < 2 ? (
+      {!experimentsLoading && experiments.length < 2 ? (
         <EmptyState
           icon="GitCompare"
-          title="Not enough runs to compare"
-          sub="Create at least two simulation runs to compare their results side by side."
+          title="Not enough experiments to compare"
+          sub="Create at least two distinct simulation setups to compare their results side by side."
           dark={dark}
         />
-      ) : trialsLoading || first.loading || second.loading ? (
+      ) : experimentsLoading || first.loading || second.loading ? (
         <div
           style={{
             display: "grid",

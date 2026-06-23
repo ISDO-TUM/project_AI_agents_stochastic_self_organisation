@@ -85,6 +85,7 @@ export function App() {
     stopSim,
     dynamicEdges,
     resetContext,
+    batchProgress,
   } = useSimulation(agents, edges);
 
   const [logSidebarWidth, setLogSidebarWidth] = useState(290);
@@ -149,6 +150,7 @@ export function App() {
     useState<ConsensusMode>("plurality_voting");
   const [topology, setTopology] = useState<TopologyMode>("static");
   const [fanout, setFanout] = useState(3);
+  const [iterations, setIterations] = useState(1);
   const [biddingBoardOpen, setBiddingBoardOpen] = useState(false);
 
   useEffect(() => {
@@ -179,9 +181,9 @@ export function App() {
         ? active.map((r) => `- ${r.instruction}`).join("\n")
         : undefined;
       if (consensusMode === "bidding") setBiddingBoardOpen(true);
-      runSim(prompt, consensusMode, ruleset, topology, fanout);
+      runSim(prompt, consensusMode, ruleset, topology, fanout, iterations);
     },
-    [rules, selectedRules, runSim, consensusMode, topology, fanout],
+    [rules, selectedRules, runSim, consensusMode, topology, fanout, iterations],
   );
   const importErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -576,6 +578,9 @@ export function App() {
           onRun={handleRun}
           onResetContext={resetContext}
           onOpenKeys={() => setShowTweaks(true)}
+          iterations={iterations}
+          onIterationsChange={setIterations}
+          batchProgress={batchProgress}
         />
       </div>
 

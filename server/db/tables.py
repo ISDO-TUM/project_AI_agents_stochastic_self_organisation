@@ -65,10 +65,23 @@ agent_files = Table(
     ),
 )
 
+experiments = Table(
+    "experiments",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("setup_hash", Text, nullable=False),
+    Column("description", Text, nullable=False),
+    Column("agent_snapshot", Text, nullable=False),
+    Column("simulation_params", Text, nullable=False),
+    Column("created_at", Text, nullable=False),
+    UniqueConstraint("setup_hash", name="uq_experiments_setup_hash"),
+)
+
 trials = Table(
     "trials",
     metadata,
     Column("id", Text, primary_key=True),
+    Column("experiment_id", Text, ForeignKey("experiments.id"), nullable=True),
     Column("user_prompt", Text, nullable=False),
     Column("description", Text, nullable=False),
     Column("mode", Text),
