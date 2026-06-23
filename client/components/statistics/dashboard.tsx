@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { ComparisonDashboard } from "@/components/comparison/dashboard";
 import { AgentActivityChart } from "@/components/statistics/agent-activity-chart";
+import { ConsistencySection } from "@/components/statistics/consistency-report";
 import { CommunicationGraph } from "@/components/statistics/communication-graph";
 import { LangfuseObservability } from "@/components/statistics/langfuse-observability";
 import {
@@ -25,11 +26,11 @@ import {
   SelectValue,
 } from "@/components/ui/select";
 import { useStatistics } from "@/hooks/useStatistics";
-import { fetchHistoryTrials } from "@/lib/api";
+import { fetchExperimentConsistency, fetchExperiments } from "@/lib/api";
 import { LIcon } from "@/lib/icons";
 import { BURG, BURG_DIM, BURG_LT, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
-import type { HistoryTrial } from "@/lib/types";
+import type { ConsistencyReport, ExperimentListItem } from "@/lib/types";
 
 type ViewId = "collaboration" | "langfuse" | "comparison";
 
@@ -48,9 +49,10 @@ function formatRunTimestamp(value: string) {
   }).format(date);
 }
 
-function formatTrialOption(trial: HistoryTrial) {
-  const label = trial.description?.trim() || trial.id;
-  return `${label} · ${formatRunTimestamp(trial.createdAt)}`;
+function formatExperimentOption(exp: ExperimentListItem) {
+  const label = exp.description?.trim() || exp.id;
+  const runs = `${exp.trialCount} run${exp.trialCount === 1 ? "" : "s"}`;
+  return `${label} · ${runs} · ${formatRunTimestamp(exp.createdAt)}`;
 }
 
 function Sep({ t }: { t: ReturnType<typeof getTheme> }) {
@@ -197,24 +199,45 @@ function LoadingSkeleton({ dark }: { dark: boolean }) {
 export function StatisticsDashboard() {
   const { dark, toggle } = useTheme();
   const t = getTheme(dark);
-  const [trials, setTrials] = useState<HistoryTrial[]>([]);
-  const [trialId, setTrialId] = useState<string | null>(null);
-  const [trialsLoading, setTrialsLoading] = useState(true);
+  const [experiments, setExperiments] = useState<ExperimentListItem[]>([]);
+  const [experimentId, setExperimentId] = useState<string | null>(null);
+  const [experimentsLoading, setExperimentsLoading] = useState(true);
   const [view, setView] = useState<ViewId>("collaboration");
-  const stats = useStatistics(trialId);
+  const [consistency, setConsistency] = useState<ConsistencyReport | null>(
+    null,
+  );
+  const stats = useStatistics(experimentId);
 
   useEffect(() => {
-    fetchHistoryTrials()
+    fetchExperiments()
       .then((rows) => {
-        setTrials(rows);
-        if (rows.length > 0) setTrialId(rows[0].id);
+        setExperiments(rows);
+        if (rows.length > 0) setExperimentId(rows[0].id);
       })
-      .catch(() => setTrials([]))
-      .finally(() => setTrialsLoading(false));
+      .catch(() => setExperiments([]))
+      .finally(() => setExperimentsLoading(false));
   }, []);
 
-  const noTrials = !trialsLoading && trials.length === 0;
-  const loading = trialsLoading || stats.loading;
+  useEffect(() => {
+    if (!experimentId) return;
+
+    let cancelled = false;
+    fetchExperimentConsistency(experimentId)
+      .then((data) => {
+        if (!cancelled) setConsistency(data);
+      })
+      .catch(() => {
+        if (!cancelled) setConsistency(null);
+      });
+
+    return () => {
+      cancelled = true;
+      setConsistency(null);
+    };
+  }, [experimentId]);
+
+  const noExperiments = !experimentsLoading && experiments.length === 0;
+  const loading = experimentsLoading || stats.loading;
 
   return (
     <main
@@ -346,7 +369,7 @@ export function StatisticsDashboard() {
         </div>
 
         <div style={{ maxWidth: 1340, margin: "0 auto" }}>
-          {view !== "comparison" && !noTrials && (
+          {view !== "comparison" && !noExperiments && (
             <div
               style={{
                 display: "flex",
@@ -356,12 +379,12 @@ export function StatisticsDashboard() {
                 flexWrap: "wrap",
               }}
             >
-              <span style={labelStyle(dark)}>Simulation run</span>
+              <span style={labelStyle(dark)}>Experiment</span>
               <Select
-                value={trialId ?? ""}
-                onValueChange={(value) => setTrialId(value || null)}
+                value={experimentId ?? ""}
+                onValueChange={(value) => setExperimentId(value || null)}
               >
-                <SelectTrigger disabled={trials.length === 0}>
+                <SelectTrigger disabled={experiments.length === 0}>
                   <span
                     style={{
                       maxWidth: "min(48vw, 440px)",
@@ -373,14 +396,16 @@ export function StatisticsDashboard() {
                   >
                     <SelectValue
                       placeholder={
-                        trialsLoading ? "Loading runs…" : "No runs yet"
+                        experimentsLoading
+                          ? "Loading experiments…"
+                          : "No experiments yet"
                       }
                     />
                   </span>
                 </SelectTrigger>
                 <SelectContent>
-                  {trials.map((trial) => (
-                    <SelectItem key={trial.id} value={trial.id}>
+                  {experiments.map((exp) => (
+                    <SelectItem key={exp.id} value={exp.id}>
                       <span
                         style={{
                           maxWidth: "min(70vw, 480px)",
@@ -390,7 +415,7 @@ export function StatisticsDashboard() {
                           display: "block",
                         }}
                       >
-                        {formatTrialOption(trial)}
+                        {formatExperimentOption(exp)}
                       </span>
                     </SelectItem>
                   ))}
@@ -403,14 +428,15 @@ export function StatisticsDashboard() {
                   letterSpacing: 0.8,
                 }}
               >
-                {trials.length} run{trials.length === 1 ? "" : "s"} recorded
+                {experiments.length} experiment
+                {experiments.length === 1 ? "" : "s"} recorded
               </span>
             </div>
           )}
 
           {view === "comparison" ? (
             <ComparisonDashboard />
-          ) : noTrials ? (
+          ) : noExperiments ? (
             <EmptyState
               icon="ChartNoAxesColumn"
               title="No simulation data yet"
@@ -476,6 +502,13 @@ export function StatisticsDashboard() {
                 dark={dark}
                 delay={420}
               />
+              {consistency && (
+                <ConsistencySection
+                  report={consistency}
+                  dark={dark}
+                  delay={480}
+                />
+              )}
             </div>
           ) : view === "langfuse" && stats.langfuse ? (
             <LangfuseObservability langfuse={stats.langfuse} dark={dark} />

@@ -1,21 +1,21 @@
 import { useEffect, useState } from "react";
 import {
-  fetchAgentStats,
-  fetchEdgeStats,
-  fetchLangfuseStats,
-  fetchRoundStats,
-  fetchTrialSummary,
+  fetchExperimentAgentStats,
+  fetchExperimentEdgeStats,
+  fetchExperimentLangfuseStats,
+  fetchExperimentRoundStats,
+  fetchExperimentSummary,
 } from "@/lib/api";
 import type {
   AgentStat,
   EdgeStat,
+  ExperimentSummary,
   LangfuseStats,
   RoundStat,
-  TrialSummary,
 } from "@/lib/types";
 
 export interface StatisticsData {
-  summary: TrialSummary | null;
+  summary: ExperimentSummary | null;
   agents: AgentStat[];
   edges: EdgeStat[];
   rounds: RoundStat[];
@@ -36,47 +36,97 @@ const EMPTY: StatisticsData = {
 };
 
 interface StatisticsState extends StatisticsData {
-  trialId: string | null;
+  experimentId: string | null;
   error: string | null;
 }
 
-export function useStatistics(trialId: string | null): UseStatisticsResult {
+export function useStatistics(
+  experimentId: string | null,
+): UseStatisticsResult {
   const [state, setState] = useState<StatisticsState>({
     ...EMPTY,
-    trialId: null,
+    experimentId: null,
     error: null,
   });
 
   useEffect(() => {
-    if (!trialId) return;
+    if (!experimentId) return;
 
     let cancelled = false;
 
     Promise.all([
-      fetchTrialSummary(trialId),
-      fetchAgentStats(trialId),
-      fetchEdgeStats(trialId),
-      fetchRoundStats(trialId),
-      fetchLangfuseStats(trialId),
+      fetchExperimentSummary(experimentId),
+      fetchExperimentAgentStats(experimentId),
+      fetchExperimentEdgeStats(experimentId),
+      fetchExperimentRoundStats(experimentId),
+      fetchExperimentLangfuseStats(experimentId),
     ])
-      .then(([summary, agents, edges, rounds, langfuse]) => {
-        if (!cancelled) {
-          setState({
-            trialId,
-            summary,
-            agents,
-            edges,
-            rounds,
-            langfuse,
-            error: null,
-          });
-        }
+      .then(([summary, expAgents, expEdges, expRounds, expLangfuse]) => {
+        if (cancelled) return;
+
+        const agents: AgentStat[] = expAgents.map((a) => ({
+          agentId: a.agentId,
+          agentName: a.agentName,
+          messagesSent: a.avgMessagesSent,
+          messagesReceived: a.avgMessagesReceived,
+          outDegree: a.avgOutDegree,
+          inDegree: a.avgInDegree,
+          toolInvocations: a.avgToolInvocations,
+        }));
+
+        const edges: EdgeStat[] = expEdges.map((e) => ({
+          fromAgentId: e.fromAgentId,
+          fromAgentName: e.fromAgentName,
+          toAgentId: e.toAgentId,
+          toAgentName: e.toAgentName,
+          messageCount: e.avgMessageCount,
+        }));
+
+        // Give each averaged round a synthetic round_id using index
+        const rounds: RoundStat[] = expRounds.map((r, i) => ({
+          roundId: i,
+          roundIndex: r.roundIndex,
+          phase: r.phase,
+          messageCount: r.avgMessageCount,
+          activeEdgeCount: r.avgActiveEdgeCount,
+        }));
+
+        // Map experiment langfuse summary to the LangfuseStats shape (trial-scoped)
+        const langfuse: LangfuseStats = {
+          summary: {
+            trialId: experimentId,
+            traceCount: expLangfuse.summary.traceCount,
+            generationCount: expLangfuse.summary.generationCount,
+            inputTokens: expLangfuse.summary.inputTokens,
+            outputTokens: expLangfuse.summary.outputTokens,
+            totalTokens: expLangfuse.summary.totalTokens,
+            totalCost: expLangfuse.summary.totalCost,
+            averageLatencyMs: expLangfuse.summary.averageLatencyMs,
+            slowestAgentName: expLangfuse.summary.slowestAgentName,
+            slowestModel: expLangfuse.summary.slowestModel,
+          },
+          agents: expLangfuse.agents,
+          models: expLangfuse.models,
+          rounds: expLangfuse.rounds,
+          available: expLangfuse.available,
+          message: expLangfuse.message,
+        };
+
+        setState({
+          experimentId,
+          summary,
+          agents,
+          edges,
+          rounds,
+          langfuse,
+          error: null,
+        });
       })
       .catch((e: unknown) => {
         if (cancelled) return;
         setState({
           ...EMPTY,
-          trialId,
+          experimentId,
           error: e instanceof Error ? e.message : "Failed to load statistics.",
         });
       });
@@ -84,10 +134,10 @@ export function useStatistics(trialId: string | null): UseStatisticsResult {
     return () => {
       cancelled = true;
     };
-  }, [trialId]);
+  }, [experimentId]);
 
-  if (!trialId) return { ...EMPTY, loading: false, error: null };
-  if (state.trialId !== trialId) {
+  if (!experimentId) return { ...EMPTY, loading: false, error: null };
+  if (state.experimentId !== experimentId) {
     return { ...EMPTY, loading: true, error: null };
   }
   return {

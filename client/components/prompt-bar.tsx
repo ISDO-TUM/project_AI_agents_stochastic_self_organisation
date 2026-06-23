@@ -16,6 +16,9 @@ interface PromptBarProps {
   onRun: (prompt: string) => void;
   onResetContext: () => void;
   onOpenKeys: () => void;
+  iterations?: number;
+  onIterationsChange?: (n: number) => void;
+  batchProgress?: { completed: number; total: number } | null;
 }
 
 export function PromptBar({
@@ -24,6 +27,9 @@ export function PromptBar({
   onRun,
   onResetContext,
   onOpenKeys,
+  iterations = 1,
+  onIterationsChange,
+  batchProgress,
 }: PromptBarProps) {
   const [val, setVal] = useState("");
   const [preview, setPreview] = useState(false);
@@ -169,6 +175,33 @@ export function PromptBar({
       )}
 
       <div style={pillStyle}>
+        {/* Batch progress strip — shown inside the pill when running >1 trials */}
+        {batchProgress && batchProgress.total > 1 && (
+          <div
+            style={{
+              position: "absolute",
+              top: 0,
+              left: 0,
+              right: 0,
+              height: 3,
+              borderRadius: "14px 14px 0 0",
+              background: t.inputBg,
+              overflow: "hidden",
+            }}
+          >
+            <div
+              style={{
+                height: "100%",
+                width: `${
+                  (batchProgress.completed / batchProgress.total) * 100
+                }%`,
+                background: BURG,
+                transition: "width 0.4s ease",
+                borderRadius: "14px 14px 0 0",
+              }}
+            />
+          </div>
+        )}
         <textarea
           ref={textareaRef}
           value={val}
@@ -235,6 +268,74 @@ export function PromptBar({
           </button>
         )}
 
+        {/* Iterations counter — ×N pill with +/- nudges */}
+        {onIterationsChange && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 1,
+              background: t.inputBg,
+              border: `1px solid ${t.border}`,
+              borderRadius: 100,
+              padding: "2px 4px",
+              flexShrink: 0,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => onIterationsChange(Math.max(1, iterations - 1))}
+              disabled={running || iterations <= 1}
+              title="Fewer iterations"
+              style={{
+                background: "none",
+                border: "none",
+                color: iterations <= 1 ? t.textDim : t.textSub,
+                cursor: iterations <= 1 ? "not-allowed" : "pointer",
+                padding: "2px 5px",
+                fontSize: 13,
+                lineHeight: 1,
+                borderRadius: 100,
+                fontWeight: 700,
+              }}
+            >
+              −
+            </button>
+            <span
+              style={{
+                color: iterations > 1 ? BURG_LT : t.textSub,
+                fontSize: 11.5,
+                fontWeight: 700,
+                fontFamily: "'JetBrains Mono', monospace",
+                minWidth: 20,
+                textAlign: "center",
+                letterSpacing: 0.2,
+              }}
+            >
+              ×{iterations}
+            </span>
+            <button
+              type="button"
+              onClick={() => onIterationsChange(Math.min(10, iterations + 1))}
+              disabled={running || iterations >= 10}
+              title="More iterations"
+              style={{
+                background: "none",
+                border: "none",
+                color: iterations >= 10 ? t.textDim : t.textSub,
+                cursor: iterations >= 10 ? "not-allowed" : "pointer",
+                padding: "2px 5px",
+                fontSize: 13,
+                lineHeight: 1,
+                borderRadius: 100,
+                fontWeight: 700,
+              }}
+            >
+              +
+            </button>
+          </div>
+        )}
+
         {/* Run button */}
         <button
           onClick={handleSubmit}
@@ -272,7 +373,9 @@ export function PromptBar({
           }}
         >
           <LIcon name="Send" size={13} color={canRun ? "#fff" : t.textDim} />
-          Run
+          {batchProgress && batchProgress.total > 1
+            ? `${batchProgress.completed} / ${batchProgress.total}`
+            : "Run"}
         </button>
       </div>
 

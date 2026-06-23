@@ -9,6 +9,7 @@ run ``pytest``. Connection-string schemes handed out by Railway/Heroku
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -26,6 +27,7 @@ from server.db.tables import (
     agent_files,
     agents,
     connections,
+    experiments,
     knowledge_files,
     messages,
     metadata,
@@ -198,6 +200,9 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             "ALTER TABLE messages ADD COLUMN IF NOT EXISTS"
             " message_type TEXT NOT NULL DEFAULT 'unknown'",
             "ALTER TABLE messages ADD COLUMN IF NOT EXISTS created_at TEXT NOT NULL DEFAULT ''",
+            # experiments → trials FK
+            "ALTER TABLE trials ADD COLUMN IF NOT EXISTS experiment_id TEXT"
+            " REFERENCES experiments(id)",
             # connections/messages: snapshot agent names so history survives the
             # agents being deleted when the canvas is cleared.
             "ALTER TABLE connections ADD COLUMN IF NOT EXISTS from_agent_name TEXT",
@@ -234,6 +239,7 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             ("messages", "to_agent_id", "TEXT"),
             ("messages", "message_type", "TEXT NOT NULL DEFAULT 'unknown'"),
             ("messages", "created_at", "TEXT NOT NULL DEFAULT ''"),
+            ("trials", "experiment_id", "TEXT"),
             # Agent-name snapshots (see PostgreSQL branch). SQLite cannot rewrite
             # the agent FK to SET NULL in place, but fresh test databases get the
             # full SET NULL schema via metadata.create_all.
@@ -456,17 +462,114 @@ def deserialise_message_row(row: RowMapping) -> dict[str, Any]:
     return data
 
 
+async def resolve_experiment(
+    conn: AsyncConnection,
+    prompt: str,
+    rounds_count: int,
+    mode: str,
+    ruleset: str | None,
+    topology: str,
+    fanout: int,
+    agent_context: dict[str, str] | None,
+) -> str:
+    """Return the experiment id whose setup matches the given parameters.
+
+    If no matching experiment exists, one is created.  Two runs are considered
+    the same experiment when the full agent snapshot (id, name, system_prompt,
+    provider, model, tools, connections, attached file ids) plus all simulation
+    parameters are identical.
+    """
+    agent_rows = (
+        await conn.execute(
+            select(
+                agents.c.id,
+                agents.c.name,
+                agents.c.system_prompt,
+                agents.c.provider,
+                agents.c.model,
+                agents.c.tools,
+                agents.c.connections,
+            ).order_by(agents.c.id)
+        )
+    ).all()
+
+    file_rows = (
+        await conn.execute(
+            select(agent_files.c.agent_id, agent_files.c.file_id).order_by(
+                agent_files.c.agent_id, agent_files.c.file_id
+            )
+        )
+    ).all()
+    files_by_agent: dict[str, list[str]] = {}
+    for row in file_rows:
+        files_by_agent.setdefault(row.agent_id, []).append(row.file_id)
+
+    agent_snapshot = [
+        {
+            "id": row.id,
+            "name": row.name,
+            "system_prompt": row.system_prompt,
+            "provider": row.provider,
+            "model": row.model,
+            "tools": sorted(json.loads(row.tools)),
+            "connections": sorted(json.loads(row.connections)),
+            "file_ids": sorted(files_by_agent.get(row.id, [])),
+        }
+        for row in agent_rows
+    ]
+
+    canonical = {
+        "agents": agent_snapshot,
+        "params": {
+            "prompt": prompt,
+            "rounds": rounds_count,
+            "mode": mode,
+            "ruleset": ruleset,
+            "topology": topology,
+            "fanout": fanout,
+            "agent_context": dict(sorted(agent_context.items())) if agent_context else None,
+        },
+    }
+    setup_hash = hashlib.sha256(
+        json.dumps(canonical, sort_keys=True, ensure_ascii=True).encode()
+    ).hexdigest()
+
+    existing = await conn.scalar(
+        select(experiments.c.id).where(experiments.c.setup_hash == setup_hash)
+    )
+    if existing is not None:
+        return str(existing)
+
+    first_agent = agent_snapshot[0]["name"] if agent_snapshot else "unknown"
+    description = f"{mode} · {first_agent} +{len(agent_snapshot) - 1} more"
+    exp_id = str(uuid.uuid4())
+    await conn.execute(
+        experiments.insert().values(
+            id=exp_id,
+            setup_hash=setup_hash,
+            description=description,
+            agent_snapshot=json.dumps(agent_snapshot),
+            simulation_params=json.dumps(canonical["params"]),
+            created_at=_now_iso(),
+        )
+    )
+    await conn.commit()
+    return exp_id
+
+
 async def create_trial(
     conn: AsyncConnection,
     user_prompt: str,
     description: str,
     mode: str,
+    experiment_id: str | None = None,
 ) -> str:
     """Create a trial row for one simulation run and return its id."""
     trial_id = str(uuid.uuid4())
     await conn.execute(
         trials.insert().values(
             id=trial_id,
+            experiment_id=experiment_id,
             user_prompt=user_prompt,
             description=description,
             mode=mode,
