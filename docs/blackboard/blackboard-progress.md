@@ -194,20 +194,63 @@ Commit: `feat(blackboard): implement Blackboard.post and Blackboard.read`
 
 ---
 
-## What's Next — Phase 2 (Out of Scope for this branch)
+## Phase 2 — Engine Build (in progress)
 
-- **Market Maker** (`server/market_hive/market_maker.py`) — LLM-powered contract decomposition
-- **Auction Engine** (`server/market_hive/auction.py`) — bid evaluation, taker selection
-- **Orchestrator** (`server/market_hive/orchestrator.py`) — round loop, SSE streaming
-- **Real embeddings** — replace `_ZERO_EMBEDDING` with `text-embedding-3-small` calls
-- **Canvas swarm nodes** — Market Maker node, Blackboard node, swarm animations
-- **SSE wiring** — connect `useBlackboard.dispatch` to the `GET /api/simulation/swarm` SSE stream
+- ✅ **Auction Engine** (`server/market_hive/auction.py`) — invitation, bid recording, taker selection, thread coverage (see below)
+- ⬜ **Convergence Engine** (`server/market_hive/convergence.py`) — confidence, conceding temperature, per-run reputation
+- ⬜ **Market Maker** (`server/market_hive/market_maker.py`) — LLM-powered contract decomposition _(owned by another team member)_
+- ⬜ **Orchestrator** (`server/market_hive/orchestrator.py`) — round loop, SSE streaming
+- ⬜ **Real embeddings** — replace `_ZERO_EMBEDDING` with `text-embedding-3-small` calls
+- ⬜ **Canvas swarm nodes** — Market Maker node, Blackboard node, swarm animations
+- ⬜ **SSE wiring** — connect `useBlackboard.dispatch` to the `GET /api/simulation/swarm` SSE stream
+
+---
+
+## What Was Built — Auction Engine (PRD §6.2)
+
+**`server/market_hive/auction.py`** — `AuctionEngine` class, the deterministic
+server-side auction logic for one DB connection. The LLM-driven self-selection
+conversation belongs to the orchestrator (still pending); this engine owns the
+non-LLM phases and exposes hooks the orchestrator calls during self-selection.
+
+- `invite(run_id, contract_id)` — **Phase 1**. Scores every agent's
+  `capability_embedding` against `contract_embedding` via `cosine`; returns
+  `Invitation`s (agent_id, name, `preliminary_score`, `trust_score`) for those
+  at/above `invite_floor`. Falls back to inclusive invitation when either
+  embedding is missing (never blocks a run).
+- `record_bid(...)` / `record_abstention(...)` — **Phase 2**. Insert into `bids`.
+  A bid is `abstained=false`; an abstention is `abstained=true, is_observer=false`.
+- `select_takers(run_id, contract_id, thread_id=None)` — **Phase 3**. Ranks
+  active bidders by `bid_score` and keeps the top `max_takers`; the rest become
+  observers (`is_observer=true`). Zero bidders → `TakerSelection(aborted=True)`.
+  Pass `thread_id` to select per-thread (multi-step).
+- `uncovered_threads(run_id, contract_id)` — **Phase 4**. Returns thread_ids with
+  zero takers so the caller can trigger a mini-auction / `request_expertise`.
+- `get_takers(run_id)` / `get_observers(run_id)` — observers exclude anyone who
+  won a taker slot anywhere in the run.
+- `compute_bid_score(...)` — `alpha·preliminary + beta·trust + gamma·mm_confidence`.
+
+**`server/market_hive/tools.py`** — `SubmitBidTool` / `AbstainTool` are no longer
+stubs: they delegate to `AuctionEngine.record_bid` / `record_abstention`. They
+read `contract_id` and `preliminary_score` from the tool `context` (the
+orchestrator supplies the invitation score).
+
+**`server/tests/test_auction.py`** — 9 tests (bid-score math, invitation floor,
+trust lookup, embedding-missing fallback, max-takers cap, abort-on-zero-bidders,
+abstainers-not-observers, taker/observer queries, uncovered-thread detection).
+
+**`server/pyproject.toml`** — added an `S608` per-file ignore for `auction.py`
+(the dynamic `thread_clause` is a hardcoded constant, same pattern as
+`blackboard.py` / `routes.py`).
 
 ---
 
 ## Key Decisions (for context)
 
-- **Option B scope**: Phase 1 (DB + schema) + Phase 3 (Blackboard + frontend). Market Maker, Auction Engine, Orchestrator are **out of scope** (Phase 2).
+- **Option B scope**: Phase 1 (DB + schema) + Phase 3 (Blackboard + frontend). Market Maker, Auction Engine, Orchestrator are **out of scope** (Phase 2). _(Phase 2 now under way — Auction Engine landed.)_
+- **Auction — taker ranking**: PRD §6.2 prose says "top `max_takers` by `preliminary_score`" but the same section gives a fuller `bid_score` formula. The `gamma` term (`contract.confidence`) is constant across all bidders, so it never changes the ranking — ranking by `bid_score` is equivalent to ranking by `alpha·cosine + beta·trust`. We rank by `bid_score` (the richer signal the formula exists for).
+- **Auction — abstain vs. observer**: §6.2's "observer designation" lumps abstainers with bid-and-lost agents, but the `abstain` tool spec (§8) is explicit that a voluntary abstention is a non-participant with **no** trust change, while only bid-and-lost agents become observers. We follow the tool spec: abstainers are non-participants; observers are exactly the bidders not selected.
+- **Auction — embedding fallback**: when the contract or an agent has no embedding, `invite()` cannot discriminate, so it invites inclusively (score 0.0) rather than abort. Matches the MM "never block the run" philosophy and keeps the system usable before real embeddings are wired.
 - **Frontend state model (Option C hybrid)**: REST-initialized on mount, `dispatch()` pre-wired for SSE events in Phase 2.
 - **Zero-vector embeddings**: `content_embedding` stored as 1536 zeros. When all embeddings are zero, cosine similarity is undefined — ranking falls back to `citation_count DESC, created_at ASC`. Phase 2 replaces with real `text-embedding-3-small` calls.
 - **In-memory SQLite for tests**: `conftest.py` builds the engine against an in-memory SQLite DB (StaticPool) so the suite runs with no external Postgres.
@@ -226,11 +269,13 @@ server/
 ├── schemas/__init__.py         ← Modified: extended _SimStepType
 ├── market_hive/
 │   ├── __init__.py             ← Created (empty)
-│   ├── schemas.py              ← Created: 9 Pydantic schemas
-│   └── blackboard.py           ← Created: Blackboard class (Tasks 4-6)
+│   ├── schemas.py              ← Created: Pydantic schemas
+│   ├── blackboard.py           ← Created: Blackboard class (Tasks 4-6)
+│   ├── auction.py              ← Created: AuctionEngine (Phase 2)
+│   └── tools.py                ← Blackboard + auction tools (auction tools now functional)
+├── pyproject.toml              ← Modified: S608 per-file ignore for auction.py
 ├── tools/
-│   ├── builtin/blackboard_tools.py  ← Created: 7 tool classes (Task 7)
-│   └── registry.py             ← Modified: 7 new tools registered (Task 7)
+│   └── registry.py             ← Modified: blackboard/auction tools registered
 ├── routes/
 │   ├── simulation.py           ← Created: GET /blackboard + POST /seed (Task 8)
 │   └── __init__.py             ← Modified: exports simulation_router (Task 8)
@@ -239,6 +284,7 @@ server/
     ├── conftest.py             ← Modified: in-memory SQLite engine
     ├── test_schema.py          ← Created: 4 DB migration tests
     ├── test_blackboard.py      ← Created: 12 Blackboard tests (Tasks 4-6)
+    ├── test_auction.py         ← Created: 9 AuctionEngine tests (Phase 2)
     └── test_simulation.py      ← Created: 5 endpoint tests (Task 8)
 
 client/
