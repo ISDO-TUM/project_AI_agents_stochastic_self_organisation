@@ -14,6 +14,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 from server.db import cleanup_stale_data, close_db, get_engine, init_db, prune_trials
 from server.llm.credentials import MissingCredentialsError
+from server.llm.langfuse_setup import langfuse_context
 from server.market_hive.routes import router as market_hive_router
 from server.routes import (
     agents_router,
@@ -86,6 +87,13 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
             # Expected during shutdown after explicit task cancellation.
             # Intentionally ignored so application teardown can continue.
             pass
+        # Drain any Langfuse events still buffered in the background consumer so
+        # they survive the container stopping (e.g. a Railway redeploy) instead
+        # of being dropped mid-batch.
+        try:
+            langfuse_context.flush()
+        except Exception:
+            logger.exception("Langfuse flush on shutdown failed — continuing teardown")
         await close_db()
 
 
