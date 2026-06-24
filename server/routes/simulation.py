@@ -19,11 +19,15 @@ from server.schemas import SimulationRunRequest, SimulationStartResponse
 from server.simulation import ConsensusMode, run_topology
 from server.swarm.blackboard import Blackboard
 from server.swarm.schemas import (
+    AuditCitation,
+    AuditResponse,
+    AuditVote,
     BlackboardResponse,
     ConfirmedEntrySchema,
     DraftEntrySchema,
     SeedRequest,
     SeedResponse,
+    SeedRichResponse,
     ThreadSchema,
 )
 
@@ -211,6 +215,288 @@ async def seed_blackboard(body: SeedRequest, db: DBDep) -> SeedResponse:
 
     await db.commit()
     return SeedResponse(run_id=run_id, thread_id=thread_id)
+
+
+@router.get(
+    "/{run_id}/audit",
+    response_model=AuditResponse,
+    summary="Full audit trail for a run (includes soft-deleted entries)",
+)
+async def get_audit(run_id: str, db: DBDep) -> AuditResponse:
+    result = await db.execute(text("SELECT id FROM swarm_runs WHERE id = :id"), {"id": run_id})
+    if result.fetchone() is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="run not found")
+
+    d_result = await db.execute(
+        text(
+            """
+            SELECT de.id, de.run_id, de.thread_id, de.round, de.author_id,
+                   COALESCE(a.name, de.author_id) AS author_name,
+                   de.entry_type, de.content,
+                   de.reply_to, de.mention_agents, de.is_visible,
+                   de.deleted_at, de.last_cited_round, de.created_at,
+                   COALESCE(cc.cnt, 0) AS citation_count
+            FROM draft_entries de
+            LEFT JOIN agents a ON a.id = de.author_id
+            LEFT JOIN (
+                SELECT cited_entry_id, COUNT(*) AS cnt
+                FROM citations WHERE run_id = :run_id1
+                GROUP BY cited_entry_id
+            ) cc ON cc.cited_entry_id = de.id
+            WHERE de.run_id = :run_id2
+            ORDER BY de.round ASC, de.created_at ASC
+            """
+        ),
+        {"run_id1": run_id, "run_id2": run_id},
+    )
+    all_drafts: list[DraftEntrySchema] = []
+    for row in d_result.mappings().fetchall():
+        d = dict(row)
+        d["mention_agents"] = json.loads(d["mention_agents"] or "[]")
+        d["children"] = []
+        all_drafts.append(DraftEntrySchema(**d))
+
+    c_result = await db.execute(
+        text("SELECT * FROM citations WHERE run_id = :run_id ORDER BY created_at ASC"),
+        {"run_id": run_id},
+    )
+    citations = [AuditCitation(**dict(r._mapping)) for r in c_result.fetchall()]
+
+    v_result = await db.execute(
+        text("SELECT * FROM votes WHERE run_id = :run_id ORDER BY created_at ASC"),
+        {"run_id": run_id},
+    )
+    votes = [AuditVote(**dict(r._mapping)) for r in v_result.fetchall()]
+
+    bb = Blackboard(db)
+    confirmed = await bb.get_confirmed(run_id=run_id)
+
+    return AuditResponse(
+        run_id=run_id,
+        all_draft_entries=all_drafts,
+        citations=citations,
+        votes=votes,
+        confirmed_entries=confirmed,
+    )
+
+
+@router.post(
+    "/seed-rich",
+    response_model=SeedRichResponse,
+    summary="Seed rich multi-agent blackboard scenario (DEBUG only)",
+)
+async def seed_blackboard_rich(db: DBDep) -> SeedRichResponse:
+    if os.getenv("DEBUG", "").lower() not in ("true", "1", "yes"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="seed endpoint disabled in production",
+        )
+
+    run_id = str(uuid.uuid4())
+    contract_id = str(uuid.uuid4())
+    thread1_id = str(uuid.uuid4())
+    thread2_id = str(uuid.uuid4())
+    alpha_id = str(uuid.uuid4())
+    beta_id = str(uuid.uuid4())
+    gamma_id = str(uuid.uuid4())
+    now = _now_iso()
+
+    # ── agents ────────────────────────────────────────────────────────────
+    for aid, name, desc in [
+        (alpha_id, "Alpha", "Contract law specialist"),
+        (beta_id, "Beta", "Financial risk analyst"),
+        (gamma_id, "Gamma", "General reasoning agent"),
+    ]:
+        await db.execute(
+            text(
+                "INSERT INTO agents (id, name, description, system_prompt, provider, model, "
+                "tools, connections, created_at) "
+                "VALUES (:id, :name, :desc, :sp, 'anthropic', 'claude-opus-4-8', "
+                "'[]', '[]', :now)"
+            ),
+            {"id": aid, "name": name, "desc": desc, "sp": f"You are {name}.", "now": now},
+        )
+
+    # ── run + contract ────────────────────────────────────────────────────
+    prompt = "Analyze this energy procurement contract for legal and financial compliance issues."
+    await db.execute(
+        text(
+            "INSERT INTO swarm_runs (id, status, mode, created_at) "
+            "VALUES (:id, 'running', 'swarm', :now)"
+        ),
+        {"id": run_id, "now": now},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO contracts "
+            "(id, run_id, original_prompt, task_type, task_nature, required_expertise, created_at) "
+            "VALUES (:id, :run_id, :prompt, 'analysis', 'multi', "
+            '\'["contract_law","finance"]\', :now)'
+        ),
+        {"id": contract_id, "run_id": run_id, "prompt": prompt, "now": now},
+    )
+
+    # ── threads ───────────────────────────────────────────────────────────
+    for tid, title, desc, expertise in [
+        (
+            thread1_id,
+            "Legal Compliance Analysis",
+            "Review all clauses for legal compliance and enforceability.",
+            '["contract_law"]',
+        ),
+        (
+            thread2_id,
+            "Financial Risk Assessment",
+            "Assess pricing, DCF assumptions, and hedging provisions.",
+            '["finance"]',
+        ),
+    ]:
+        await db.execute(
+            text(
+                "INSERT INTO threads "
+                "(id, contract_id, run_id, title, description, required_expertise, created_at) "
+                "VALUES (:id, :cid, :run_id, :title, :desc, :exp, :now)"
+            ),
+            {
+                "id": tid,
+                "cid": contract_id,
+                "run_id": run_id,
+                "title": title,
+                "desc": desc,
+                "exp": expertise,
+                "now": now,
+            },
+        )
+
+    bb = Blackboard(db)
+
+    # ── anchors ───────────────────────────────────────────────────────────
+    await bb.post_anchor(run_id=run_id, thread_id=thread1_id, content=f"[CONTRACT] {prompt}")
+    await bb.post_anchor(
+        run_id=run_id,
+        thread_id=thread1_id,
+        content="[THREAD] Legal Compliance Analysis — expertise: contract_law",
+    )
+    await bb.post_anchor(
+        run_id=run_id,
+        thread_id=thread2_id,
+        content="[THREAD] Financial Risk Assessment — expertise: finance",
+    )
+
+    # ── round 1 draft entries ─────────────────────────────────────────────
+    bb1 = await bb.post(
+        run_id=run_id,
+        thread_id=thread1_id,
+        author_id=alpha_id,
+        content=(
+            "The penalty clause in §4.2 is ambiguous: the liquidated damages formula "
+            "contradicts the hard cap in §7.1. One of these must be struck."
+        ),
+        entry_type="proposal",
+        round=1,
+    )
+    await bb.post(
+        run_id=run_id,
+        thread_id=thread1_id,
+        author_id=gamma_id,
+        content=(
+            "Force majeure clause in §9 is broader than standard — it includes "
+            "supplier insolvency, which is uncommon and may void termination rights."
+        ),
+        entry_type="proposal",
+        round=1,
+    )
+    bb3 = await bb.post(
+        run_id=run_id,
+        thread_id=thread1_id,
+        author_id=beta_id,
+        content="Agree — the formula in §7.1 sets a hard cap that §4.2 ignores.",
+        entry_type="reply",
+        round=1,
+        reply_to=bb1,
+    )
+    await bb.post(
+        run_id=run_id,
+        thread_id=thread1_id,
+        author_id=beta_id,
+        content="VOTE: BB-001 (§4.2 analysis) is the most legally grounded proposal.",
+        entry_type="vote",
+        round=2,
+    )
+    bb5 = await bb.post(
+        run_id=run_id,
+        thread_id=thread2_id,
+        author_id=beta_id,
+        content=(
+            "The DCF assumptions in the pricing schedule use a 7% discount rate "
+            "with no sensitivity analysis. This understates financial exposure."
+        ),
+        entry_type="proposal",
+        round=1,
+    )
+    await bb.post(
+        run_id=run_id,
+        thread_id=thread2_id,
+        author_id=gamma_id,
+        content=(
+            "Currency hedging provisions are entirely absent from the FX schedule, "
+            "leaving both parties exposed to exchange rate volatility."
+        ),
+        entry_type="proposal",
+        round=1,
+    )
+
+    # ── citations (round 2) ───────────────────────────────────────────────
+    # BB-001: cited by Beta + Gamma → citation_count=2, last_cited_round=2
+    await bb.cite(run_id=run_id, citing_agent_id=beta_id, entry_ids=[bb1], round=2)
+    await bb.cite(run_id=run_id, citing_agent_id=gamma_id, entry_ids=[bb1], round=2)
+    # BB-003: cited by Alpha
+    await bb.cite(run_id=run_id, citing_agent_id=alpha_id, entry_ids=[bb3], round=2)
+    # BB-005: cited by Alpha
+    await bb.cite(run_id=run_id, citing_agent_id=alpha_id, entry_ids=[bb5], round=2)
+
+    # ── round 2 draft entries ─────────────────────────────────────────────
+    # Alpha replies to BB-003 and mentions Gamma
+    await bb.post(
+        run_id=run_id,
+        thread_id=thread1_id,
+        author_id=alpha_id,
+        content="@Gamma, can you verify the financial exposure of the §7.1 cap?",
+        entry_type="reply",
+        round=2,
+        reply_to=bb3,
+        mention_agents=[gamma_id],
+    )
+    await bb.post(
+        run_id=run_id,
+        thread_id=thread2_id,
+        author_id=gamma_id,
+        content="The 7% rate is outdated — current WACC for this sector is closer to 8.5%.",
+        entry_type="reply",
+        round=2,
+        reply_to=bb5,
+    )
+
+    # ── promote entries that met the threshold ────────────────────────────
+    # Thread1: 3 participants → M=2; BB-001 has 2 distinct citers → promoted
+    # Thread2: 2 participants → M=1; BB-005 has 1 distinct citer → promoted
+    await bb.check_promotions(
+        run_id=run_id,
+        current_round=2,
+        participants_by_thread={thread1_id: 3, thread2_id: 2},
+    )
+
+    # ── soft-delete stale entries (BB-002, BB-006 never cited) ────────────
+    # last_cited_round=1 for those entries; at current_round=4, decay_rounds=3:
+    # 4-1=3 >= 3 → deleted. BB-001/003/005: last_cited_round=2, 4-2=2 < 3 → kept.
+    await bb.soft_delete_stale(run_id=run_id, current_round=4, decay_rounds=3)
+
+    await db.commit()
+    return SeedRichResponse(
+        run_id=run_id,
+        thread_ids=[thread1_id, thread2_id],
+        agent_ids=[alpha_id, beta_id, gamma_id],
+    )
 
 
 async def _run_simulation_background(

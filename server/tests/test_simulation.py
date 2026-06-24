@@ -120,6 +120,49 @@ async def test_seed_disabled_without_debug_flag(
     assert resp.status_code == 403
 
 
+async def test_get_audit_unknown_run_returns_404(client: AsyncClient) -> None:
+    resp = await client.get("/api/simulation/nonexistent-run-id/audit")
+    assert resp.status_code == 404
+
+
+async def test_get_audit_returns_soft_deleted_entries(client: AsyncClient) -> None:
+    resp = await client.post("/api/simulation/seed-rich")
+    assert resp.status_code == 200
+    run_id = resp.json()["run_id"]
+
+    audit = await client.get(f"/api/simulation/{run_id}/audit")
+    assert audit.status_code == 200
+    data = audit.json()
+
+    all_drafts = data["all_draft_entries"]
+    deleted = [e for e in all_drafts if not e["is_visible"]]
+    visible = [e for e in all_drafts if e["is_visible"]]
+
+    assert len(deleted) >= 2, "rich seed should have at least 2 stale entries soft-deleted"
+    assert len(visible) >= 4, "rich seed should have at least 4 visible entries"
+    assert len(data["citations"]) >= 3
+    assert len(data["confirmed_entries"]) >= 3  # 2 anchors + 1 thread anchor + findings
+
+
+async def test_seed_rich_creates_expected_structure(client: AsyncClient) -> None:
+    resp = await client.post("/api/simulation/seed-rich")
+    assert resp.status_code == 200
+    data = resp.json()
+    assert len(data["thread_ids"]) == 2
+    assert len(data["agent_ids"]) == 3
+
+    run_id = data["run_id"]
+    bb = await client.get(f"/api/simulation/{run_id}/blackboard")
+    assert bb.status_code == 200
+    bb_data = bb.json()
+
+    assert len(bb_data["threads"]) == 2
+    # At least 2 findings promoted (one per thread) + 3 anchors
+    assert len(bb_data["confirmed"]) >= 4
+    # Visible draft entries (soft-deleted are excluded by default)
+    assert len(bb_data["draft"]) >= 3
+
+
 def test_tally_ignores_unknown_votes() -> None:
     plurality, counts = _tally(
         {

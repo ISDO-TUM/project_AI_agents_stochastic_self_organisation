@@ -127,3 +127,37 @@ class SeedRequest(BaseModel):
 class SeedResponse(BaseModel):
     run_id: str
     thread_id: str
+
+
+class SeedRichResponse(BaseModel):
+    run_id: str
+    thread_ids: list[str]
+    agent_ids: list[str]
+
+
+class AuditCitation(BaseModel):
+    id: str
+    run_id: str
+    citing_agent_id: str
+    cited_entry_id: str
+    citing_entry_id: str | None = None
+    round: int
+    created_at: datetime
+
+
+class AuditVote(BaseModel):
+    id: str
+    run_id: str
+    voter_agent_id: str
+    voted_entry_id: str
+    thread_id: str
+    round: int
+    created_at: datetime
+
+
+class AuditResponse(BaseModel):
+    run_id: str
+    all_draft_entries: list[DraftEntrySchema]
+    citations: list[AuditCitation]
+    votes: list[AuditVote]
+    confirmed_entries: list[ConfirmedEntrySchema]
