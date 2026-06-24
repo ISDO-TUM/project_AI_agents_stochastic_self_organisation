@@ -230,6 +230,98 @@ export interface LangfuseStats {
   message: string | null;
 }
 
+// ─── Experiments ─────────────────────────────────────────────────────────────
+
+export interface ExperimentListItem {
+  id: string;
+  description: string;
+  trialCount: number;
+  createdAt: string;
+  mode: string | null;
+  userPrompt: string | null;
+}
+
+export interface ExperimentSummary {
+  experimentId: string;
+  description: string;
+  mode: string | null;
+  userPrompt: string | null;
+  trialCount: number;
+  trialIds: string[];
+  avgRoundCount: number;
+  avgAgentCount: number;
+  avgTotalMessages: number;
+  avgTotalEdges: number;
+  messageTypeCounts: Record<string, number>;
+}
+
+export interface ExperimentAgentStat {
+  agentId: string;
+  agentName: string;
+  avgMessagesSent: number;
+  avgMessagesReceived: number;
+  avgOutDegree: number;
+  avgInDegree: number;
+  avgToolInvocations: number;
+}
+
+export interface ExperimentEdgeStat {
+  fromAgentId: string;
+  fromAgentName: string;
+  toAgentId: string;
+  toAgentName: string;
+  avgMessageCount: number;
+}
+
+export interface ExperimentRoundStat {
+  roundIndex: number;
+  phase: string;
+  avgMessageCount: number;
+  avgActiveEdgeCount: number;
+}
+
+export interface ExperimentLangfuseSummary {
+  experimentId: string;
+  trialCount: number;
+  traceCount: number;
+  generationCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  averageLatencyMs: number;
+  slowestAgentName: string | null;
+  slowestModel: string | null;
+}
+
+export interface ExperimentLangfuseStats {
+  summary: ExperimentLangfuseSummary;
+  agents: LangfuseAgentStat[];
+  models: LangfuseModelStat[];
+  rounds: LangfuseRoundStat[];
+  available: boolean;
+  message: string | null;
+}
+
+// ─── Consistency ─────────────────────────────────────────────────────────────
+
+export interface PairwiseSimilarity {
+  trialIdA: string;
+  trialIdB: string;
+  cosineSimilarity: number;
+}
+
+export interface ConsistencyReport {
+  experimentId: string;
+  trialCount: number;
+  trialsWithAnswers: number;
+  avgCosineSimilarity: number | null;
+  pairwiseScores: PairwiseSimilarity[];
+  aiSummary: string | null;
+  available: boolean;
+  message: string | null;
+}
+
 export type CanvasAction =
   | { type: "ADD_AGENT"; agent: Agent }
   | { type: "UPDATE_AGENT"; agent: Agent }

@@ -14,7 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.db import record_message
 from server.llm.embeddings import cosine, embed_texts
-from server.swarm.schemas import (
+from server.market_hive.schemas import (
     ConfirmedEntrySchema,
     DraftEntrySchema,
 )
@@ -310,7 +310,9 @@ class Blackboard:
         """Record citation endorsements. Skips self-citations server-side."""
         cited = 0
         skipped_self = 0
-        for entry_id in entry_ids:
+        # De-duplicate while preserving order: an agent citing the same entry twice
+        # in one call would otherwise trip the UNIQUE(agent, entry, round) constraint.
+        for entry_id in dict.fromkeys(entry_ids):
             result = await self._db.execute(
                 text("SELECT author_id FROM draft_entries WHERE id = :id"),
                 {"id": entry_id},
@@ -322,29 +324,34 @@ class Blackboard:
                 skipped_self += 1
                 continue
             try:
-                await self._db.execute(
-                    text(
-                        """
-                        INSERT INTO citations
-                            (id, run_id, citing_agent_id, cited_entry_id,
-                             citing_entry_id, round)
-                        VALUES (:id, :run_id, :citing_agent_id, :cited_entry_id,
-                                :citing_entry_id, :round)
-                        """
-                    ),
-                    {
-                        "id": str(uuid.uuid4()),
-                        "run_id": run_id,
-                        "citing_agent_id": citing_agent_id,
-                        "cited_entry_id": entry_id,
-                        "citing_entry_id": citing_entry_id,
-                        "round": round,
-                    },
-                )
-                await self._db.execute(
-                    text("UPDATE draft_entries SET last_cited_round = :round WHERE id = :id"),
-                    {"round": round, "id": entry_id},
-                )
+                # SAVEPOINT per insert: on PostgreSQL a UNIQUE violation aborts the
+                # whole transaction, so a plain try/except would poison every later
+                # statement (and the final commit). A nested transaction lets us roll
+                # back just this insert and keep the valid citations.
+                async with self._db.begin_nested():
+                    await self._db.execute(
+                        text(
+                            """
+                            INSERT INTO citations
+                                (id, run_id, citing_agent_id, cited_entry_id,
+                                 citing_entry_id, round)
+                            VALUES (:id, :run_id, :citing_agent_id, :cited_entry_id,
+                                    :citing_entry_id, :round)
+                            """
+                        ),
+                        {
+                            "id": str(uuid.uuid4()),
+                            "run_id": run_id,
+                            "citing_agent_id": citing_agent_id,
+                            "cited_entry_id": entry_id,
+                            "citing_entry_id": citing_entry_id,
+                            "round": round,
+                        },
+                    )
+                    await self._db.execute(
+                        text("UPDATE draft_entries SET last_cited_round = :round WHERE id = :id"),
+                        {"round": round, "id": entry_id},
+                    )
                 cited += 1
             except IntegrityError:
                 # UNIQUE constraint: agent already cited this entry this round

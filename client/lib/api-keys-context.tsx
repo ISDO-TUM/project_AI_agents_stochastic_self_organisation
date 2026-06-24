@@ -15,6 +15,8 @@ export interface ApiKeys {
   groqKey: string;
   geminiKey: string;
   proxyKey: string;
+  // SAP-RPT powers the tabular prediction tools, not the agents themselves.
+  sapRptKey: string;
   openaiBaseUrl: string;
   anthropicBaseUrl: string;
   groqBaseUrl: string;
@@ -27,6 +29,7 @@ export const EMPTY_KEYS: ApiKeys = {
   groqKey: "",
   geminiKey: "",
   proxyKey: "",
+  sapRptKey: "",
   openaiBaseUrl: "",
   anthropicBaseUrl: "",
   groqBaseUrl: "",
@@ -43,6 +46,7 @@ export function apiKeyHeaders(keys: ApiKeys): Record<string, string> {
     ["X-LLM-Groq-Key", keys.groqKey],
     ["X-LLM-Gemini-Key", keys.geminiKey],
     ["X-LLM-Proxy-Key", keys.proxyKey],
+    ["X-SAP-RPT-Key", keys.sapRptKey],
     ["X-LLM-OpenAI-Base-Url", keys.openaiBaseUrl],
     ["X-LLM-Anthropic-Base-Url", keys.anthropicBaseUrl],
     ["X-LLM-Groq-Base-Url", keys.groqBaseUrl],
