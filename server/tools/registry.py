@@ -8,7 +8,10 @@ from typing import TYPE_CHECKING, Any
 from server.tools.base import Tool
 from server.tools.builtin.files import FilesTool
 from server.tools.builtin.registry import RegistryTool
+from server.tools.builtin.rpt_chat import RPTChatTool
+from server.tools.builtin.rpt_predict import RPTPredictTool
 from server.tools.builtin.table import TableMutateTool, TableQueryTool
+from server.tools.builtin.table_predict import TablePredictTool
 
 if TYPE_CHECKING:
     from server.schemas import ToolCall
@@ -33,6 +36,9 @@ register(FilesTool())
 register(RegistryTool())
 register(TableQueryTool())
 register(TableMutateTool())
+register(RPTPredictTool())
+register(RPTChatTool())
+register(TablePredictTool())
 
 # ── provider format builders ───────────────────────────────────────
 
