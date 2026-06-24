@@ -223,6 +223,49 @@ class GetConfirmedTool(Tool):
 # ── Stub auction tools (schema-complete; execute deferred to Phase 2) ────────
 
 
+class RequestExpertiseInput(BaseModel):
+    domain: str = Field(description="Expertise the contract lacks, e.g. 'financial_modeling'.")
+    reason: str = Field(description="Why this expertise gap matters for the thread.")
+    thread_id: str = Field(description="The thread that needs the expertise.")
+
+
+class RequestExpertiseTool(Tool):
+    name = "request_expertise"
+    description = (
+        "Propose that the contract needs additional expertise the current team "
+        "cannot provide. Opens a majority vote among takers + the Market Maker; "
+        "if approved, a new thread is created and agents are recruited for it. "
+        "Bounded by max_amendments per run — use only for genuine gaps."
+    )
+    input_model = RequestExpertiseInput
+
+    async def execute(
+        self, validated_input: BaseModel, context: dict[str, Any] | None = None
+    ) -> str:
+        if not isinstance(validated_input, RequestExpertiseInput):
+            raise TypeError(f"Expected RequestExpertiseInput, got {type(validated_input).__name__}")
+        ctx = context or {}
+        db = ctx["db"]
+        run_id: str = ctx["run_id"]
+        proposing_agent_id: str = ctx["agent_id"]
+        current_round: int = ctx.get("round", 1)
+        max_amendments: int = ctx.get("max_amendments", 2)
+
+        from server.market_hive.amendment import AmendmentEngine
+
+        engine = AmendmentEngine(db)
+        result = await engine.propose(
+            run_id=run_id,
+            proposing_agent_id=proposing_agent_id,
+            thread_id=validated_input.thread_id,
+            domain=validated_input.domain,
+            reason=validated_input.reason,
+            current_round=current_round,
+            max_amendments=max_amendments,
+        )
+        return f'{{"amendment_id": "{result["amendment_id"]}", "status": "{result["status"]}"}}'
+
+
 class SubmitBidInput(BaseModel):
     justification: str = Field(description="Your reasoning for participating.")
     thread_id: str | None = Field(
@@ -274,6 +317,7 @@ def _register() -> None:
         CiteTool(),
         VoteTool(),
         GetConfirmedTool(),
+        RequestExpertiseTool(),
         SubmitBidTool(),
         AbstainTool(),
     ):
