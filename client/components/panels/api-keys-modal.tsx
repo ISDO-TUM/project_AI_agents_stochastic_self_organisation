@@ -13,6 +13,7 @@ const PROVIDERS = [
   { key: "groqKey", label: "Groq" },
   { key: "geminiKey", label: "Gemini" },
   { key: "proxyKey", label: "Custom Proxy" },
+  { key: "sapRptKey", label: "SAP-RPT" },
 ] as const;
 
 export function ApiKeysModal({ onClose }: { onClose: () => void }) {
