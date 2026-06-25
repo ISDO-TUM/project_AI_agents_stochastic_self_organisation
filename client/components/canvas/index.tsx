@@ -19,6 +19,7 @@ import { EdgeLayer } from "./edge-layer";
 import { Minimap } from "./minimap";
 import { BlackboardCanvas } from "./blackboard-canvas";
 import { SwarmNodes } from "./swarm-nodes";
+import { ThreadNode } from "./blackboard/thread-node";
 import { PhonebookPanel } from "../phonebook-panel";
 import { BiddingBoardPanel } from "../bidding-board-panel";
 
@@ -125,6 +126,7 @@ export function Canvas({
   const [bbWidth, setBbWidth] = useState(BB_DEFAULT_W);
   const BB_DEFAULT_H = 300;
   const [bbHeight, setBbHeight] = useState(BB_DEFAULT_H);
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
 
   // Initialise positions from canvas dimensions once mounted
   useEffect(() => {
@@ -531,6 +533,25 @@ export function Canvas({
             </svg>
           )}
           <SwarmNodes pos={mmPos} onPosChange={setMmPos} zoom={zoom} />
+          {bbPos && (blackboardState?.threads.length ?? 0) > 0 && (
+            <>
+              <ThreadNode
+                thread={{ id: "__all__", title: "All threads" }}
+                active={activeThreadId === null}
+                pos={{ x: bbPos.x, y: bbPos.y - 32 }}
+                onClick={() => setActiveThreadId(null)}
+              />
+              {blackboardState!.threads.map((th, i) => (
+                <ThreadNode
+                  key={th.id}
+                  thread={th}
+                  active={activeThreadId === th.id}
+                  pos={{ x: bbPos.x + (i + 1) * 110, y: bbPos.y - 32 }}
+                  onClick={() => setActiveThreadId(th.id)}
+                />
+              ))}
+            </>
+          )}
           <BlackboardCanvas
             state={
               blackboardState ?? {
@@ -551,6 +572,7 @@ export function Canvas({
             height={bbHeight}
             onHeightChange={setBbHeight}
             zoom={zoom}
+            activeThreadId={activeThreadId}
           />
         </>
       )}
