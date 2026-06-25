@@ -10,7 +10,7 @@ from httpx import AsyncClient
 from sqlalchemy import insert
 
 import server.topology as sim
-from server.db import create_connection, create_round, create_trial, get_engine
+from server.db import create_connection, create_round, create_trial, get_engine, resolve_experiment
 from server.db.tables import agents
 from server.topology import (
     Reputation,
@@ -306,6 +306,38 @@ async def test_create_connection_reuses_system_connection(client: AsyncClient) -
     assert second_id == first_id
 
 
+async def test_resolve_experiment_can_create_fresh_runs_for_same_setup(
+    client: AsyncClient,
+) -> None:
+    await _create_agent(client, "Agent A")
+
+    async with get_engine().connect() as conn:
+        first = await resolve_experiment(
+            conn,
+            "Prompt",
+            3,
+            "bidding",
+            None,
+            "static",
+            3,
+            None,
+            reuse_existing=False,
+        )
+        second = await resolve_experiment(
+            conn,
+            "Prompt",
+            3,
+            "bidding",
+            None,
+            "static",
+            3,
+            None,
+            reuse_existing=False,
+        )
+
+    assert first != second
+
+
 async def test_clear_board_preserves_history_and_stats(client: AsyncClient) -> None:
     """Clearing the canvas deletes agents but keeps the run history + statistics.
 
@@ -363,6 +395,130 @@ async def test_clear_board_preserves_history_and_stats(client: AsyncClient) -> N
     edge_names = {(e["from_agent_name"], e["to_agent_name"]) for e in edges}
     assert ("Agent A", "Agent B") in edge_names
     assert ("Agent B", "Agent A") in edge_names
+
+
+async def test_bidding_statistics_edges_include_board_after_agent_clear(
+    client: AsyncClient,
+) -> None:
+    async def _make_agent(name: str) -> str:
+        resp = await client.post(
+            "/api/agents",
+            json={
+                "name": name,
+                "description": "A test agent.",
+                "system_prompt": "Answer briefly.",
+                "provider": "openai",
+                "model": "gpt-4o",
+                "tools": [],
+                "connections": [],
+            },
+        )
+        assert resp.status_code == 201
+        return str(resp.json()["id"])
+
+    agent_a = await _make_agent("Agent A")
+    agent_b = await _make_agent("Agent B")
+
+    async with get_engine().connect() as conn:
+        trial_id = await create_trial(conn, "Prompt", "Bidding trial", "bidding")
+        round_id = await create_round(conn, trial_id, 2, "bidding_bids")
+        await sim.record_message(conn, round_id, agent_a, agent_a, "bidding_bid", "{}")
+        await sim.record_message(conn, round_id, agent_b, agent_b, "bidding_match", "{}")
+        await sim.record_message(conn, round_id, agent_b, agent_b, "tool", "ignored")
+
+    cleared = await client.delete("/api/agents")
+    assert cleared.status_code == 204
+
+    edges_resp = await client.get(f"/api/statistics/trials/{trial_id}/edges")
+    assert edges_resp.status_code == 200
+    edges_by_name = {edge["from_agent_name"]: edge for edge in edges_resp.json()}
+    assert edges_by_name == {
+        "Agent A": {
+            "from_agent_id": agent_a,
+            "from_agent_name": "Agent A",
+            "to_agent_id": "__bidding_board__",
+            "to_agent_name": "Board",
+            "message_count": 1,
+        },
+        "Agent B": {
+            "from_agent_id": agent_b,
+            "from_agent_name": "Agent B",
+            "to_agent_id": "__bidding_board__",
+            "to_agent_name": "Board",
+            "message_count": 1,
+        },
+    }
+
+    summary_resp = await client.get(f"/api/statistics/trials/{trial_id}/summary")
+    assert summary_resp.status_code == 200
+    assert summary_resp.json()["total_edges"] == 2
+
+
+async def test_bidding_experiment_statistics_edges_include_board(
+    client: AsyncClient,
+) -> None:
+    async def _make_agent(name: str) -> str:
+        resp = await client.post(
+            "/api/agents",
+            json={
+                "name": name,
+                "description": "A test agent.",
+                "system_prompt": "Answer briefly.",
+                "provider": "openai",
+                "model": "gpt-4o",
+                "tools": [],
+                "connections": [],
+            },
+        )
+        assert resp.status_code == 201
+        return str(resp.json()["id"])
+
+    agent_a = await _make_agent("Agent A")
+    agent_b = await _make_agent("Agent B")
+
+    async with get_engine().connect() as conn:
+        exp_id = await resolve_experiment(
+            conn,
+            "Prompt",
+            3,
+            "bidding",
+            None,
+            "static",
+            3,
+            None,
+        )
+        trial_id = await create_trial(conn, "Prompt", "Bidding trial", "bidding", exp_id)
+        round_id = await create_round(conn, trial_id, 2, "bidding_bids")
+        await sim.record_message(conn, round_id, agent_a, agent_a, "bidding_bid", "{}")
+        await sim.record_message(conn, round_id, agent_b, agent_b, "bidding_match", "{}")
+        await sim.record_message(conn, round_id, agent_b, agent_b, "tool", "ignored")
+
+    cleared = await client.delete("/api/agents")
+    assert cleared.status_code == 204
+
+    edges_resp = await client.get(f"/api/statistics/experiments/{exp_id}/edges")
+    assert edges_resp.status_code == 200
+    edges_by_name = {edge["from_agent_name"]: edge for edge in edges_resp.json()}
+    assert edges_by_name == {
+        "Agent A": {
+            "from_agent_id": agent_a,
+            "from_agent_name": "Agent A",
+            "to_agent_id": "__bidding_board__",
+            "to_agent_name": "Board",
+            "avg_message_count": 1.0,
+        },
+        "Agent B": {
+            "from_agent_id": agent_b,
+            "from_agent_name": "Agent B",
+            "to_agent_id": "__bidding_board__",
+            "to_agent_name": "Board",
+            "avg_message_count": 1.0,
+        },
+    }
+
+    summary_resp = await client.get(f"/api/statistics/experiments/{exp_id}/summary")
+    assert summary_resp.status_code == 200
+    assert summary_resp.json()["avg_total_edges"] == 2.0
 
 
 # ── _jaccard ─────────────────────────────────────────────────────────────────

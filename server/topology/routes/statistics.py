@@ -45,6 +45,9 @@ DBDep = Annotated[AsyncConnection, Depends(get_db)]
 
 _MSG_ROUNDS = messages.join(rounds, rounds.c.id == messages.c.round_id)
 _CONN_ROUNDS = connections.join(rounds, rounds.c.id == connections.c.round_id)
+_BIDDING_BOARD_ID = "__bidding_board__"
+_BIDDING_BOARD_NAME = "Board"
+_BIDDING_BOARD_MESSAGE_TYPES = ("bidding_bid", "bidding_match")
 
 
 def _is_agent_edge(from_agent_id: str | None, to_agent_id: str | None) -> bool:
@@ -102,6 +105,20 @@ async def trial_summary(trial_id: str, db: DBDep) -> TrialStatisticsSummary:
             agent_ids.add(to)
         if _is_agent_edge(frm, to):
             edges.add((frm, to))
+
+    if trial["mode"] == "bidding":
+        board_rows = await db.execute(
+            select(messages.c.from_agent_id)
+            .select_from(_MSG_ROUNDS)
+            .where(
+                rounds.c.trial_id == trial_id,
+                messages.c.from_agent_id.is_not(None),
+                messages.c.message_type.in_(_BIDDING_BOARD_MESSAGE_TYPES),
+            )
+            .group_by(messages.c.from_agent_id)
+        )
+        for (agent_id,) in board_rows.all():
+            edges.add((agent_id, _BIDDING_BOARD_ID))
 
     return TrialStatisticsSummary(
         trial_id=trial_id,
@@ -467,7 +484,7 @@ async def trial_langfuse(trial_id: str, db: DBDep) -> LangfuseStatisticsResponse
 
 @router.get("/trials/{trial_id}/edges", response_model=list[EdgeStatistics])
 async def trial_edges(trial_id: str, db: DBDep) -> list[EdgeStatistics]:
-    await _require_trial(db, trial_id)
+    trial = await _require_trial(db, trial_id)
 
     # Prefer the name snapshotted on the connection; fall back to the live agent
     # row (legacy data) and finally to "Unknown" once the agent is gone. The
@@ -509,7 +526,40 @@ async def trial_edges(trial_id: str, db: DBDep) -> list[EdgeStatistics]:
         .order_by(func.count(messages.c.id).desc())
     )
     rows = (await db.execute(stmt)).mappings().all()
-    return [EdgeStatistics(**dict(row)) for row in rows]
+    edge_stats = [EdgeStatistics(**dict(row)) for row in rows]
+
+    if trial["mode"] == "bidding":
+        board_from_name = func.coalesce(messages.c.from_agent_name, agents.c.name, "Unknown").label(
+            "from_agent_name"
+        )
+        board_stmt = (
+            select(
+                messages.c.from_agent_id,
+                board_from_name,
+                func.count(messages.c.id).label("message_count"),
+            )
+            .select_from(_MSG_ROUNDS.outerjoin(agents, agents.c.id == messages.c.from_agent_id))
+            .where(
+                rounds.c.trial_id == trial_id,
+                messages.c.from_agent_id.is_not(None),
+                messages.c.message_type.in_(_BIDDING_BOARD_MESSAGE_TYPES),
+            )
+            .group_by(messages.c.from_agent_id, board_from_name)
+            .order_by(func.count(messages.c.id).desc())
+        )
+        board_rows = (await db.execute(board_stmt)).mappings().all()
+        edge_stats.extend(
+            EdgeStatistics(
+                from_agent_id=str(row["from_agent_id"]),
+                from_agent_name=str(row["from_agent_name"]),
+                to_agent_id=_BIDDING_BOARD_ID,
+                to_agent_name=_BIDDING_BOARD_NAME,
+                message_count=int(row["message_count"]),
+            )
+            for row in board_rows
+        )
+
+    return edge_stats
 
 
 @router.get("/trials/{trial_id}/timeline", response_model=list[RoundStatistics])
@@ -693,6 +743,20 @@ async def experiment_summary(exp_id: str, db: DBDep) -> ExperimentSummary:
                 agent_ids.add(to)
             if _is_agent_edge(frm, to):
                 edges.add((frm, to))
+        trial_mode = await db.scalar(select(trials.c.mode).where(trials.c.id == tid))
+        if trial_mode == "bidding":
+            board_rows = await db.execute(
+                select(messages.c.from_agent_id)
+                .select_from(_MSG_ROUNDS)
+                .where(
+                    rounds.c.trial_id == tid,
+                    messages.c.from_agent_id.is_not(None),
+                    messages.c.message_type.in_(_BIDDING_BOARD_MESSAGE_TYPES),
+                )
+                .group_by(messages.c.from_agent_id)
+            )
+            for (agent_id,) in board_rows.all():
+                edges.add((agent_id, _BIDDING_BOARD_ID))
         agent_counts.append(len(agent_ids))
         edge_counts.append(len(edges))
 
@@ -815,19 +879,25 @@ async def experiment_edges(exp_id: str, db: DBDep) -> list[ExperimentEdgeStatist
     for tid in trial_ids:
         from_agent = agents.alias("from_agent")
         to_agent = agents.alias("to_agent")
+        from_name = func.coalesce(
+            connections.c.from_agent_name, from_agent.c.name, "Unknown"
+        ).label("from_agent_name")
+        to_name = func.coalesce(connections.c.to_agent_name, to_agent.c.name, "Unknown").label(
+            "to_agent_name"
+        )
         stmt = (
             select(
                 connections.c.from_agent_id,
-                from_agent.c.name.label("from_agent_name"),
+                from_name,
                 connections.c.to_agent_id,
-                to_agent.c.name.label("to_agent_name"),
+                to_name,
                 func.count(messages.c.id).label("message_count"),
             )
             .select_from(
                 connections.join(rounds, rounds.c.id == connections.c.round_id)
                 .outerjoin(messages, messages.c.connection_id == connections.c.id)
-                .join(from_agent, from_agent.c.id == connections.c.from_agent_id)
-                .join(to_agent, to_agent.c.id == connections.c.to_agent_id)
+                .outerjoin(from_agent, from_agent.c.id == connections.c.from_agent_id)
+                .outerjoin(to_agent, to_agent.c.id == connections.c.to_agent_id)
             )
             .where(
                 rounds.c.trial_id == tid,
@@ -837,9 +907,9 @@ async def experiment_edges(exp_id: str, db: DBDep) -> list[ExperimentEdgeStatist
             )
             .group_by(
                 connections.c.from_agent_id,
-                from_agent.c.name,
+                from_name,
                 connections.c.to_agent_id,
-                to_agent.c.name,
+                to_name,
             )
         )
         rows = (await db.execute(stmt)).mappings().all()
@@ -847,6 +917,31 @@ async def experiment_edges(exp_id: str, db: DBDep) -> list[ExperimentEdgeStatist
             key = (str(row["from_agent_id"]), str(row["to_agent_id"]))
             edge_counts[key].append(int(row["message_count"]))
             edge_names[key] = (str(row["from_agent_name"]), str(row["to_agent_name"]))
+
+        trial_mode = await db.scalar(select(trials.c.mode).where(trials.c.id == tid))
+        if trial_mode == "bidding":
+            board_from_name = func.coalesce(
+                messages.c.from_agent_name, agents.c.name, "Unknown"
+            ).label("from_agent_name")
+            board_stmt = (
+                select(
+                    messages.c.from_agent_id,
+                    board_from_name,
+                    func.count(messages.c.id).label("message_count"),
+                )
+                .select_from(_MSG_ROUNDS.outerjoin(agents, agents.c.id == messages.c.from_agent_id))
+                .where(
+                    rounds.c.trial_id == tid,
+                    messages.c.from_agent_id.is_not(None),
+                    messages.c.message_type.in_(_BIDDING_BOARD_MESSAGE_TYPES),
+                )
+                .group_by(messages.c.from_agent_id, board_from_name)
+            )
+            board_rows = (await db.execute(board_stmt)).mappings().all()
+            for row in board_rows:
+                key = (str(row["from_agent_id"]), _BIDDING_BOARD_ID)
+                edge_counts[key].append(int(row["message_count"]))
+                edge_names[key] = (str(row["from_agent_name"]), _BIDDING_BOARD_NAME)
 
     return sorted(
         [

@@ -238,6 +238,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
           fanout,
           iterations,
         });
+        window.localStorage.setItem("latestExperimentId", result.experimentId);
         setOutcome(result);
         const isBatch = result.trialIds.length > 1;
         if (isBatch)
@@ -275,6 +276,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
               total: result.trialIds.length,
             });
             setOutcome({
+              experimentId: result.experimentId,
               trialId: result.trialId,
               trialIds: result.trialIds,
               status: allTrials[0].status,
@@ -283,6 +285,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
           } else {
             const trial = await fetchHistoryTrial(result.trialId);
             setOutcome({
+              experimentId: result.experimentId,
               trialId: trial.id,
               trialIds: result.trialIds,
               status: trial.status,

@@ -8,12 +8,15 @@ import type { AgentStat, EdgeStat } from "@/lib/types";
 const SIZE = 420;
 const RADIUS = 148;
 const NODE_R = 17;
+const BOARD_ID = "__bidding_board__";
+const BOARD_R = 25;
 
 interface Node {
   id: string;
   name: string;
   x: number;
   y: number;
+  kind: "agent" | "board";
 }
 
 function initials(name: string) {
@@ -50,8 +53,14 @@ export function CommunicationGraph({
       name: a.agentName,
       x: cx + RADIUS * Math.cos(angle),
       y: cy + RADIUS * Math.sin(angle),
+      kind: "agent",
     };
   });
+  if (
+    edges.some((e) => e.toAgentId === BOARD_ID || e.fromAgentId === BOARD_ID)
+  ) {
+    nodes.push({ id: BOARD_ID, name: "Board", x: cx, y: cy, kind: "board" });
+  }
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const byIdName = new Map(nodes.map((n) => [n.id, n.name]));
   const maxCount = Math.max(1, ...edges.map((e) => e.messageCount));
@@ -111,6 +120,16 @@ export function CommunicationGraph({
               <stop offset="0%" stopColor="#c4374f" />
               <stop offset="100%" stopColor="#8b1a2f" />
             </radialGradient>
+            <linearGradient
+              id="stat-board-grad"
+              x1="0%"
+              y1="0%"
+              x2="100%"
+              y2="100%"
+            >
+              <stop offset="0%" stopColor="#3d4657" />
+              <stop offset="100%" stopColor="#1d2430" />
+            </linearGradient>
           </defs>
 
           {/* faint orbit ring behind the nodes */}
@@ -133,13 +152,15 @@ export function CommunicationGraph({
             const dist = Math.hypot(dx, dy) || 1;
             const ux = dx / dist;
             const uy = dy / dist;
+            const fromR = a.kind === "board" ? BOARD_R : NODE_R;
+            const toR = b.kind === "board" ? BOARD_R : NODE_R;
             // Trim ends so strokes and arrowheads stop at the node circles,
             // and bow each direction to its own side so A→B and B→A never
             // overlap.
-            const sx = a.x + ux * (NODE_R + 3);
-            const sy = a.y + uy * (NODE_R + 3);
-            const ex = b.x - ux * (NODE_R + 7);
-            const ey = b.y - uy * (NODE_R + 7);
+            const sx = a.x + ux * (fromR + 3);
+            const sy = a.y + uy * (fromR + 3);
+            const ex = b.x - ux * (toR + 7);
+            const ey = b.y - uy * (toR + 7);
             const bow = Math.min(22, dist * 0.12);
             const qx = (sx + ex) / 2 - uy * bow;
             const qy = (sy + ey) / 2 + ux * bow;
@@ -165,49 +186,97 @@ export function CommunicationGraph({
             );
           })}
 
-          {nodes.map((n) => (
-            <g key={n.id}>
-              <circle
-                cx={n.x}
-                cy={n.y}
-                r={NODE_R + 6}
-                fill="#8b1a2f"
-                opacity={0.16}
-              />
-              <circle
-                cx={n.x}
-                cy={n.y}
-                r={NODE_R}
-                fill="url(#stat-node-grad)"
-                stroke="rgba(255,255,255,0.28)"
-                strokeWidth={1}
-              >
-                <title>{n.name}</title>
-              </circle>
-              <text
-                x={n.x}
-                y={n.y + 4}
-                textAnchor="middle"
-                fontSize={11}
-                fontWeight={700}
-                fill="#fff"
-                style={{ pointerEvents: "none", userSelect: "none" }}
-              >
-                {initials(n.name)}
-              </text>
-              <text
-                x={n.x}
-                y={n.y + NODE_R + 17}
-                textAnchor="middle"
-                fontSize={10}
-                fontWeight={600}
-                fill={t.textSub}
-              >
-                {truncate(n.name)}
-                <title>{n.name}</title>
-              </text>
-            </g>
-          ))}
+          {nodes
+            .filter((n) => n.kind === "board")
+            .map((n) => (
+              <g key={n.id}>
+                <rect
+                  x={n.x - 36}
+                  y={n.y - 25}
+                  width={72}
+                  height={50}
+                  rx={8}
+                  fill="#1d2430"
+                  opacity={0.18}
+                />
+                <rect
+                  x={n.x - 30}
+                  y={n.y - 21}
+                  width={60}
+                  height={42}
+                  rx={7}
+                  fill="url(#stat-board-grad)"
+                  stroke="rgba(255,255,255,0.28)"
+                  strokeWidth={1}
+                >
+                  <title>{n.name}</title>
+                </rect>
+                <path
+                  d={`M ${n.x - 18} ${n.y - 6} H ${n.x + 18} M ${n.x - 18} ${
+                    n.y + 3
+                  } H ${n.x + 14} M ${n.x - 18} ${n.y + 12} H ${n.x + 8}`}
+                  stroke="rgba(255,255,255,0.78)"
+                  strokeWidth={2}
+                  strokeLinecap="round"
+                />
+                <text
+                  x={n.x}
+                  y={n.y - 30}
+                  textAnchor="middle"
+                  fontSize={10}
+                  fontWeight={700}
+                  fill={t.textSub}
+                >
+                  Board
+                </text>
+              </g>
+            ))}
+
+          {nodes
+            .filter((n) => n.kind === "agent")
+            .map((n) => (
+              <g key={n.id}>
+                <circle
+                  cx={n.x}
+                  cy={n.y}
+                  r={NODE_R + 6}
+                  fill="#8b1a2f"
+                  opacity={0.16}
+                />
+                <circle
+                  cx={n.x}
+                  cy={n.y}
+                  r={NODE_R}
+                  fill="url(#stat-node-grad)"
+                  stroke="rgba(255,255,255,0.28)"
+                  strokeWidth={1}
+                >
+                  <title>{n.name}</title>
+                </circle>
+                <text
+                  x={n.x}
+                  y={n.y + 4}
+                  textAnchor="middle"
+                  fontSize={11}
+                  fontWeight={700}
+                  fill="#fff"
+                  style={{ pointerEvents: "none", userSelect: "none" }}
+                >
+                  {initials(n.name)}
+                </text>
+                <text
+                  x={n.x}
+                  y={n.y + NODE_R + 17}
+                  textAnchor="middle"
+                  fontSize={10}
+                  fontWeight={600}
+                  fill={t.textSub}
+                >
+                  {truncate(n.name)}
+                  <title>{n.name}</title>
+                </text>
+              </g>
+            ))}
         </svg>
       )}
     </StatCard>
