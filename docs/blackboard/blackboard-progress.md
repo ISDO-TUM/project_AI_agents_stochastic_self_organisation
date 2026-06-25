@@ -197,7 +197,7 @@ Commit: `feat(blackboard): implement Blackboard.post and Blackboard.read`
 ## Phase 2 — Engine Build (in progress)
 
 - ✅ **Auction Engine** (`server/market_hive/auction.py`) — invitation, bid recording, taker selection, thread coverage (see below)
-- ⬜ **Convergence Engine** (`server/market_hive/convergence.py`) — confidence, conceding temperature, per-run reputation
+- ✅ **Convergence Engine** (`server/market_hive/convergence.py`) — confidence, conceding temperature, per-run reputation (see below)
 - ⬜ **Market Maker** (`server/market_hive/market_maker.py`) — LLM-powered contract decomposition _(owned by another team member)_
 - ⬜ **Orchestrator** (`server/market_hive/orchestrator.py`) — round loop, SSE streaming
 - ⬜ **Real embeddings** — replace `_ZERO_EMBEDDING` with `text-embedding-3-small` calls
@@ -245,12 +245,48 @@ abstainers-not-observers, taker/observer queries, uncovered-thread detection).
 
 ---
 
+## What Was Built — Convergence Engine (PRD §6.4)
+
+**`server/market_hive/convergence.py`** — `ConvergenceEngine` class. Turns the
+blackboard's citation/vote signals into the per-agent scalars that steer
+deliberation. Confidence and temperature are _transient_ (recomputed each round,
+fed into prompts, not persisted); reputation is persisted to the `reputation`
+table.
+
+- `compute_cold_start_confidence(run_id, thread_id)` — `confidence_0 =
+votes_received / (N_participants − 1)` from the vote sub-round. Participants =
+  distinct round-1 proposal authors; self-votes excluded to match the `(N−1)`
+  denominator.
+- `compute_confidence(run_id, thread_id, round)` — `confidence =
+citations_for_agent / max(1, total_citations)` over citations cast this round
+  in this thread. Every thread participant (anyone who posted) is included;
+  uncited authors score 0.0.
+- `temperature_floor(round)` — `T_initial + (round − 1)·delta_T`.
+- `conceding_temperature(confidence, round)` — `max(1 − confidence, floor)`,
+  clamped to `[0, t_max]`; plus `temperatures_for_round(...)` for a whole map.
+- `temperature_instruction(T)` — maps T to the four PRD natural-language bands.
+- `update_reputation(run_id, current_round, domain, ...)` — `+delta_confirm` for
+  authors of entries promoted this round (auto-detected via `round_confirmed`),
+  `−delta_reject` for authors of `deleted_draft_ids` (caller-supplied, since the
+  blackboard's soft-delete records a timestamp not a round). Read-modify-write,
+  clamped to `[0, 1]`, portable (no upsert / RETURNING).
+
+**`server/tests/test_convergence.py`** — 10 tests (temperature floor/clamp/bands,
+cold-start confidence, citation-share confidence, zero-citation case, reputation
+reward/penalty/clamp).
+
+---
+
 ## Key Decisions (for context)
 
-- **Option B scope**: Phase 1 (DB + schema) + Phase 3 (Blackboard + frontend). Market Maker, Auction Engine, Orchestrator are **out of scope** (Phase 2). _(Phase 2 now under way — Auction Engine landed.)_
+- **Option B scope**: Phase 1 (DB + schema) + Phase 3 (Blackboard + frontend). Market Maker, Auction Engine, Orchestrator were **out of scope** for Option B (Phase 2). _(Phase 2 now under way — Auction Engine and Convergence Engine both landed.)_
 - **Auction — taker ranking**: PRD §6.2 prose says "top `max_takers` by `preliminary_score`" but the same section gives a fuller `bid_score` formula. The `gamma` term (`contract.confidence`) is constant across all bidders, so it never changes the ranking — ranking by `bid_score` is equivalent to ranking by `alpha·cosine + beta·trust`. We rank by `bid_score` (the richer signal the formula exists for).
 - **Auction — abstain vs. observer**: §6.2's "observer designation" lumps abstainers with bid-and-lost agents, but the `abstain` tool spec (§8) is explicit that a voluntary abstention is a non-participant with **no** trust change, while only bid-and-lost agents become observers. We follow the tool spec: abstainers are non-participants; observers are exactly the bidders not selected.
 - **Auction — embedding fallback**: when the contract or an agent has no embedding, `invite()` cannot discriminate, so it invites inclusively (score 0.0) rather than abort. Matches the MM "never block the run" philosophy and keeps the system usable before real embeddings are wired.
+- **Convergence — confidence is transient**: there is no confidence/temperature DB column, so the engine computes them on demand and returns dicts; only `reputation` is persisted. The orchestrator injects confidence/temperature into the next round's prompts.
+- **Convergence — participant definition**: confidence is the citation share of an agent's _own posts_, so "thread participants" = distinct authors who have posted in the thread (not the bid/taker set). A taker who never posts has no confidence entry; the orchestrator can default it to 0.0 (→ max conceding temperature). This keeps the engine decoupled from the auction/bids tables and well-defined for both single- and multi-step runs.
+- **Convergence — self-vote/self-cite exclusion**: cold-start votes exclude self-votes (the `votes` table doesn't filter them, unlike `cite()`), matching the `(N−1)` denominator; per-round citation queries also defensively exclude self-citations.
+- **Convergence — deletions passed in**: `update_reputation` auto-detects promotions from `confirmed_entries.round_confirmed`, but takes `deleted_draft_ids` from the caller because the blackboard's soft-delete records `deleted_at` (a timestamp), not a round. The orchestrator supplies the IDs it just soft-deleted.
 - **Frontend state model (Option C hybrid)**: REST-initialized on mount, `dispatch()` pre-wired for SSE events in Phase 2.
 - **Zero-vector embeddings**: `content_embedding` stored as 1536 zeros. When all embeddings are zero, cosine similarity is undefined — ranking falls back to `citation_count DESC, created_at ASC`. Phase 2 replaces with real `text-embedding-3-small` calls.
 - **In-memory SQLite for tests**: `conftest.py` builds the engine against an in-memory SQLite DB (StaticPool) so the suite runs with no external Postgres.
@@ -272,6 +308,7 @@ server/
 │   ├── schemas.py              ← Created: Pydantic schemas
 │   ├── blackboard.py           ← Created: Blackboard class (Tasks 4-6)
 │   ├── auction.py              ← Created: AuctionEngine (Phase 2)
+│   ├── convergence.py          ← Created: ConvergenceEngine (Phase 2)
 │   └── tools.py                ← Blackboard + auction tools (auction tools now functional)
 ├── pyproject.toml              ← Modified: S608 per-file ignore for auction.py
 ├── tools/
@@ -285,6 +322,7 @@ server/
     ├── test_schema.py          ← Created: 4 DB migration tests
     ├── test_blackboard.py      ← Created: 12 Blackboard tests (Tasks 4-6)
     ├── test_auction.py         ← Created: 9 AuctionEngine tests (Phase 2)
+    ├── test_convergence.py     ← Created: 10 ConvergenceEngine tests (Phase 2)
     └── test_simulation.py      ← Created: 5 endpoint tests (Task 8)
 
 client/
