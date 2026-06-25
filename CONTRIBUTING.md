@@ -183,7 +183,7 @@ Re-run the setup script — the git hooks may not have been installed:
 
 ## 🐍 Python code style
 
-Configured in `api/pyproject.toml`. Enforced automatically by **ruff** and **mypy**.
+Configured in `server/pyproject.toml`. Enforced automatically by **ruff** and **mypy**.
 
 - **Line length:** 100 characters
 - **Python version:** 3.12
@@ -198,7 +198,7 @@ Active lint rules: `E/W` pycodestyle · `F` pyflakes · `I` isort · `N` pep8-na
 
 ## 🟦 TypeScript code style
 
-Configured in `app/tsconfig.json` (strict mode) and enforced by **ESLint** + **Prettier** + **tsc**.
+Configured in `client/tsconfig.json` (strict mode) and enforced by **ESLint** + **Prettier** + **tsc**.
 
 - **Line length:** 80 characters
 - **Quotes:** double · **Semicolons:** yes

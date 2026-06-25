@@ -9,6 +9,7 @@ run ``pytest``. Connection-string schemes handed out by Railway/Heroku
 
 from __future__ import annotations
 
+import hashlib
 import json
 import logging
 import os
@@ -26,6 +27,7 @@ from server.db.tables import (
     agent_files,
     agents,
     connections,
+    experiments,
     knowledge_files,
     messages,
     metadata,
@@ -74,58 +76,93 @@ def _build_engine(url: str) -> AsyncEngine:
     return engine
 
 
-async def cleanup_stale_data(engine: AsyncEngine, max_age_hours: int = 24) -> int:
-    """Delete agents and knowledge files older than *max_age_hours*.
+# Default history-retention limits (see prune_trials). Bounded so a busy
+# instance on Railway cannot grow the database without limit, while still
+# keeping enough recent runs around to compare against.
+MAX_RETAINED_TRIALS = 50
+MAX_TRIAL_AGE_DAYS = 30
 
-    Deletion respects every FK constraint by following the same order as the
-    DELETE ALL route: messages → connections → orphaned rounds → orphaned
-    trials → agents (cascades agent_files) → orphaned knowledge_files.
+
+async def cleanup_stale_data(engine: AsyncEngine, max_age_hours: int = 24) -> int:
+    """Delete agents (and their now-orphaned knowledge files) older than *max_age_hours*.
+
+    This is *canvas hygiene* only — it removes abandoned agents/files but leaves
+    the run history (trials → rounds → connections → messages) untouched. Agent
+    ids and names are snapshotted into the history, so deleting the agents keeps
+    the statistics intact. History size is bounded separately by
+    :func:`prune_trials`.
 
     Returns:
         Number of agents deleted.
     """
     cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
 
-    async with engine.connect() as conn:
+    async with engine.begin() as conn:
         stale_result = await conn.execute(select(agents.c.id).where(agents.c.created_at < cutoff))
         stale_agent_ids = [row.id for row in stale_result]
 
         if not stale_agent_ids:
             return 0
 
-        # 1. Messages whose connection touches a stale agent
-        stale_conn_result = await conn.execute(
-            select(connections.c.id).where(
-                connections.c.from_agent_id.in_(stale_agent_ids)
-                | connections.c.to_agent_id.in_(stale_agent_ids)
-            )
-        )
-        stale_conn_ids = [row.id for row in stale_conn_result]
-
-        if stale_conn_ids:
-            await conn.execute(delete(messages).where(messages.c.connection_id.in_(stale_conn_ids)))
-            await conn.execute(delete(connections).where(connections.c.id.in_(stale_conn_ids)))
-
-        # 2. Rounds and trials that are now orphaned (no remaining connections)
-        await conn.execute(delete(rounds).where(rounds.c.id.not_in(select(connections.c.round_id))))
-        await conn.execute(delete(trials).where(trials.c.id.not_in(select(rounds.c.trial_id))))
-
-        # 3. Stale agents — CASCADE removes agent_files rows
+        # Deleting agents cascades to agent_files; the history tables no longer
+        # reference agents, so they are deliberately left in place.
         await conn.execute(delete(agents).where(agents.c.id.in_(stale_agent_ids)))
 
-        # 4. Knowledge files no longer attached to any agent
+        # Knowledge files no longer attached to any agent
         await conn.execute(
             delete(knowledge_files).where(
                 knowledge_files.c.id.not_in(select(agent_files.c.file_id))
             )
         )
 
-        await conn.commit()
-
     logger.info(
         "Cleanup removed %d stale agent(s) (older than %dh)", len(stale_agent_ids), max_age_hours
     )
     return len(stale_agent_ids)
+
+
+async def prune_trials(
+    engine: AsyncEngine,
+    max_trials: int | None = MAX_RETAINED_TRIALS,
+    max_age_days: int | None = MAX_TRIAL_AGE_DAYS,
+) -> int:
+    """Bound the run history: keep the newest *max_trials* and drop those older
+    than *max_age_days*.
+
+    A trial owns all of its history through ``ON DELETE CASCADE``
+    (trials → rounds → connections → messages), so deleting the trial rows
+    removes everything beneath them. Agents and knowledge files are untouched.
+    Pass ``None`` to disable either cap.
+
+    Returns:
+        Number of trials deleted.
+    """
+    async with engine.begin() as conn:
+        ids_to_delete: set[str] = set()
+
+        if max_age_days is not None:
+            cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat(
+                timespec="seconds"
+            )
+            aged = await conn.execute(select(trials.c.id).where(trials.c.created_at < cutoff))
+            ids_to_delete.update(row.id for row in aged)
+
+        if max_trials is not None:
+            # Skip the newest max_trials rows; everything after is surplus.
+            surplus = await conn.execute(
+                select(trials.c.id)
+                .order_by(trials.c.created_at.desc(), trials.c.id.desc())
+                .offset(max_trials)
+            )
+            ids_to_delete.update(row.id for row in surplus)
+
+        if not ids_to_delete:
+            return 0
+
+        await conn.execute(delete(trials).where(trials.c.id.in_(ids_to_delete)))
+
+    logger.info("Pruned %d trial(s) from run history", len(ids_to_delete))
+    return len(ids_to_delete)
 
 
 async def _apply_column_migrations(conn: AsyncConnection) -> None:
@@ -142,6 +179,8 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             " created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL",
             "ALTER TABLE agents ADD COLUMN IF NOT EXISTS"
             " created_at TIMESTAMP WITH TIME ZONE DEFAULT now() NOT NULL",
+            # ECSAS: agent expertise vector consumed by the auction engine
+            "ALTER TABLE agents ADD COLUMN IF NOT EXISTS capability_embedding TEXT DEFAULT NULL",
             # trials: simulation tracking columns
             "ALTER TABLE trials ADD COLUMN IF NOT EXISTS mode TEXT",
             "ALTER TABLE trials ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'running'",
@@ -161,6 +200,23 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             "ALTER TABLE messages ADD COLUMN IF NOT EXISTS"
             " message_type TEXT NOT NULL DEFAULT 'unknown'",
             "ALTER TABLE messages ADD COLUMN IF NOT EXISTS created_at TEXT NOT NULL DEFAULT ''",
+            # experiments → trials FK
+            "ALTER TABLE trials ADD COLUMN IF NOT EXISTS experiment_id TEXT"
+            " REFERENCES experiments(id)",
+            # connections/messages: snapshot agent names so history survives the
+            # agents being deleted when the canvas is cleared.
+            "ALTER TABLE connections ADD COLUMN IF NOT EXISTS from_agent_name TEXT",
+            "ALTER TABLE connections ADD COLUMN IF NOT EXISTS to_agent_name TEXT",
+            "ALTER TABLE messages ADD COLUMN IF NOT EXISTS from_agent_name TEXT",
+            "ALTER TABLE messages ADD COLUMN IF NOT EXISTS to_agent_name TEXT",
+            # Drop the agent foreign keys on the history tables so deleting agents
+            # (clearing the canvas) no longer cascades away the run history /
+            # statistics. The id columns stay as denormalised snapshots. The
+            # constraint names are PostgreSQL's defaults (<table>_<column>_fkey).
+            "ALTER TABLE connections DROP CONSTRAINT IF EXISTS connections_from_agent_id_fkey",
+            "ALTER TABLE connections DROP CONSTRAINT IF EXISTS connections_to_agent_id_fkey",
+            "ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_from_agent_id_fkey",
+            "ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_to_agent_id_fkey",
         ):
             await conn.execute(text(stmt))
     elif dialect == "sqlite":
@@ -170,6 +226,7 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
         for table, col, definition in (
             ("knowledge_files", "created_at", "DATETIME DEFAULT (datetime('now'))"),
             ("agents", "created_at", "DATETIME DEFAULT (datetime('now'))"),
+            ("agents", "capability_embedding", "TEXT DEFAULT NULL"),
             ("trials", "mode", "TEXT"),
             ("trials", "status", "TEXT NOT NULL DEFAULT 'running'"),
             ("trials", "created_at", "TEXT NOT NULL DEFAULT ''"),
@@ -182,6 +239,14 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             ("messages", "to_agent_id", "TEXT"),
             ("messages", "message_type", "TEXT NOT NULL DEFAULT 'unknown'"),
             ("messages", "created_at", "TEXT NOT NULL DEFAULT ''"),
+            ("trials", "experiment_id", "TEXT"),
+            # Agent-name snapshots (see PostgreSQL branch). SQLite cannot rewrite
+            # the agent FK to SET NULL in place, but fresh test databases get the
+            # full SET NULL schema via metadata.create_all.
+            ("connections", "from_agent_name", "TEXT"),
+            ("connections", "to_agent_name", "TEXT"),
+            ("messages", "from_agent_name", "TEXT"),
+            ("messages", "to_agent_name", "TEXT"),
         ):
             result = await conn.execute(text(f"PRAGMA table_info({table})"))
             if col not in {row[1] for row in result.fetchall()}:
@@ -397,17 +462,114 @@ def deserialise_message_row(row: RowMapping) -> dict[str, Any]:
     return data
 
 
+async def resolve_experiment(
+    conn: AsyncConnection,
+    prompt: str,
+    rounds_count: int,
+    mode: str,
+    ruleset: str | None,
+    topology: str,
+    fanout: int,
+    agent_context: dict[str, str] | None,
+) -> str:
+    """Return the experiment id whose setup matches the given parameters.
+
+    If no matching experiment exists, one is created.  Two runs are considered
+    the same experiment when the full agent snapshot (id, name, system_prompt,
+    provider, model, tools, connections, attached file ids) plus all simulation
+    parameters are identical.
+    """
+    agent_rows = (
+        await conn.execute(
+            select(
+                agents.c.id,
+                agents.c.name,
+                agents.c.system_prompt,
+                agents.c.provider,
+                agents.c.model,
+                agents.c.tools,
+                agents.c.connections,
+            ).order_by(agents.c.id)
+        )
+    ).all()
+
+    file_rows = (
+        await conn.execute(
+            select(agent_files.c.agent_id, agent_files.c.file_id).order_by(
+                agent_files.c.agent_id, agent_files.c.file_id
+            )
+        )
+    ).all()
+    files_by_agent: dict[str, list[str]] = {}
+    for row in file_rows:
+        files_by_agent.setdefault(row.agent_id, []).append(row.file_id)
+
+    agent_snapshot = [
+        {
+            "id": row.id,
+            "name": row.name,
+            "system_prompt": row.system_prompt,
+            "provider": row.provider,
+            "model": row.model,
+            "tools": sorted(json.loads(row.tools)),
+            "connections": sorted(json.loads(row.connections)),
+            "file_ids": sorted(files_by_agent.get(row.id, [])),
+        }
+        for row in agent_rows
+    ]
+
+    canonical = {
+        "agents": agent_snapshot,
+        "params": {
+            "prompt": prompt,
+            "rounds": rounds_count,
+            "mode": mode,
+            "ruleset": ruleset,
+            "topology": topology,
+            "fanout": fanout,
+            "agent_context": dict(sorted(agent_context.items())) if agent_context else None,
+        },
+    }
+    setup_hash = hashlib.sha256(
+        json.dumps(canonical, sort_keys=True, ensure_ascii=True).encode()
+    ).hexdigest()
+
+    existing = await conn.scalar(
+        select(experiments.c.id).where(experiments.c.setup_hash == setup_hash)
+    )
+    if existing is not None:
+        return str(existing)
+
+    first_agent = agent_snapshot[0]["name"] if agent_snapshot else "unknown"
+    description = f"{mode} · {first_agent} +{len(agent_snapshot) - 1} more"
+    exp_id = str(uuid.uuid4())
+    await conn.execute(
+        experiments.insert().values(
+            id=exp_id,
+            setup_hash=setup_hash,
+            description=description,
+            agent_snapshot=json.dumps(agent_snapshot),
+            simulation_params=json.dumps(canonical["params"]),
+            created_at=_now_iso(),
+        )
+    )
+    await conn.commit()
+    return exp_id
+
+
 async def create_trial(
     conn: AsyncConnection,
     user_prompt: str,
     description: str,
     mode: str,
+    experiment_id: str | None = None,
 ) -> str:
     """Create a trial row for one simulation run and return its id."""
     trial_id = str(uuid.uuid4())
     await conn.execute(
         trials.insert().values(
             id=trial_id,
+            experiment_id=experiment_id,
             user_prompt=user_prompt,
             description=description,
             mode=mode,
@@ -466,11 +628,14 @@ async def create_connection(
     round_id: int,
     from_agent_id: str | None,
     to_agent_id: str | None,
+    from_agent_name: str | None = None,
+    to_agent_name: str | None = None,
 ) -> int:
     """Create a directed connection row and return its id.
 
     Agent ids are nullable so synthetic SYSTEM messages can be represented
-    without requiring a real agent row.
+    without requiring a real agent row. ``from_agent_name``/``to_agent_name`` are
+    snapshotted so the edge stays readable after the agents are deleted.
     """
     row = await conn.execute(
         select(connections.c.id).where(
@@ -489,6 +654,8 @@ async def create_connection(
                 round_id=round_id,
                 from_agent_id=from_agent_id,
                 to_agent_id=to_agent_id,
+                from_agent_name=from_agent_name,
+                to_agent_name=to_agent_name,
             )
         )
         await conn.commit()
@@ -520,6 +687,8 @@ async def create_message(
     to_agent_id: str | None,
     message_type: str,
     message: str | None,
+    from_agent_name: str | None = None,
+    to_agent_name: str | None = None,
 ) -> int:
     """Create a message row with duplicated routing metadata for easy queries."""
     result = await conn.execute(
@@ -528,6 +697,8 @@ async def create_message(
             round_id=round_id,
             from_agent_id=from_agent_id,
             to_agent_id=to_agent_id,
+            from_agent_name=from_agent_name,
+            to_agent_name=to_agent_name,
             message_type=message_type,
             message=message,
             created_at=_now_iso(),
@@ -540,6 +711,15 @@ async def create_message(
     return int(pk[0])
 
 
+async def _resolve_agent_names(conn: AsyncConnection, *agent_ids: str | None) -> dict[str, str]:
+    """Look up names for the given agent ids (skipping ``None``)."""
+    ids = {aid for aid in agent_ids if aid is not None}
+    if not ids:
+        return {}
+    rows = await conn.execute(select(agents.c.id, agents.c.name).where(agents.c.id.in_(ids)))
+    return {row.id: row.name for row in rows}
+
+
 async def record_message(
     conn: AsyncConnection,
     round_id: int,
@@ -548,8 +728,18 @@ async def record_message(
     message_type: str,
     message: str | None,
 ) -> int:
-    """Create the directed connection if needed, then store a message on it."""
-    connection_id = await create_connection(conn, round_id, from_agent_id, to_agent_id)
+    """Create the directed connection if needed, then store a message on it.
+
+    The agents' current names are snapshotted onto both the connection and the
+    message so that the history survives the agents being deleted (e.g. when the
+    canvas is cleared). Names are resolved while the agents still exist.
+    """
+    names = await _resolve_agent_names(conn, from_agent_id, to_agent_id)
+    from_agent_name = names.get(from_agent_id) if from_agent_id is not None else None
+    to_agent_name = names.get(to_agent_id) if to_agent_id is not None else None
+    connection_id = await create_connection(
+        conn, round_id, from_agent_id, to_agent_id, from_agent_name, to_agent_name
+    )
     return await create_message(
         conn,
         connection_id,
@@ -558,4 +748,6 @@ async def record_message(
         to_agent_id,
         message_type,
         message,
+        from_agent_name,
+        to_agent_name,
     )

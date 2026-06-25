@@ -43,6 +43,40 @@ async def test_get_agent_not_found(client: AsyncClient) -> None:
     assert response.status_code == 404
 
 
+async def test_get_agent_trust_empty_for_new_agent(client: AsyncClient) -> None:
+    created = (await client.post("/api/agents", json=_AGENT_PAYLOAD)).json()
+    response = await client.get(f"/api/agents/{created['id']}/trust")
+    assert response.status_code == 200
+    assert response.json() == []
+
+
+async def test_get_agent_trust_returns_scores(client: AsyncClient) -> None:
+    from sqlalchemy import text
+
+    from server.db import get_engine
+
+    created = (await client.post("/api/agents", json=_AGENT_PAYLOAD)).json()
+    async with get_engine().connect() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO agent_trust (agent_id, domain, trust_score, runs_participated) "
+                "VALUES (:aid, 'finance', 0.7, 3), (:aid, 'law', 0.4, 1)"
+            ),
+            {"aid": created["id"]},
+        )
+        await conn.commit()
+
+    response = await client.get(f"/api/agents/{created['id']}/trust")
+    assert response.status_code == 200
+    data = response.json()
+    assert len(data) == 2
+    # Ordered by trust_score DESC.
+    assert data[0]["domain"] == "finance"
+    assert data[0]["trust_score"] == 0.7
+    assert data[0]["runs_participated"] == 3
+    assert data[1]["domain"] == "law"
+
+
 async def test_replace_agent(client: AsyncClient) -> None:
     created = (await client.post("/api/agents", json=_AGENT_PAYLOAD)).json()
     updated_payload = {**_AGENT_PAYLOAD, "name": "UpdatedBot", "model": "gpt-4o-mini"}

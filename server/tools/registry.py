@@ -6,15 +6,6 @@ from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from server.tools.base import Tool
-from server.tools.builtin.blackboard_tools import (
-    AbstainTool,
-    CiteTool,
-    GetConfirmedTool,
-    PostToBlackboardTool,
-    ReadBlackboardTool,
-    SubmitBidTool,
-    VoteTool,
-)
 from server.tools.builtin.files import FilesTool
 from server.tools.builtin.registry import RegistryTool
 from server.tools.builtin.table import TableMutateTool, TableQueryTool
@@ -35,14 +26,10 @@ def get_tool(name: str) -> Tool | None:
     return _TOOLS.get(name)
 
 
+# Cross-engine builtins register here. Engine-specific tools self-register from
+# their own package (e.g. ``server.market_hive.tools``) so this shared registry
+# never imports an engine — the dependency only points engine → shared.
 register(FilesTool())
-register(ReadBlackboardTool())
-register(PostToBlackboardTool())
-register(CiteTool())
-register(VoteTool())
-register(GetConfirmedTool())
-register(SubmitBidTool())
-register(AbstainTool())
 register(RegistryTool())
 register(TableQueryTool())
 register(TableMutateTool())

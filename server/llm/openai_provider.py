@@ -12,7 +12,7 @@ from .normalizer import NormalizedToolCall, extract_openai_tool_calls
 _NEW_PARAM_MODELS: frozenset[str] = frozenset(
     {"gpt-5", "gpt-5-mini", "gpt-5-nano", "gpt-5.4", "gpt-5.4-mini", "gpt-5.4-nano"}
 )
-_DEFAULT_MAX_TOKENS = 20_000
+_DEFAULT_MAX_TOKENS = 10_000
 
 
 def _get_openai_client() -> AsyncOpenAI:

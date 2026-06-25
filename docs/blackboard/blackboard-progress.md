@@ -46,24 +46,17 @@ cd api && uv run pytest tests/ -v   # should be 38 tests, all green
 
 ## What Was Built (Tasks 1–3)
 
-### Task 1 — File-backed SQLite (`38ee252`, `0874c58`)
+### Task 1 — Persistent store: PostgreSQL via SQLAlchemy Core
 
-**`api/db/__init__.py`** — switched from `:memory:` to file-backed SQLite:
+**`server/db/__init__.py`** — the engine is built from `DATABASE_URL`:
 
-- `DB_PATH = os.getenv("DB_PATH", "./data/swarm.db")` — test fixtures set `DB_PATH=":memory:"`
-- `os.makedirs(...)` creates `./data/` directory before connecting
-- Module docstring updated to reflect configurable storage
-
-**`api/tests/conftest.py`** — pins `DB_PATH=":memory:"` for all tests:
-
-```python
-import os
-os.environ.setdefault("DB_PATH", ":memory:")  # Must be before app import
-```
+- **Production / Docker:** PostgreSQL (asyncpg). Persistence across requests and restarts is provided by Postgres — there is no `DB_PATH`/`./data/swarm.db` file.
+- **Tests:** the same SQLAlchemy Core schema is pointed at an in-memory SQLite database (StaticPool) via `conftest.py`, so no external service is needed for `pytest`.
+- Schema is defined once as `Table` objects in `server/db/tables.py` and created on startup via `metadata.create_all`; `_apply_column_migrations` adds later columns with `ALTER TABLE … IF NOT EXISTS` (Postgres) / `PRAGMA` guards (SQLite).
 
 ### Task 2 — ECSAS DB Tables (`8d7cc04`, `8890c20`)
 
-**`api/db/__init__.py`** — added two migration blocks:
+**`server/db/__init__.py`** — added two migration blocks:
 
 **MIG-02** — extends `agents` table (idempotent via `PRAGMA table_info` check):
 
@@ -73,7 +66,7 @@ os.environ.setdefault("DB_PATH", ":memory:")  # Must be before app import
 **MIG-03** — 11 new ECSAS tables (all `CREATE TABLE IF NOT EXISTS`):
 `swarm_runs`, `contracts`, `threads`, `bids`, `draft_entries`, `citations`, `votes`, `confirmed_entries`, `reputation`, `agent_trust`, `amendments` — plus 9 indexes.
 
-**`api/tests/test_schema.py`** — new test file with 4 tests:
+**`server/tests/test_schema.py`** — new test file with 4 tests:
 
 - `test_v0_tables_exist` — agents, knowledge_files, agent_files
 - `test_ecsas_tables_exist` — all 11 ECSAS tables
@@ -82,9 +75,9 @@ os.environ.setdefault("DB_PATH", ":memory:")  # Must be before app import
 
 ### Task 3 — Pydantic Schemas (`3a77e91`, `9467b85`)
 
-**`api/swarm/__init__.py`** — empty package marker
+**`server/market_hive/__init__.py`** — empty package marker
 
-**`api/swarm/schemas.py`** — 9 schema classes:
+**`server/market_hive/schemas.py`** — 9 schema classes:
 
 - `SwarmRunConfig` — run configuration with bounds-validated fields
 - `ThreadSchema`, `ContractSchema` — with JSON field validators for SQLite TEXT columns
@@ -94,14 +87,14 @@ os.environ.setdefault("DB_PATH", ":memory:")  # Must be before app import
 
 **Key fix in schemas:** `ThreadSchema` and `ContractSchema` have `@field_validator(..., mode="before")` to parse JSON strings from SQLite TEXT columns (e.g., `required_expertise: '["ml"]'` → `["ml"]`).
 
-**`api/schemas/__init__.py`** — `_SimStepType` extended with 12 ECSAS event types:
+**`server/schemas/__init__.py`** — `_SimStepType` extended with 12 ECSAS event types:
 `"bid"`, `"abstain"`, `"bb-post"`, `"bb-cite"`, `"bb-vote"`, `"bb-promote"`, `"bb-delete"`, `"bb-mention"`, `"amendment"`, `"amendment-approved"`, `"amendment-rejected"`, `"convergence"`
 
 ---
 
 ## What's Next — Task 4
 
-**Files:** create `api/swarm/blackboard.py` and `api/tests/test_blackboard.py`
+**Files:** create `server/market_hive/blackboard.py` and `server/tests/test_blackboard.py`
 
 Full code is in the plan at `docs/superpowers/plans/2026-05-23-blackboard.md` under **Task 4**.
 
@@ -109,7 +102,7 @@ Summary of what to build:
 
 ```python
 class Blackboard:
-    def __init__(self, db: aiosqlite.Connection): ...
+    def __init__(self, db: AsyncConnection): ...  # SQLAlchemy async connection
 
     async def post(self, *, run_id, thread_id, author_id, content,
                    entry_type, round, reply_to=None, mention_agents=None) -> str:
@@ -138,7 +131,7 @@ Commit: `feat(blackboard): implement Blackboard.post and Blackboard.read`
 
 ### Task 4–6 — Blackboard class (`1afd8a7`)
 
-**`api/swarm/blackboard.py`** — full `Blackboard` class with all five read/write methods:
+**`server/market_hive/blackboard.py`** — full `Blackboard` class with all five read/write methods:
 
 - `post()` — INSERT into `draft_entries`, zero-vector embedding stub, returns `entry_id`
 - `read()` — LEFT JOIN with `agents` (author_name) + `citations` (citation_count), mention-pinning, `is_visible` filter, ranked `citation_count DESC, created_at ASC`
@@ -148,51 +141,51 @@ Commit: `feat(blackboard): implement Blackboard.post and Blackboard.read`
 - `check_promotions()` — dynamic threshold M = max(1, n//3+1), double-promotion guard, inserts to `confirmed_entries`
 - `soft_delete_stale()` — round-1 exemption, `changes()` for count, portable (no RETURNING)
 
-**`api/tests/test_blackboard.py`** — 12 tests covering all methods (TDD).
+**`server/tests/test_blackboard.py`** — 12 tests covering all methods (TDD).
 
 ### Task 7 — Blackboard Tools (`12cae25`)
 
-**`api/tools/builtin/blackboard_tools.py`** — 7 tool classes:
+**`server/tools/builtin/blackboard_tools.py`** — 7 tool classes:
 
 - `ReadBlackboardTool`, `PostToBlackboardTool`, `CiteTool`, `VoteTool`, `GetConfirmedTool` — fully implemented, delegate to `Blackboard` class
 - `SubmitBidTool`, `AbstainTool` — Phase 2 stubs (return static JSON)
 
-**`api/tools/registry.py`** — all 7 tools registered alongside `FilesTool`.
+**`server/tools/registry.py`** — all 7 tools registered alongside `FilesTool`.
 
 ### Task 8 — Simulation REST Endpoints (`1f0d03a`)
 
-**`api/routes/simulation.py`** — two endpoints:
+**`server/routes/simulation.py`** — two endpoints:
 
 - `GET /api/simulation/{run_id}/blackboard` — returns `BlackboardResponse` with `threads`, `confirmed`, `draft` (tree-nested via `_build_draft_tree`). Query params: `thread_id`, `layer` (draft/confirmed/both), `include_deleted`. 404 for unknown run.
 - `POST /api/simulation/seed` — creates run+contract+thread+anchor, seeds draft proposals from given `agent_ids`. Gated on `DEBUG=true` (returns 403 in production).
 
-**`api/routes/__init__.py`** + **`api/index.py`** — router exported and mounted.
+**`server/routes/__init__.py`** + **`server/index.py`** — router exported and mounted.
 
-**`api/tests/test_simulation.py`** — 5 tests (404, seed, blackboard retrieval, thread filter, DEBUG gate).
+**`server/tests/test_simulation.py`** — 5 tests (404, seed, blackboard retrieval, thread filter, DEBUG gate).
 
 ### Tasks 9–14 — Frontend (`cfb074f`)
 
-**`app/lib/types.ts`** — added `SwarmSimStepType` (union of all ECSAS event types), `ThreadInfo`, `ConfirmedEntry`, `DraftEntry` (recursive), `BlackboardState`.
+**`client/lib/types.ts`** — added `SwarmSimStepType` (union of all ECSAS event types), `ThreadInfo`, `ConfirmedEntry`, `DraftEntry` (recursive), `BlackboardState`.
 
-**`app/hooks/useBlackboard.ts`** — `useBlackboard(runId)` hook:
+**`client/hooks/useBlackboard.ts`** — `useBlackboard(runId)` hook:
 
 - REST-fetches on `runId` change, populates `BlackboardState`
 - `dispatch(event)` applies optimistic updates for `bb-post`, `bb-promote`, `bb-delete`, `bb-cite`, `bb-vote`
 
-**`app/components/draft-entry.tsx`** — `DraftEntryComponent` — recursive, depth-indented, shows badge (P/R/V/⚙), author, round, citation count, children.
+**`client/components/draft-entry.tsx`** — `DraftEntryComponent` — recursive, depth-indented, shows badge (P/R/V/⚙), author, round, citation count, children.
 
-**`app/components/confirmed-section.tsx`** — `ConfirmedSection` — gold-bordered anchors (📌) and findings (✅).
+**`client/components/confirmed-section.tsx`** — `ConfirmedSection` — gold-bordered anchors (📌) and findings (✅).
 
-**`app/components/draft-section.tsx`** — `DraftSection` — wraps `DraftEntryComponent` list with section header.
+**`client/components/draft-section.tsx`** — `DraftSection` — wraps `DraftEntryComponent` list with section header.
 
-**`app/components/blackboard-panel.tsx`** — `BlackboardPanel` — full panel with:
+**`client/components/blackboard-panel.tsx`** — `BlackboardPanel` — full panel with:
 
 - Thread tabs (§1, §2, …)
 - Loading / error / empty states
 - "Seed test data" button (calls `POST /api/simulation/seed`)
 - Close (×) button
 
-**`app/components/app.tsx`** — wired:
+**`client/components/app.tsx`** — wired:
 
 - `runId` state added
 - Canvas container shrinks to 30% width when `runId` is set
@@ -203,9 +196,9 @@ Commit: `feat(blackboard): implement Blackboard.post and Blackboard.read`
 
 ## What's Next — Phase 2 (Out of Scope for this branch)
 
-- **Market Maker** (`api/swarm/market_maker.py`) — LLM-powered contract decomposition
-- **Auction Engine** (`api/swarm/auction.py`) — bid evaluation, taker selection
-- **Orchestrator** (`api/swarm/orchestrator.py`) — round loop, SSE streaming
+- **Market Maker** (`server/market_hive/market_maker.py`) — LLM-powered contract decomposition
+- **Auction Engine** (`server/market_hive/auction.py`) — bid evaluation, taker selection
+- **Orchestrator** (`server/market_hive/orchestrator.py`) — round loop, SSE streaming
 - **Real embeddings** — replace `_ZERO_EMBEDDING` with `text-embedding-3-small` calls
 - **Canvas swarm nodes** — Market Maker node, Blackboard node, swarm animations
 - **SSE wiring** — connect `useBlackboard.dispatch` to the `GET /api/simulation/swarm` SSE stream
@@ -217,8 +210,8 @@ Commit: `feat(blackboard): implement Blackboard.post and Blackboard.read`
 - **Option B scope**: Phase 1 (DB + schema) + Phase 3 (Blackboard + frontend). Market Maker, Auction Engine, Orchestrator are **out of scope** (Phase 2).
 - **Frontend state model (Option C hybrid)**: REST-initialized on mount, `dispatch()` pre-wired for SSE events in Phase 2.
 - **Zero-vector embeddings**: `content_embedding` stored as 1536 zeros. When all embeddings are zero, cosine similarity is undefined — ranking falls back to `citation_count DESC, created_at ASC`. Phase 2 replaces with real `text-embedding-3-small` calls.
-- **`DB_PATH=":memory:"` for tests**: Set in `conftest.py` BEFORE `from api.index import app` (import order matters).
-- **MIG-02 idempotency**: SQLite doesn't support `ALTER TABLE IF NOT EXISTS` — solved by reading `PRAGMA table_info(agents)` and checking existing column names.
+- **In-memory SQLite for tests**: `conftest.py` builds the engine against an in-memory SQLite DB (StaticPool) so the suite runs with no external Postgres.
+- **MIG-02 idempotency**: SQLite doesn't support `ALTER TABLE IF NOT EXISTS` — solved by reading `PRAGMA table_info(agents)` and checking existing column names; Postgres uses `ADD COLUMN IF NOT EXISTS`.
 - **`DraftEntrySchema.author_name`**: NOT a DB column — populated via `COALESCE(a.name, de.author_id) AS author_name` in the Blackboard.read() SQL query. Default `""` for safety.
 - **`citation_count` on drafts**: NOT a DB column on `draft_entries` — computed via `COUNT(*)` JOIN from `citations` table in Blackboard.read(). Default `0`.
 
@@ -227,10 +220,11 @@ Commit: `feat(blackboard): implement Blackboard.post and Blackboard.read`
 ## File Map
 
 ```
-api/
-├── db/__init__.py              ← Modified: file-backed + MIG-02 + MIG-03
+server/
+├── db/tables.py                ← SQLAlchemy Core schema (MIG-02 + MIG-03)
+├── db/__init__.py              ← Modified: column migrations (MIG-02)
 ├── schemas/__init__.py         ← Modified: extended _SimStepType
-├── swarm/
+├── market_hive/
 │   ├── __init__.py             ← Created (empty)
 │   ├── schemas.py              ← Created: 9 Pydantic schemas
 │   └── blackboard.py           ← Created: Blackboard class (Tasks 4-6)
@@ -242,12 +236,12 @@ api/
 │   └── __init__.py             ← Modified: exports simulation_router (Task 8)
 ├── index.py                    ← Modified: mounts simulation_router (Task 8)
 └── tests/
-    ├── conftest.py             ← Modified: DB_PATH=:memory:
+    ├── conftest.py             ← Modified: in-memory SQLite engine
     ├── test_schema.py          ← Created: 4 DB migration tests
     ├── test_blackboard.py      ← Created: 12 Blackboard tests (Tasks 4-6)
     └── test_simulation.py      ← Created: 5 endpoint tests (Task 8)
 
-app/
+client/
 ├── lib/types.ts                ← Modified: ECSAS swarm types (Task 9)
 ├── hooks/
 │   └── useBlackboard.ts        ← Created: REST-init + SSE-ready dispatch (Task 10)

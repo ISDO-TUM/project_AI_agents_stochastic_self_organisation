@@ -10,7 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_en
 from sqlalchemy.pool import StaticPool
 
 from server.db.tables import metadata
-from server.swarm.blackboard import Blackboard
+from server.market_hive.blackboard import Blackboard
 
 
 @pytest.fixture
@@ -288,6 +288,38 @@ async def test_cite_skips_self_citation(db: AsyncConnection) -> None:
 
     assert result["cited"] == 0
     assert result["skipped_self"] == 1
+
+
+async def test_cite_deduplicates_repeated_entry_ids(db: AsyncConnection) -> None:
+    """A duplicate entry_id in one call must not trip the UNIQUE constraint.
+
+    The same agent citing the same entry twice in one round would otherwise raise
+    an IntegrityError that aborts the whole transaction on PostgreSQL. De-duping
+    plus per-insert savepoints keep the valid citation and stay portable.
+    """
+    run_id = str(uuid.uuid4())
+    thread_id = str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+
+    bb = Blackboard(db)
+    entry_id = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_a,
+        content="Proposal",
+        entry_type="proposal",
+        round=1,
+    )
+    result = await bb.cite(
+        run_id=run_id,
+        citing_agent_id=agent_b,
+        entry_ids=[entry_id, entry_id, entry_id],
+        round=2,
+    )
+
+    assert result["cited"] == 1
+    entries = await bb.read(run_id=run_id, query="", thread_id=thread_id)
+    assert entries[0].citation_count == 1
 
 
 async def test_vote_inserts_record(db: AsyncConnection) -> None:
