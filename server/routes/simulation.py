@@ -105,6 +105,7 @@ async def run_simulation(
         topology=body.topology,
         fanout=body.fanout,
         agent_context=body.agent_context,
+        reuse_existing=False,
     )
 
     trial_ids = [

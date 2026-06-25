@@ -306,6 +306,38 @@ async def test_create_connection_reuses_system_connection(client: AsyncClient) -
     assert second_id == first_id
 
 
+async def test_resolve_experiment_can_create_fresh_runs_for_same_setup(
+    client: AsyncClient,
+) -> None:
+    await _create_agent(client, "Agent A")
+
+    async with get_engine().connect() as conn:
+        first = await resolve_experiment(
+            conn,
+            "Prompt",
+            3,
+            "bidding",
+            None,
+            "static",
+            3,
+            None,
+            reuse_existing=False,
+        )
+        second = await resolve_experiment(
+            conn,
+            "Prompt",
+            3,
+            "bidding",
+            None,
+            "static",
+            3,
+            None,
+            reuse_existing=False,
+        )
+
+    assert first != second
+
+
 async def test_clear_board_preserves_history_and_stats(client: AsyncClient) -> None:
     """Clearing the canvas deletes agents but keeps the run history + statistics.
 
