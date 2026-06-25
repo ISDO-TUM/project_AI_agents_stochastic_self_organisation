@@ -81,6 +81,24 @@ AGENTS: list[dict[str, Any]] = [
         "tools": ["files"],
         "connections": [],
     },
+    {
+        "name": "Data Analyst (RPT)",
+        "description": "Data analyst powered by OpenAI and SAP-RPT for tabular predictions.",
+        "system_prompt": (
+            "You are an expert data analyst. You base your conclusions on hard data and "
+            "predictive models. Load a CSV dataset with the table_query tool, then use "
+            "table_predict to predict a blank column with SAP-RPT and write it back into "
+            "the table; for ad-hoc rows use rpt_predict, and rpt_chat for natural-language "
+            "what-if questions. When you receive predictions, incorporate their confidence "
+            "scores into your own reasoning. A high RPT confidence should give you strong "
+            "conviction in your position. Always cite the RPT confidence scores in your "
+            "arguments during deliberation."
+        ),
+        "provider": "openai",
+        "model": "gpt-4o",
+        "tools": ["table_query", "table_mutate", "table_predict", "rpt_predict", "rpt_chat"],
+        "connections": [],
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -103,6 +121,16 @@ KNOWLEDGE_FILES: dict[str, list[dict[str, str]]] = {
             "content": (
                 "GPT-4o-mini: $0.15 per 1M input tokens, $0.60 per 1M output tokens.\n"
                 "GPT-4o: $2.50 per 1M input tokens, $10.00 per 1M output tokens."
+            ),
+        },
+        {
+            "name": "equipment_sensor_data.json",
+            "content": (
+                "[\n"
+                '  {"equipment_id": "E001", "operating_hours": 8500, "rul_days": 120},\n'
+                '  {"equipment_id": "E002", "operating_hours": 12000, "rul_days": 30},\n'
+                '  {"equipment_id": "E003", "operating_hours": 9200, "rul_days": "[PREDICT]"}\n'
+                "]"
             ),
         },
     ],

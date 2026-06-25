@@ -42,6 +42,11 @@ class RequestCredentials(BaseModel):
     keys: dict[str, SecretStr] = Field(default_factory=dict)
     base_urls: dict[str, str] = Field(default_factory=dict)
     proxy_key: SecretStr | None = None
+    # SAP-RPT is not an LLM provider, so it lives outside ``keys``: it powers the
+    # tabular prediction tools (rpt_predict / rpt_chat / table_predict) rather than
+    # running an agent. Same BYOK story though — header first, env as fallback.
+    sap_rpt_key: SecretStr | None = None
+    sap_rpt_base_url: str | None = None
 
     def resolve_key(self, provider: str) -> str | None:
         """Header provider key > header proxy key > env provider key > env proxy key."""
@@ -61,6 +66,18 @@ class RequestCredentials(BaseModel):
 
     def has_key(self, provider: str) -> bool:
         return self.resolve_key(provider) is not None
+
+    def resolve_sap_rpt_key(self) -> str | None:
+        """SAP-RPT API key: request header > env ``SAP_RPT_API_KEY``."""
+        if self.sap_rpt_key is not None:
+            return self.sap_rpt_key.get_secret_value()
+        return os.environ.get("SAP_RPT_API_KEY") or None
+
+    def resolve_sap_rpt_base_url(self) -> str | None:
+        """SAP-RPT base URL: request header > env ``SAP_RPT_BASE_URL`` > None (client default)."""
+        if self.sap_rpt_base_url:
+            return self.sap_rpt_base_url
+        return os.environ.get("SAP_RPT_BASE_URL") or None
 
 
 _current: ContextVar[RequestCredentials | None] = ContextVar("llm_credentials", default=None)
@@ -97,6 +114,8 @@ def _build(
     anthropic_base_url: str | None,
     groq_base_url: str | None,
     gemini_base_url: str | None,
+    sap_rpt_key: str | None,
+    sap_rpt_base_url: str | None,
 ) -> RequestCredentials:
     raw_keys = {
         "openai": openai_key,
@@ -116,6 +135,8 @@ def _build(
         keys=keys,
         base_urls=base_urls,
         proxy_key=SecretStr(proxy_key) if proxy_key else None,
+        sap_rpt_key=SecretStr(sap_rpt_key) if sap_rpt_key else None,
+        sap_rpt_base_url=sap_rpt_base_url or None,
     )
 
 
@@ -129,6 +150,8 @@ async def use_credentials(
     x_llm_anthropic_base_url: Annotated[str | None, Header()] = None,
     x_llm_groq_base_url: Annotated[str | None, Header()] = None,
     x_llm_gemini_base_url: Annotated[str | None, Header()] = None,
+    x_sap_rpt_key: Annotated[str | None, Header()] = None,
+    x_sap_rpt_base_url: Annotated[str | None, Header()] = None,
 ) -> AsyncIterator[None]:
     """FastAPI dependency: publish per-request credentials on the ContextVar."""
     creds = _build(
@@ -141,6 +164,8 @@ async def use_credentials(
         anthropic_base_url=x_llm_anthropic_base_url,
         groq_base_url=x_llm_groq_base_url,
         gemini_base_url=x_llm_gemini_base_url,
+        sap_rpt_key=x_sap_rpt_key,
+        sap_rpt_base_url=x_sap_rpt_base_url,
     )
     token = _current.set(creds)
     try:

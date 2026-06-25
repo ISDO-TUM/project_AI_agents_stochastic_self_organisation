@@ -94,3 +94,21 @@ CSV is the only supported format today. The format boundary is isolated inside `
 ## Demo
 
 `demos/tabular-prediction.json` contains a single predictor agent wired to a Titanic sample dataset (8 rows, `survived` column empty). Import it, run with a prompt like "predict survival for every passenger", and the result table appears at the top of the activity log.
+
+---
+
+## SAP-RPT integration: the `table_predict` tool
+
+The demo above lets the agent's own LLM fill the column. When you have access to the **SAP-RPT** tabular foundation model, the `table_predict` tool closes the loop with real, confidence-scored predictions — it is the read → predict → mutate bridge between this table workspace and SAP-RPT.
+
+Give an agent `table_query` + `table_predict` (and optionally `table_mutate`), then:
+
+1. `table_query` `action='load'` the attached dataset.
+2. `table_predict` with `target_column` set to the column to fill. Rows where that column is **already filled** become SAP-RPT's in-context examples; rows where it is **blank** are predicted. The predictions are written back into the table (in place, or into `output_column` if you want to keep the original), versioned and audited exactly like a `table_mutate` write — so downstream agents see them immediately.
+3. `table_query` `action='export'` to retrieve the completed CSV.
+
+The response includes the SAP-RPT confidence per row plus a mean-confidence guidance line that an agent can use to calibrate its conviction during deliberation.
+
+`table_predict` needs a SAP-RPT API key. Enter it in the UI's **API Keys** dialog (the **SAP-RPT** entry, sent as the `X-SAP-RPT-Key` header) or set `SAP_RPT_API_KEY` in `.env`; the base URL defaults to `https://rpt.cloud.sap` and can be overridden with `SAP_RPT_BASE_URL`. For ad-hoc rows that are not backed by a loaded table, `rpt_predict` (raw JSON rows) and `rpt_chat` (natural-language what-if questions) remain available.
+
+`demos/predictive-maintenance.json` is a three-agent consensus example: a **Data Analyst** loads `equipment-maintenance.csv`, predicts the blank `rul_days` (remaining useful life) column with `table_predict`, and a **Strategic Analyst** and **Risk Assessor** read the shared table and deliberate over whether to take each machine offline.

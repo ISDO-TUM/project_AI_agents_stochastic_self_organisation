@@ -6,6 +6,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 
+from server.market_hive.auction import AuctionEngine
 from server.market_hive.blackboard import Blackboard
 from server.tools.base import Tool
 
@@ -220,7 +221,7 @@ class GetConfirmedTool(Tool):
         return "\n\n---\n\n".join(lines)
 
 
-# ── Stub auction tools (schema-complete; execute deferred to Phase 2) ────────
+# ── Auction tools (record bids/abstentions via the AuctionEngine) ────────────
 
 
 class SubmitBidInput(BaseModel):
@@ -247,7 +248,26 @@ class SubmitBidTool(Tool):
     async def execute(
         self, validated_input: BaseModel, context: dict[str, Any] | None = None
     ) -> str:
-        return '{"ok": true, "preliminary_score": 0.0}'
+        if not isinstance(validated_input, SubmitBidInput):
+            raise TypeError(f"Expected SubmitBidInput, got {type(validated_input).__name__}")
+        ctx = context or {}
+        db = ctx["db"]
+        run_id: str = ctx["run_id"]
+        agent_id: str = ctx["agent_id"]
+        contract_id: str | None = ctx.get("contract_id")
+        # The orchestrator passes the invitation's preliminary_score for this agent.
+        preliminary_score: float = ctx.get("preliminary_score", 0.0)
+
+        engine = AuctionEngine(db)
+        await engine.record_bid(
+            run_id=run_id,
+            agent_id=agent_id,
+            contract_id=contract_id,
+            thread_id=validated_input.thread_id,
+            justification=validated_input.justification,
+            preliminary_score=preliminary_score,
+        )
+        return f'{{"ok": true, "preliminary_score": {preliminary_score}}}'
 
 
 class AbstainTool(Tool):
@@ -258,6 +278,22 @@ class AbstainTool(Tool):
     async def execute(
         self, validated_input: BaseModel, context: dict[str, Any] | None = None
     ) -> str:
+        if not isinstance(validated_input, AbstainInput):
+            raise TypeError(f"Expected AbstainInput, got {type(validated_input).__name__}")
+        ctx = context or {}
+        db = ctx["db"]
+        run_id: str = ctx["run_id"]
+        agent_id: str = ctx["agent_id"]
+        contract_id: str | None = ctx.get("contract_id")
+
+        engine = AuctionEngine(db)
+        await engine.record_abstention(
+            run_id=run_id,
+            agent_id=agent_id,
+            contract_id=contract_id,
+            thread_id=validated_input.thread_id,
+            reason=validated_input.reason,
+        )
         return '{"ok": true}'
 
 
