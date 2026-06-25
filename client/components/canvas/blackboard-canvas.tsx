@@ -2,21 +2,20 @@
 
 import { useState, useRef, useCallback } from "react";
 import { createPortal } from "react-dom";
-import { BlackboardState, ConfirmedEntry, DraftEntry } from "@/lib/types";
+import { BlackboardState } from "@/lib/types";
 import { useTheme } from "@/lib/theme-context";
-import { getTheme, BURG, BURG_LT, BURG_DIM } from "@/lib/theme";
+import { getTheme, BURG, BURG_LT } from "@/lib/theme";
 import {
-  Pin,
-  FileText,
-  MessageSquare,
-  CheckCircle2,
   Layers,
   FlaskConical,
   GripHorizontal,
   Maximize2,
   X,
 } from "lucide-react";
-import { MarkdownRenderer } from "@/components/markdown-renderer";
+import { computePromotionThreshold } from "@/lib/blackboard-utils";
+import { ProposalCard } from "./blackboard/proposal-card";
+import { ThreadedEntry } from "./blackboard/reply-thread";
+import { ConfirmedCard } from "./blackboard/confirmed-card";
 
 interface BlackboardCanvasProps {
   state: BlackboardState;
@@ -32,114 +31,8 @@ interface BlackboardCanvasProps {
   height: number;
   onHeightChange: (h: number) => void;
   zoom?: number;
-}
-
-function entryTypeStyle(type: ConfirmedEntry["entry_type"]) {
-  if (type === "anchor")
-    return {
-      icon: <Pin size={11} strokeWidth={2} color={BURG_LT} />,
-      label: "ANCHOR",
-      color: BURG_LT,
-      bg: BURG_DIM,
-      border: "rgba(139,26,47,0.3)",
-    };
-  if (type === "finding")
-    return {
-      icon: <CheckCircle2 size={11} strokeWidth={2} color="#3dba8c" />,
-      label: "FINDING",
-      color: "#3dba8c",
-      bg: "rgba(61,186,140,0.08)",
-      border: "rgba(61,186,140,0.25)",
-    };
-  return {
-    icon: <FileText size={11} strokeWidth={2} color="#7b9ec0" />,
-    label: "SYSTEM",
-    color: "#7b9ec0",
-    bg: "rgba(123,158,192,0.08)",
-    border: "rgba(123,158,192,0.25)",
-  };
-}
-
-function draftTypeColor(type: DraftEntry["entry_type"]) {
-  if (type === "proposal") return BURG_LT;
-  if (type === "reply") return "#7b9ec0";
-  if (type === "vote") return "#b5860d";
-  return "#888";
-}
-
-function DraftCard({
-  entry,
-  depth = 0,
-}: {
-  entry: DraftEntry;
-  depth?: number;
-}) {
-  const { dark } = useTheme();
-  const t = getTheme(dark);
-  if (!entry.is_visible) return null;
-
-  return (
-    <div style={{ marginLeft: depth * 14, marginBottom: 6 }}>
-      <div
-        style={{
-          background: dark ? "rgba(255,255,255,0.03)" : "rgba(0,0,0,0.025)",
-          border: `1px solid ${t.border}`,
-          borderLeft: `2.5px solid ${draftTypeColor(entry.entry_type)}`,
-          borderRadius: 7,
-          padding: "7px 10px",
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 6,
-            marginBottom: 4,
-          }}
-        >
-          <MessageSquare
-            size={10}
-            strokeWidth={2}
-            color={draftTypeColor(entry.entry_type)}
-          />
-          <span
-            style={{
-              fontSize: 9.5,
-              fontWeight: 700,
-              color: draftTypeColor(entry.entry_type),
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
-            }}
-          >
-            {entry.entry_type}
-          </span>
-          <span style={{ fontSize: 9.5, color: t.textDim }}>·</span>
-          <span
-            style={{
-              fontSize: 9.5,
-              color: t.textDim,
-              fontFamily: "'JetBrains Mono', monospace",
-            }}
-          >
-            {entry.author_name ?? entry.author_id.slice(0, 6)}
-          </span>
-          {entry.citation_count > 0 && (
-            <span
-              style={{ marginLeft: "auto", fontSize: 9.5, color: t.textDim }}
-            >
-              ♡ {entry.citation_count}
-            </span>
-          )}
-        </div>
-        <div style={{ fontSize: 11.5, color: t.textSub, lineHeight: 1.5 }}>
-          <MarkdownRenderer content={entry.content} />
-        </div>
-      </div>
-      {entry.children.map((child) => (
-        <DraftCard key={child.id} entry={child} depth={depth + 1} />
-      ))}
-    </div>
-  );
+  /** Filters both tabs to one thread; null/undefined shows all threads. */
+  activeThreadId?: string | null;
 }
 
 export function BlackboardCanvas({
@@ -154,6 +47,7 @@ export function BlackboardCanvas({
   height,
   onHeightChange,
   zoom = 1,
+  activeThreadId = null,
 }: BlackboardCanvasProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -221,21 +115,13 @@ export function BlackboardCanvas({
         onWidthChange(
           Math.max(
             240,
-            Math.min(
-              900,
-              resizeStart.current.startW +
-                (me.clientX - resizeStart.current.mx),
-            ),
+            Math.min(900, resizeStart.current.startW + (me.clientX - resizeStart.current.mx)),
           ),
         );
         onHeightChange(
           Math.max(
             180,
-            Math.min(
-              800,
-              resizeStart.current.startH +
-                (me.clientY - resizeStart.current.my),
-            ),
+            Math.min(800, resizeStart.current.startH + (me.clientY - resizeStart.current.my)),
           ),
         );
       };
@@ -250,9 +136,25 @@ export function BlackboardCanvas({
     [width, height, onWidthChange, onHeightChange],
   );
 
-  const hasContent = state.confirmed.length > 0 || state.draft.length > 0;
-  const activeThread = state.threads[0] ?? null;
-  const visibleDraft = state.draft.filter((e) => e.is_visible);
+  const filteredConfirmed = activeThreadId
+    ? state.confirmed.filter((e) => e.thread_id === activeThreadId)
+    : state.confirmed;
+  const filteredDraft = activeThreadId
+    ? state.draft.filter((e) => e.thread_id === activeThreadId)
+    : state.draft;
+  const hasContent = filteredConfirmed.length > 0 || filteredDraft.length > 0;
+  const activeThread =
+    state.threads.find((th) => th.id === activeThreadId) ?? state.threads[0] ?? null;
+  const visibleDraft = filteredDraft.filter((e) => e.is_visible);
+  const threshold = computePromotionThreshold(filteredDraft);
+  const promotedMap = new Map(
+    filteredConfirmed
+      .filter((c) => c.source_draft_id)
+      .map((c) => [c.source_draft_id as string, c.round_confirmed] as const),
+  );
+  const idleMessage = runId
+    ? "No entries yet."
+    : "No active run — type a prompt or seed test data.";
 
   const posStyle: React.CSSProperties = pos
     ? { left: pos.x, top: pos.y }
@@ -285,7 +187,6 @@ export function BlackboardCanvas({
         zIndex: 20,
         transform: `scale(${zoom})`,
         transformOrigin: "top left",
-        // shadow so it floats visually
         filter: "drop-shadow(0 8px 32px rgba(0,0,0,0.35))",
       }}
     >
@@ -305,12 +206,7 @@ export function BlackboardCanvas({
           cursor: "grab",
         }}
       >
-        <GripHorizontal
-          size={11}
-          strokeWidth={2}
-          color={BURG_LT}
-          style={{ opacity: 0.5, flexShrink: 0 }}
-        />
+        <GripHorizontal size={11} strokeWidth={2} color={BURG_LT} style={{ opacity: 0.5, flexShrink: 0 }} />
         <Layers size={13} strokeWidth={1.8} color={BURG_LT} />
         <span
           style={{
@@ -326,9 +222,7 @@ export function BlackboardCanvas({
         </span>
         {activeThread && (
           <>
-            <span style={{ fontSize: 10, color: "rgba(139,26,47,0.5)" }}>
-              ·
-            </span>
+            <span style={{ fontSize: 10, color: "rgba(139,26,47,0.5)" }}>·</span>
             <span
               style={{
                 fontSize: 10.5,
@@ -345,14 +239,7 @@ export function BlackboardCanvas({
             </span>
           </>
         )}
-        <div
-          style={{
-            marginLeft: "auto",
-            display: "flex",
-            gap: 8,
-            alignItems: "center",
-          }}
-        >
+        <div style={{ marginLeft: "auto", display: "flex", gap: 8, alignItems: "center" }}>
           {!runId && onSeed && (
             <button
               onClick={onSeed}
@@ -385,13 +272,8 @@ export function BlackboardCanvas({
                   width: 6,
                   height: 6,
                   borderRadius: "50%",
-                  background: state.loading
-                    ? "#b5860d"
-                    : hasContent
-                      ? "#3dba8c"
-                      : t.textDim,
-                  boxShadow:
-                    hasContent && !state.loading ? "0 0 5px #3dba8c88" : "none",
+                  background: state.loading ? "#b5860d" : hasContent ? "#3dba8c" : t.textDim,
+                  boxShadow: hasContent && !state.loading ? "0 0 5px #3dba8c88" : "none",
                 }}
               />
               <span
@@ -402,13 +284,10 @@ export function BlackboardCanvas({
                   whiteSpace: "nowrap",
                 }}
               >
-                {state.loading
-                  ? "syncing…"
-                  : `${state.confirmed.length}C · ${visibleDraft.length}D`}
+                {state.loading ? "syncing…" : `${filteredConfirmed.length}C · ${visibleDraft.length}D`}
               </span>
             </>
           )}
-          {/* Expand to fullscreen */}
           <button
             onClick={() => setExpanded(true)}
             title="Expand blackboard"
@@ -428,70 +307,45 @@ export function BlackboardCanvas({
         </div>
       </div>
 
-      {/* ── Tab bar (only when there's a run) ── */}
-      {runId && (
-        <div
-          style={{
-            display: "flex",
-            gap: 4,
-            padding: "6px 14px",
-            background: dark ? "rgba(10,8,20,0.9)" : "rgba(240,238,252,0.95)",
-            border: `1px solid rgba(139,26,47,0.22)`,
-            borderTop: "none",
-            borderBottom: "none",
-            backdropFilter: "blur(12px)",
-          }}
-          onMouseDown={(e) => e.stopPropagation()} // don't trigger header drag
-        >
-          <button
-            style={tabStyle(tab === "confirmed")}
-            onClick={() => setTab("confirmed")}
-          >
-            Confirmed{" "}
-            {state.confirmed.length > 0 && `(${state.confirmed.length})`}
-          </button>
-          <button
-            style={tabStyle(tab === "draft")}
-            onClick={() => setTab("draft")}
-          >
-            Draft {visibleDraft.length > 0 && `(${visibleDraft.length})`}
-          </button>
-        </div>
-      )}
+      {/* ── Tab bar ── */}
+      <div
+        style={{
+          display: "flex",
+          gap: 4,
+          padding: "6px 14px",
+          background: dark ? "rgba(10,8,20,0.9)" : "rgba(240,238,252,0.95)",
+          border: `1px solid rgba(139,26,47,0.22)`,
+          borderTop: "none",
+          borderBottom: "none",
+          backdropFilter: "blur(12px)",
+        }}
+        onMouseDown={(e) => e.stopPropagation()}
+      >
+        <button style={tabStyle(tab === "confirmed")} onClick={() => setTab("confirmed")}>
+          Confirmed {filteredConfirmed.length > 0 && `(${filteredConfirmed.length})`}
+        </button>
+        <button style={tabStyle(tab === "draft")} onClick={() => setTab("draft")}>
+          Draft {visibleDraft.length > 0 && `(${visibleDraft.length})`}
+        </button>
+      </div>
 
       {/* ── Body ── */}
       <div
         style={{
           background: dark ? "rgba(6,5,12,0.88)" : "rgba(248,246,255,0.94)",
           border: `1px solid rgba(139,26,47,0.22)`,
-          borderTop: runId ? "none" : undefined,
-          borderRadius: runId ? "0 0 12px 12px" : "0 0 12px 12px",
+          borderTop: "none",
+          borderRadius: "0 0 12px 12px",
           backdropFilter: "blur(16px)",
           padding: "12px 14px",
-          height: height,
+          height,
           overflowY: "auto",
           overflowX: "hidden",
           userSelect: "text",
         }}
         className="pscroll"
       >
-        {/* No run yet */}
-        {!runId && (
-          <div
-            style={{
-              textAlign: "center",
-              padding: "36px 0",
-              color: t.textDim,
-              fontSize: 12,
-              fontFamily: "'Space Grotesk', system-ui",
-            }}
-          >
-            Seed a run to populate the blackboard.
-          </div>
-        )}
-
-        {/* Loading */}
-        {runId && state.loading && (
+        {state.loading && (
           <div
             style={{
               textAlign: "center",
@@ -505,24 +359,15 @@ export function BlackboardCanvas({
           </div>
         )}
 
-        {/* Error */}
-        {runId && !state.loading && state.error && (
-          <div
-            style={{
-              textAlign: "center",
-              padding: "16px 0",
-              color: "#c0392b",
-              fontSize: 12,
-            }}
-          >
+        {!state.loading && state.error && (
+          <div style={{ textAlign: "center", padding: "16px 0", color: "#c0392b", fontSize: 12 }}>
             {state.error}
           </div>
         )}
 
-        {/* ── CONFIRMED TAB ── */}
-        {runId && !state.loading && tab === "confirmed" && (
+        {!state.loading && !state.error && tab === "confirmed" && (
           <>
-            {state.confirmed.length === 0 ? (
+            {filteredConfirmed.length === 0 ? (
               <div
                 style={{
                   textAlign: "center",
@@ -532,74 +377,15 @@ export function BlackboardCanvas({
                   fontFamily: "'Space Grotesk', system-ui",
                 }}
               >
-                No confirmed entries yet.
+                {idleMessage}
               </div>
             ) : (
-              state.confirmed.map((entry) => {
-                const es = entryTypeStyle(entry.entry_type);
-                return (
-                  <div
-                    key={entry.id}
-                    style={{
-                      background: es.bg,
-                      border: `1px solid ${es.border}`,
-                      borderRadius: 8,
-                      padding: "8px 11px",
-                      marginBottom: 6,
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "center",
-                        gap: 5,
-                        marginBottom: 5,
-                      }}
-                    >
-                      {es.icon}
-                      <span
-                        style={{
-                          fontSize: 9.5,
-                          fontWeight: 800,
-                          color: es.color,
-                          letterSpacing: "0.08em",
-                          textTransform: "uppercase",
-                          fontFamily: "'Space Grotesk', system-ui",
-                        }}
-                      >
-                        {es.label}
-                      </span>
-                      {entry.entry_type !== "anchor" && (
-                        <span style={{ fontSize: 9.5, color: t.textDim }}>
-                          Round {entry.round_confirmed}
-                        </span>
-                      )}
-                      {entry.citation_count > 0 && (
-                        <span
-                          style={{
-                            marginLeft: "auto",
-                            fontSize: 9.5,
-                            color: t.textDim,
-                          }}
-                        >
-                          ♡ {entry.citation_count}
-                        </span>
-                      )}
-                    </div>
-                    <div
-                      style={{ fontSize: 12, color: t.text, lineHeight: 1.55 }}
-                    >
-                      <MarkdownRenderer content={entry.content} />
-                    </div>
-                  </div>
-                );
-              })
+              filteredConfirmed.map((entry) => <ConfirmedCard key={entry.id} entry={entry} />)
             )}
           </>
         )}
 
-        {/* ── DRAFT TAB ── */}
-        {runId && !state.loading && tab === "draft" && (
+        {!state.loading && !state.error && tab === "draft" && (
           <>
             {visibleDraft.length === 0 ? (
               <div
@@ -611,12 +397,23 @@ export function BlackboardCanvas({
                   fontFamily: "'Space Grotesk', system-ui",
                 }}
               >
-                No draft entries yet.
+                {idleMessage}
               </div>
             ) : (
-              visibleDraft.map((entry) => (
-                <DraftCard key={entry.id} entry={entry} depth={0} />
-              ))
+              visibleDraft.map((entry) =>
+                entry.entry_type === "proposal" ? (
+                  <ProposalCard key={entry.id} entry={entry} threshold={threshold} promotedMap={promotedMap} />
+                ) : (
+                  <ThreadedEntry
+                    key={entry.id}
+                    entry={entry}
+                    parentContent=""
+                    depth={0}
+                    threshold={threshold}
+                    promotedMap={promotedMap}
+                  />
+                ),
+              )
             )}
           </>
         )}
@@ -678,16 +475,13 @@ export function BlackboardCanvas({
                 maxHeight: "85vh",
                 display: "flex",
                 flexDirection: "column",
-                background: dark
-                  ? "rgba(6,5,12,0.97)"
-                  : "rgba(248,246,255,0.99)",
+                background: dark ? "rgba(6,5,12,0.97)" : "rgba(248,246,255,0.99)",
                 border: "1px solid rgba(139,26,47,0.35)",
                 borderRadius: 16,
                 overflow: "hidden",
                 boxShadow: "0 28px 90px rgba(0,0,0,0.5)",
               }}
             >
-              {/* Modal header */}
               <div
                 style={{
                   display: "flex",
@@ -696,9 +490,7 @@ export function BlackboardCanvas({
                   padding: "12px 18px",
                   borderBottom: "1px solid rgba(139,26,47,0.2)",
                   flexShrink: 0,
-                  background: dark
-                    ? "rgba(139,26,47,0.12)"
-                    : "rgba(139,26,47,0.06)",
+                  background: dark ? "rgba(139,26,47,0.12)" : "rgba(139,26,47,0.06)",
                 }}
               >
                 <Layers size={14} strokeWidth={1.8} color={BURG_LT} />
@@ -716,11 +508,7 @@ export function BlackboardCanvas({
                 </span>
                 {activeThread && (
                   <>
-                    <span
-                      style={{ fontSize: 11, color: "rgba(139,26,47,0.45)" }}
-                    >
-                      ·
-                    </span>
+                    <span style={{ fontSize: 11, color: "rgba(139,26,47,0.45)" }}>·</span>
                     <span
                       style={{
                         fontSize: 12,
@@ -764,58 +552,25 @@ export function BlackboardCanvas({
                 </button>
               </div>
 
-              {/* Modal tab bar */}
-              {runId && (
-                <div
-                  style={{
-                    display: "flex",
-                    gap: 4,
-                    padding: "8px 18px",
-                    borderBottom: "1px solid rgba(139,26,47,0.15)",
-                    flexShrink: 0,
-                  }}
-                >
-                  <button
-                    style={tabStyle(tab === "confirmed")}
-                    onClick={() => setTab("confirmed")}
-                  >
-                    Confirmed
-                    {state.confirmed.length > 0 &&
-                      ` (${state.confirmed.length})`}
-                  </button>
-                  <button
-                    style={tabStyle(tab === "draft")}
-                    onClick={() => setTab("draft")}
-                  >
-                    Draft
-                    {visibleDraft.length > 0 && ` (${visibleDraft.length})`}
-                  </button>
-                </div>
-              )}
-
-              {/* Modal body */}
               <div
                 style={{
-                  flex: 1,
-                  overflowY: "auto",
-                  padding: "16px 20px",
+                  display: "flex",
+                  gap: 4,
+                  padding: "8px 18px",
+                  borderBottom: "1px solid rgba(139,26,47,0.15)",
+                  flexShrink: 0,
                 }}
-                className="pscroll"
               >
-                {!runId && (
-                  <div
-                    style={{
-                      textAlign: "center",
-                      padding: "60px 0",
-                      color: t.textDim,
-                      fontSize: 13,
-                      fontFamily: "'Space Grotesk', system-ui",
-                    }}
-                  >
-                    No active run.
-                  </div>
-                )}
-                {runId && state.loading && (
+                <button style={tabStyle(tab === "confirmed")} onClick={() => setTab("confirmed")}>
+                  Confirmed {filteredConfirmed.length > 0 && ` (${filteredConfirmed.length})`}
+                </button>
+                <button style={tabStyle(tab === "draft")} onClick={() => setTab("draft")}>
+                  Draft {visibleDraft.length > 0 && ` (${visibleDraft.length})`}
+                </button>
+              </div>
+
+              <div style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }} className="pscroll">
+                {state.loading && (
                   <div
                     style={{
                       textAlign: "center",
@@ -828,105 +583,31 @@ export function BlackboardCanvas({
                     Loading blackboard…
                   </div>
                 )}
-                {runId && !state.loading && state.error && (
-                  <div
-                    style={{
-                      textAlign: "center",
-                      padding: "24px 0",
-                      color: "#c0392b",
-                      fontSize: 13,
-                    }}
-                  >
+                {!state.loading && state.error && (
+                  <div style={{ textAlign: "center", padding: "24px 0", color: "#c0392b", fontSize: 13 }}>
                     {state.error}
                   </div>
                 )}
-                {runId &&
-                  !state.loading &&
-                  !state.error &&
-                  tab === "confirmed" && (
-                    <>
-                      {state.confirmed.length === 0 ? (
-                        <div
-                          style={{
-                            textAlign: "center",
-                            padding: "60px 0",
-                            color: t.textDim,
-                            fontSize: 13,
-                            fontFamily: "'Space Grotesk', system-ui",
-                          }}
-                        >
-                          No confirmed entries yet.
-                        </div>
-                      ) : (
-                        state.confirmed.map((entry) => {
-                          const es = entryTypeStyle(entry.entry_type);
-                          return (
-                            <div
-                              key={entry.id}
-                              style={{
-                                background: es.bg,
-                                border: `1px solid ${es.border}`,
-                                borderRadius: 9,
-                                padding: "10px 14px",
-                                marginBottom: 8,
-                              }}
-                            >
-                              <div
-                                style={{
-                                  display: "flex",
-                                  alignItems: "center",
-                                  gap: 6,
-                                  marginBottom: 6,
-                                }}
-                              >
-                                {es.icon}
-                                <span
-                                  style={{
-                                    fontSize: 10,
-                                    fontWeight: 800,
-                                    color: es.color,
-                                    letterSpacing: "0.08em",
-                                    textTransform: "uppercase",
-                                    fontFamily: "'Space Grotesk', system-ui",
-                                  }}
-                                >
-                                  {es.label}
-                                </span>
-                                {entry.entry_type !== "anchor" && (
-                                  <span
-                                    style={{ fontSize: 10, color: t.textDim }}
-                                  >
-                                    Round {entry.round_confirmed}
-                                  </span>
-                                )}
-                                {entry.citation_count > 0 && (
-                                  <span
-                                    style={{
-                                      marginLeft: "auto",
-                                      fontSize: 10,
-                                      color: t.textDim,
-                                    }}
-                                  >
-                                    ♡ {entry.citation_count}
-                                  </span>
-                                )}
-                              </div>
-                              <div
-                                style={{
-                                  fontSize: 13.5,
-                                  color: t.text,
-                                  lineHeight: 1.6,
-                                }}
-                              >
-                                <MarkdownRenderer content={entry.content} />
-                              </div>
-                            </div>
-                          );
-                        })
-                      )}
-                    </>
-                  )}
-                {runId && !state.loading && !state.error && tab === "draft" && (
+                {!state.loading && !state.error && tab === "confirmed" && (
+                  <>
+                    {filteredConfirmed.length === 0 ? (
+                      <div
+                        style={{
+                          textAlign: "center",
+                          padding: "60px 0",
+                          color: t.textDim,
+                          fontSize: 13,
+                          fontFamily: "'Space Grotesk', system-ui",
+                        }}
+                      >
+                        {idleMessage}
+                      </div>
+                    ) : (
+                      filteredConfirmed.map((entry) => <ConfirmedCard key={entry.id} entry={entry} />)
+                    )}
+                  </>
+                )}
+                {!state.loading && !state.error && tab === "draft" && (
                   <>
                     {visibleDraft.length === 0 ? (
                       <div
@@ -938,12 +619,28 @@ export function BlackboardCanvas({
                           fontFamily: "'Space Grotesk', system-ui",
                         }}
                       >
-                        No draft entries yet.
+                        {idleMessage}
                       </div>
                     ) : (
-                      visibleDraft.map((entry) => (
-                        <DraftCard key={entry.id} entry={entry} depth={0} />
-                      ))
+                      visibleDraft.map((entry) =>
+                        entry.entry_type === "proposal" ? (
+                          <ProposalCard
+                            key={entry.id}
+                            entry={entry}
+                            threshold={threshold}
+                            promotedMap={promotedMap}
+                          />
+                        ) : (
+                          <ThreadedEntry
+                            key={entry.id}
+                            entry={entry}
+                            parentContent=""
+                            depth={0}
+                            threshold={threshold}
+                            promotedMap={promotedMap}
+                          />
+                        ),
+                      )
                     )}
                   </>
                 )}
