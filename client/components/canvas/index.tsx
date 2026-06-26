@@ -198,6 +198,7 @@ export function Canvas({
   const handleWheel = useCallback(
     (e: WheelEvent) => {
       e.preventDefault();
+      if (appMode === "swarm") return;
       const el = canvasRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
@@ -216,7 +217,7 @@ export function Canvas({
       });
       setZoom(newZoom);
     },
-    [pan, zoom],
+    [pan, zoom, appMode],
   );
 
   useEffect(() => {
@@ -253,11 +254,13 @@ export function Canvas({
       const isCanvas =
         target === canvasRef.current || target.classList.contains("ctf");
       if (!isCanvas && !spaceDown.current) return;
-      panning.current = true;
-      panStart.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+      if (appMode !== "swarm") {
+        panning.current = true;
+        panStart.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+      }
       onCanvasClick();
     },
-    [pan, onCanvasClick],
+    [pan, onCanvasClick, appMode],
   );
 
   const canvasMouseMove = useCallback(
