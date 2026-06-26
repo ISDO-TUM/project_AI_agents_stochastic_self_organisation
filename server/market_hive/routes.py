@@ -39,6 +39,7 @@ from server.market_hive.schemas import (
     RunStatusResponse,
     SeedRequest,
     SeedResponse,
+    SeedRichResponse,
     SwarmRunSchema,
     ThreadSchema,
     VoteSchema,
@@ -316,6 +317,205 @@ async def seed_blackboard(body: SeedRequest, db: DBDep) -> SeedResponse:
 
     await db.commit()
     return SeedResponse(run_id=run_id, thread_id=thread_id)
+
+
+@router.post(
+    "/api/simulation/seed-rich",
+    response_model=SeedRichResponse,
+    summary="Seed rich multi-agent blackboard scenario (DEBUG only)",
+)
+async def seed_blackboard_rich(db: DBDep) -> SeedRichResponse:
+    if os.getenv("DEBUG", "").lower() not in ("true", "1", "yes"):
+        raise HTTPException(
+            status_code=status.HTTP_403_FORBIDDEN,
+            detail="seed endpoint disabled in production",
+        )
+
+    run_id = str(uuid.uuid4())
+    contract_id = str(uuid.uuid4())
+    thread1_id = str(uuid.uuid4())
+    thread2_id = str(uuid.uuid4())
+    alpha_id = str(uuid.uuid4())
+    beta_id = str(uuid.uuid4())
+    gamma_id = str(uuid.uuid4())
+    now = _now_iso()
+
+    for aid, name, desc in [
+        (alpha_id, "Alpha", "Contract law specialist"),
+        (beta_id, "Beta", "Financial risk analyst"),
+        (gamma_id, "Gamma", "General reasoning agent"),
+    ]:
+        await db.execute(
+            text(
+                "INSERT INTO agents (id, name, description, system_prompt, provider, model, "
+                "tools, connections, created_at) "
+                "VALUES (:id, :name, :desc, :sp, 'anthropic', 'claude-opus-4-8', "
+                "'[]', '[]', :now)"
+            ),
+            {"id": aid, "name": name, "desc": desc, "sp": f"You are {name}.", "now": now},
+        )
+
+    prompt = "Analyze this energy procurement contract for legal and financial compliance issues."
+    await db.execute(
+        text(
+            "INSERT INTO swarm_runs (id, status, mode, created_at) "
+            "VALUES (:id, 'running', 'swarm', :now)"
+        ),
+        {"id": run_id, "now": now},
+    )
+    await db.execute(
+        text(
+            "INSERT INTO contracts "
+            "(id, run_id, original_prompt, task_type, task_nature, required_expertise, created_at) "
+            "VALUES (:id, :run_id, :prompt, 'analysis', 'multi', "
+            '\'["contract_law","finance"]\', :now)'
+        ),
+        {"id": contract_id, "run_id": run_id, "prompt": prompt, "now": now},
+    )
+    for tid, title, desc, expertise in [
+        (
+            thread1_id,
+            "Legal Compliance Analysis",
+            "Review all clauses for legal compliance and enforceability.",
+            '["contract_law"]',
+        ),
+        (
+            thread2_id,
+            "Financial Risk Assessment",
+            "Assess pricing, DCF assumptions, and hedging provisions.",
+            '["finance"]',
+        ),
+    ]:
+        await db.execute(
+            text(
+                "INSERT INTO threads "
+                "(id, contract_id, run_id, title, description, required_expertise, created_at) "
+                "VALUES (:id, :cid, :run_id, :title, :desc, :exp, :now)"
+            ),
+            {
+                "id": tid,
+                "cid": contract_id,
+                "run_id": run_id,
+                "title": title,
+                "desc": desc,
+                "exp": expertise,
+                "now": now,
+            },
+        )
+
+    bb = Blackboard(db)
+    await bb.post_anchor(run_id=run_id, thread_id=thread1_id, content=f"[CONTRACT] {prompt}")
+    await bb.post_anchor(
+        run_id=run_id,
+        thread_id=thread1_id,
+        content="[THREAD] Legal Compliance Analysis — expertise: contract_law",
+    )
+    await bb.post_anchor(
+        run_id=run_id,
+        thread_id=thread2_id,
+        content="[THREAD] Financial Risk Assessment — expertise: finance",
+    )
+
+    bb1 = await bb.post(
+        run_id=run_id,
+        thread_id=thread1_id,
+        author_id=alpha_id,
+        content=(
+            "The penalty clause in §4.2 is ambiguous: the liquidated damages formula "
+            "contradicts the hard cap in §7.1. One of these must be struck."
+        ),
+        entry_type="proposal",
+        round=1,
+    )
+    await bb.post(
+        run_id=run_id,
+        thread_id=thread1_id,
+        author_id=gamma_id,
+        content=(
+            "Force majeure clause in §9 is broader than standard — it includes "
+            "supplier insolvency, which is uncommon and may void termination rights."
+        ),
+        entry_type="proposal",
+        round=1,
+    )
+    bb3 = await bb.post(
+        run_id=run_id,
+        thread_id=thread1_id,
+        author_id=beta_id,
+        content="Agree — the formula in §7.1 sets a hard cap that §4.2 ignores.",
+        entry_type="reply",
+        round=1,
+        reply_to=bb1,
+    )
+    await bb.post(
+        run_id=run_id,
+        thread_id=thread1_id,
+        author_id=beta_id,
+        content="VOTE: BB-001 (§4.2 analysis) is the most legally grounded proposal.",
+        entry_type="vote",
+        round=2,
+    )
+    bb5 = await bb.post(
+        run_id=run_id,
+        thread_id=thread2_id,
+        author_id=beta_id,
+        content=(
+            "The DCF assumptions in the pricing schedule use a 7% discount rate "
+            "with no sensitivity analysis. This understates financial exposure."
+        ),
+        entry_type="proposal",
+        round=1,
+    )
+    await bb.post(
+        run_id=run_id,
+        thread_id=thread2_id,
+        author_id=gamma_id,
+        content=(
+            "Currency hedging provisions are entirely absent from the FX schedule, "
+            "leaving both parties exposed to exchange rate volatility."
+        ),
+        entry_type="proposal",
+        round=1,
+    )
+
+    await bb.cite(run_id=run_id, citing_agent_id=beta_id, entry_ids=[bb1], round=2)
+    await bb.cite(run_id=run_id, citing_agent_id=gamma_id, entry_ids=[bb1], round=2)
+    await bb.cite(run_id=run_id, citing_agent_id=alpha_id, entry_ids=[bb3], round=2)
+    await bb.cite(run_id=run_id, citing_agent_id=alpha_id, entry_ids=[bb5], round=2)
+
+    await bb.post(
+        run_id=run_id,
+        thread_id=thread1_id,
+        author_id=alpha_id,
+        content="@Gamma, can you verify the financial exposure of the §7.1 cap?",
+        entry_type="reply",
+        round=2,
+        reply_to=bb3,
+        mention_agents=[gamma_id],
+    )
+    await bb.post(
+        run_id=run_id,
+        thread_id=thread2_id,
+        author_id=gamma_id,
+        content="The 7% rate is outdated — current WACC for this sector is closer to 8.5%.",
+        entry_type="reply",
+        round=2,
+        reply_to=bb5,
+    )
+
+    await bb.check_promotions(
+        run_id=run_id,
+        current_round=2,
+        participants_by_thread={thread1_id: 3, thread2_id: 2},
+    )
+    await bb.soft_delete_stale(run_id=run_id, current_round=4, decay_rounds=3)
+
+    await db.commit()
+    return SeedRichResponse(
+        run_id=run_id,
+        thread_ids=[thread1_id, thread2_id],
+        agent_ids=[alpha_id, beta_id, gamma_id],
+    )
 
 
 @router.get(

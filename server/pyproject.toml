@@ -39,6 +39,7 @@ ignore = []
 "**/test_*.py" = ["S101"]          # assert is acceptable in test files
 "**/market_hive/routes.py" = ["S608"]  # clause/table vars are hardcoded strings, not user input
 "**/market_hive/blackboard.py" = ["S112", "S608"]  # S112: UNIQUE-constraint swallow is intentional; S608: hardcoded strings
+"**/market_hive/auction.py" = ["S608"]  # S608: thread_clause is a hardcoded string, not user input
 "**/market_hive/amendment.py" = ["S608"]  # the WHERE clause var is a hardcoded string, not user input
 
 [tool.ruff.lint.isort]

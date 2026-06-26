@@ -104,6 +104,7 @@ async function request<T>(
     method,
     headers,
     body: body ? JSON.stringify(body) : undefined,
+    cache: method === "GET" ? "no-store" : "default",
   });
   if (!res.ok) {
     const text = await res.text().catch(() => res.statusText);
@@ -247,6 +248,7 @@ export async function fetchModels(): Promise<ModelEntry[]> {
 // ─── Simulation run ───────────────────────────────────────────────────────────
 
 export interface SimulationResult {
+  experimentId: string;
   trialId: string;
   trialIds: string[];
   status: string;
@@ -254,6 +256,7 @@ export interface SimulationResult {
 }
 
 interface WireSimulationResponse {
+  experiment_id: string;
   trial_id: string;
   trial_ids: string[];
   status: string;
@@ -353,6 +356,7 @@ export async function runSimulation(
     },
   );
   return {
+    experimentId: data.experiment_id,
     trialId: data.trial_id,
     trialIds: data.trial_ids,
     status: data.status,

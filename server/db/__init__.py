@@ -471,13 +471,13 @@ async def resolve_experiment(
     topology: str,
     fanout: int,
     agent_context: dict[str, str] | None,
+    reuse_existing: bool = True,
 ) -> str:
-    """Return the experiment id whose setup matches the given parameters.
+    """Return an experiment id for the given run setup.
 
-    If no matching experiment exists, one is created.  Two runs are considered
-    the same experiment when the full agent snapshot (id, name, system_prompt,
-    provider, model, tools, connections, attached file ids) plus all simulation
-    parameters are identical.
+    When ``reuse_existing`` is true, matching setup hashes are grouped into the
+    same experiment. Normal user-triggered runs pass ``reuse_existing=False`` so
+    each click creates a fresh experiment while that run's iterations share it.
     """
     agent_rows = (
         await conn.execute(
@@ -530,19 +530,21 @@ async def resolve_experiment(
             "agent_context": dict(sorted(agent_context.items())) if agent_context else None,
         },
     }
+    exp_id = str(uuid.uuid4())
+    hash_payload = canonical if reuse_existing else {**canonical, "run_id": exp_id}
     setup_hash = hashlib.sha256(
-        json.dumps(canonical, sort_keys=True, ensure_ascii=True).encode()
+        json.dumps(hash_payload, sort_keys=True, ensure_ascii=True).encode()
     ).hexdigest()
 
-    existing = await conn.scalar(
-        select(experiments.c.id).where(experiments.c.setup_hash == setup_hash)
-    )
-    if existing is not None:
-        return str(existing)
+    if reuse_existing:
+        existing = await conn.scalar(
+            select(experiments.c.id).where(experiments.c.setup_hash == setup_hash)
+        )
+        if existing is not None:
+            return str(existing)
 
     first_agent = agent_snapshot[0]["name"] if agent_snapshot else "unknown"
     description = f"{mode} · {first_agent} +{len(agent_snapshot) - 1} more"
-    exp_id = str(uuid.uuid4())
     await conn.execute(
         experiments.insert().values(
             id=exp_id,

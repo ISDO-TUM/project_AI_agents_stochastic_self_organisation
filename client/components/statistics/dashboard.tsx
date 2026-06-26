@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
 import { ComparisonDashboard } from "@/components/comparison/dashboard";
 import { AgentActivityChart } from "@/components/statistics/agent-activity-chart";
@@ -208,15 +208,41 @@ export function StatisticsDashboard() {
   );
   const stats = useStatistics(experimentId);
 
-  useEffect(() => {
-    fetchExperiments()
+  const loadExperiments = useCallback(() => {
+    return fetchExperiments()
       .then((rows) => {
         setExperiments(rows);
-        if (rows.length > 0) setExperimentId(rows[0].id);
+        const latest =
+          window.localStorage.getItem("latestExperimentId") || undefined;
+        const preferred = rows.find((row) => row.id === latest);
+        if (preferred) window.localStorage.removeItem("latestExperimentId");
+        setExperimentId((current) => {
+          if (preferred) return preferred.id;
+          if (current && rows.some((row) => row.id === current)) return current;
+          return rows[0]?.id ?? null;
+        });
       })
       .catch(() => setExperiments([]))
       .finally(() => setExperimentsLoading(false));
   }, []);
+
+  useEffect(() => {
+    loadExperiments();
+  }, [loadExperiments]);
+
+  useEffect(() => {
+    const refreshWhenVisible = () => {
+      if (document.visibilityState === "visible") {
+        loadExperiments();
+      }
+    };
+    window.addEventListener("focus", loadExperiments);
+    document.addEventListener("visibilitychange", refreshWhenVisible);
+    return () => {
+      window.removeEventListener("focus", loadExperiments);
+      document.removeEventListener("visibilitychange", refreshWhenVisible);
+    };
+  }, [loadExperiments]);
 
   useEffect(() => {
     if (!experimentId) return;
