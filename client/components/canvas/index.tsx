@@ -123,47 +123,57 @@ export function Canvas({
 
   // ── Swarm widget positions (viewport-relative px) ──
   // Boards are fixed forever — geometry is derived from the measured topbar
-  // width/height, never independently moved or resized.
+  // and agent-dock dimensions, never independently moved or resized.
   const BOARD_DEFAULT_W = 315;
-  const BOARD_HEIGHT = 300;
+  const BOARD_MIN_HEIGHT = 180;
   const BOARD_GAP = 24;
   const TOPBAR_TOP = 16;
   const SWARM_GAP = 28;
+  const DOCK_BOTTOM = 150;
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [dockHeight, setDockHeight] = useState<number | null>(null);
   const [boardLayout, setBoardLayout] = useState<{
     draftPos: { x: number; y: number };
     confirmedPos: { x: number; y: number };
     boardWidth: number;
+    boardHeight: number;
   } | null>(null);
 
-  // Recompute whenever the canvas resizes or the measured topbar width/height
-  // changes — this is the only thing that ever updates board geometry.
+  // Recompute whenever the canvas resizes or the measured topbar/dock
+  // dimensions change — this is the only thing that ever updates board geometry.
   useEffect(() => {
     if (appMode !== "swarm") return;
     const el = canvasRef.current;
     if (!el) return;
 
     const recompute = () => {
-      const { width } = el.getBoundingClientRect();
+      const { width, height } = el.getBoundingClientRect();
       const cx = width / 2;
       const totalWidth = topbarWidth ?? BOARD_DEFAULT_W * 2 + BOARD_GAP;
       const boardWidth = (totalWidth - BOARD_GAP) / 2;
       const boardsY = TOPBAR_TOP + (topbarHeight ?? 60) + SWARM_GAP;
+      const dockTopY = height - DOCK_BOTTOM - (dockHeight ?? 80);
+      const boardHeight = Math.max(
+        BOARD_MIN_HEIGHT,
+        dockTopY - boardsY - SWARM_GAP,
+      );
       setBoardLayout({
         draftPos: { x: cx - boardWidth - BOARD_GAP / 2, y: boardsY },
         confirmedPos: { x: cx + BOARD_GAP / 2, y: boardsY },
         boardWidth,
+        boardHeight,
       });
     };
 
     recompute();
     window.addEventListener("resize", recompute);
     return () => window.removeEventListener("resize", recompute);
-  }, [appMode, topbarWidth, topbarHeight]);
+  }, [appMode, topbarWidth, topbarHeight, dockHeight]);
 
   const draftPos = boardLayout?.draftPos ?? null;
   const confirmedPos = boardLayout?.confirmedPos ?? null;
   const boardWidth = boardLayout?.boardWidth ?? BOARD_DEFAULT_W;
+  const boardHeight = boardLayout?.boardHeight ?? BOARD_MIN_HEIGHT;
 
   // Apply external pan delta (e.g. from sidebar resize) to keep nodes stable.
   // panAdjust is a new object reference on every resize tick (seq increments),
@@ -507,6 +517,8 @@ export function Canvas({
           <AgentDock
             agents={agents}
             onSelectAgent={onSelectAgentChip ?? (() => {})}
+            bottom={DOCK_BOTTOM}
+            onHeightChange={setDockHeight}
           />
           {draftPos && (blackboardState?.threads.length ?? 0) > 0 && (
             <ThreadFilterDropdown
@@ -529,7 +541,7 @@ export function Canvas({
             runId={swarmRunId ?? null}
             pos={draftPos}
             width={boardWidth}
-            height={BOARD_HEIGHT}
+            height={boardHeight}
             zoom={zoom}
             activeThreadId={activeThreadId}
           />
@@ -545,7 +557,7 @@ export function Canvas({
             }
             pos={confirmedPos}
             width={boardWidth}
-            height={BOARD_HEIGHT}
+            height={boardHeight}
             zoom={zoom}
             activeThreadId={activeThreadId}
           />

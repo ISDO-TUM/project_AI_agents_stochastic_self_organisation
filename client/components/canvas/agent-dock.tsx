@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ReceiptText } from "lucide-react";
 import { Agent } from "@/lib/types";
@@ -10,21 +11,41 @@ import { getTheme, BURG_LT, BURG_GLOW } from "@/lib/theme";
 interface AgentDockProps {
   agents: Agent[];
   onSelectAgent: (id: string) => void;
+  bottom: number;
+  onHeightChange?: (h: number) => void;
 }
 
 /** Fixed horizontal strip above the prompt bar — replaces individually
  *  draggable agent nodes and the Market Maker badge in swarm mode. Market
  *  Maker is a visual-only chip (not clickable, no editable entity behind
  *  it); each agent chip opens the same edit panel a canvas node click does. */
-export function AgentDock({ agents, onSelectAgent }: AgentDockProps) {
+export function AgentDock({
+  agents,
+  onSelectAgent,
+  bottom,
+  onHeightChange,
+}: AgentDockProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
+  const dockRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = dockRef.current;
+    if (!el || !onHeightChange) return;
+    const observer = new ResizeObserver((entries) => {
+      const height = entries[0]?.contentRect.height;
+      if (height) onHeightChange(height);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [onHeightChange]);
 
   return (
     <div
+      ref={dockRef}
       style={{
         position: "absolute",
-        bottom: 150,
+        bottom,
         left: "50%",
         transform: "translateX(-50%)",
         zIndex: 20,
