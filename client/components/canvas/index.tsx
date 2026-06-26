@@ -51,6 +51,7 @@ interface CanvasProps {
   /** Swarm: current run id — controls whether world nodes are visible */
   swarmRunId?: string | null;
   topbarWidth?: number | null;
+  topbarHeight?: number | null;
   onSelectAgentChip?: (id: string) => void;
   /** When provided, renders the PhonebookPanel inside the world transform so
    *  it pans/zooms with the canvas like any other element. */
@@ -106,6 +107,7 @@ export function Canvas({
   appMode,
   swarmRunId,
   topbarWidth,
+  topbarHeight,
   onSelectAgentChip,
   phonebook = null,
   biddingBoard = null,
@@ -122,11 +124,13 @@ export function Canvas({
 
   // ── Swarm widget positions (viewport-relative px) ──
   // Boards are fixed forever — geometry is derived from the measured topbar
-  // width, never independently moved or resized. The agent dock anchor is
+  // width/height, never independently moved or resized. The agent dock anchor is
   // derived the same way (see dockAnchor below).
   const BOARD_DEFAULT_W = 315;
   const BOARD_HEIGHT = 300;
   const BOARD_GAP = 24;
+  const TOPBAR_TOP = 16;
+  const SWARM_GAP = 28;
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [boardLayout, setBoardLayout] = useState<{
     draftPos: { x: number; y: number };
@@ -135,7 +139,7 @@ export function Canvas({
     dockAnchor: { x: number; y: number };
   } | null>(null);
 
-  // Recompute whenever the canvas resizes or the measured topbar width
+  // Recompute whenever the canvas resizes or the measured topbar width/height
   // changes — this is the only thing that ever updates board/dock geometry.
   useEffect(() => {
     if (appMode !== "swarm") return;
@@ -145,12 +149,12 @@ export function Canvas({
     const recompute = () => {
       const { width, height } = el.getBoundingClientRect();
       const cx = width / 2;
-      const cy = height / 2;
       const totalWidth = topbarWidth ?? BOARD_DEFAULT_W * 2 + BOARD_GAP;
       const boardWidth = (totalWidth - BOARD_GAP) / 2;
+      const boardsY = TOPBAR_TOP + (topbarHeight ?? 60) + SWARM_GAP;
       setBoardLayout({
-        draftPos: { x: cx - boardWidth - BOARD_GAP / 2, y: cy - 120 },
-        confirmedPos: { x: cx + BOARD_GAP / 2, y: cy - 120 },
+        draftPos: { x: cx - boardWidth - BOARD_GAP / 2, y: boardsY },
+        confirmedPos: { x: cx + BOARD_GAP / 2, y: boardsY },
         boardWidth,
         dockAnchor: { x: cx, y: height - 130 },
       });
@@ -159,7 +163,7 @@ export function Canvas({
     recompute();
     window.addEventListener("resize", recompute);
     return () => window.removeEventListener("resize", recompute);
-  }, [appMode, topbarWidth]);
+  }, [appMode, topbarWidth, topbarHeight]);
 
   const draftPos = boardLayout?.draftPos ?? null;
   const confirmedPos = boardLayout?.confirmedPos ?? null;

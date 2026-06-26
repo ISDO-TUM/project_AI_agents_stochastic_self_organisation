@@ -31,6 +31,7 @@ interface ToolbarProps {
   biddingBoardOpen?: boolean;
   onToggleBiddingBoard?: () => void;
   onWidthChange?: (w: number) => void;
+  onHeightChange?: (h: number) => void;
 }
 
 function Sep({ t }: { t: ReturnType<typeof getTheme> }) {
@@ -761,6 +762,7 @@ export function Toolbar({
   biddingBoardOpen,
   onToggleBiddingBoard,
   onWidthChange,
+  onHeightChange,
 }: ToolbarProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -768,14 +770,16 @@ export function Toolbar({
 
   useEffect(() => {
     const el = pillRef.current;
-    if (!el || !onWidthChange) return;
+    if (!el || (!onWidthChange && !onHeightChange)) return;
     const observer = new ResizeObserver((entries) => {
-      const width = entries[0]?.contentRect.width;
-      if (width) onWidthChange(width);
+      const rect = entries[0]?.contentRect;
+      if (!rect) return;
+      if (rect.width) onWidthChange?.(rect.width);
+      if (rect.height) onHeightChange?.(rect.height);
     });
     observer.observe(el);
     return () => observer.disconnect();
-  }, [onWidthChange]);
+  }, [onWidthChange, onHeightChange]);
 
   const pillStyle: React.CSSProperties = {
     display: "flex",

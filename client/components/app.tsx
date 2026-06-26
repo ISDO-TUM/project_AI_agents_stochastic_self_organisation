@@ -128,6 +128,7 @@ export function App() {
   const [swarmConfigOpen, setSwarmConfigOpen] = useState(false);
   const [pendingSwarmPrompt, setPendingSwarmPrompt] = useState("");
   const [topbarWidth, setTopbarWidth] = useState<number | null>(null);
+  const [topbarHeight, setTopbarHeight] = useState<number | null>(null);
   const dummy = useDummySwarm();
   const { state: realBlackboardState } = useBlackboard(
     appMode === "swarm" && !dummy.state.active ? runId : null,
@@ -572,6 +573,7 @@ export function App() {
           appMode={appMode}
           swarmRunId={appMode === "swarm" ? runId : null}
           topbarWidth={topbarWidth}
+          topbarHeight={topbarHeight}
           onSelectAgentChip={openPanel}
           phonebook={
             topology === "dynamic"
@@ -612,6 +614,7 @@ export function App() {
           biddingBoardOpen={biddingBoardOpen}
           onToggleBiddingBoard={() => setBiddingBoardOpen((x) => !x)}
           onWidthChange={setTopbarWidth}
+          onHeightChange={setTopbarHeight}
         />
 
         <PromptBar
