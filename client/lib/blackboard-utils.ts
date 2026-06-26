@@ -52,18 +52,3 @@ export function computeCitationsByAuthor(
   walk(draft);
   return map;
 }
-
-/** Author IDs whose draft entry has been promoted (i.e. some confirmed_entries
- *  row's source_draft_id resolves back to a draft entry by this author). */
-export function computePromotedAuthorIds(
-  draft: DraftEntry[],
-  confirmed: ConfirmedEntry[],
-): Set<string> {
-  const ids = new Set<string>();
-  for (const c of confirmed) {
-    if (!c.source_draft_id) continue;
-    const sourceEntry = findById(draft, c.source_draft_id);
-    if (sourceEntry) ids.add(sourceEntry.author_id);
-  }
-  return ids;
-}

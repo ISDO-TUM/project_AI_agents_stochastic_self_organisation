@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   Agent,
   Source,
@@ -137,7 +137,7 @@ export function Canvas({
   } | null>(null);
 
   // Recompute whenever the canvas resizes or the measured topbar width/height
-  // changes — this is the only thing that ever updates board/dock geometry.
+  // changes — this is the only thing that ever updates board geometry.
   useEffect(() => {
     if (appMode !== "swarm") return;
     const el = canvasRef.current;
@@ -504,7 +504,10 @@ export function Canvas({
       {/* ── Swarm-mode viewport overlays (not in world transform) ── */}
       {appMode === "swarm" && (
         <>
-          <AgentDock agents={agents} onSelectAgent={onSelectAgentChip ?? (() => {})} />
+          <AgentDock
+            agents={agents}
+            onSelectAgent={onSelectAgentChip ?? (() => {})}
+          />
           {draftPos && (blackboardState?.threads.length ?? 0) > 0 && (
             <ThreadFilterDropdown
               threads={blackboardState!.threads}
