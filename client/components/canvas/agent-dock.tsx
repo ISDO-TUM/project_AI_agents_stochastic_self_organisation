@@ -24,7 +24,7 @@ export function AgentDock({ agents, onSelectAgent }: AgentDockProps) {
     <div
       style={{
         position: "absolute",
-        bottom: 100,
+        bottom: 150,
         left: "50%",
         transform: "translateX(-50%)",
         zIndex: 20,
