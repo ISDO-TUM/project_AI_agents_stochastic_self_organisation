@@ -812,22 +812,30 @@ export function Toolbar({
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 9,
-            paddingRight: 8,
+            gap: 7,
+            paddingRight: 6,
+            flexShrink: 0,
           }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={dark ? "/logo_dark.png" : "/logo_light.png"}
             alt="logo"
-            style={{ height: 28, width: "auto", display: "block" }}
+            style={{
+              height: 22,
+              width: "auto",
+              display: "block",
+              flexShrink: 0,
+            }}
           />
           <span
             style={{
               fontWeight: 700,
-              fontSize: 13.5,
+              fontSize: 12,
               color: t.text,
-              letterSpacing: 0.4,
+              letterSpacing: 0.2,
+              fontFamily: "var(--font-space-grotesk), system-ui",
+              whiteSpace: "nowrap",
             }}
           >
             Mycellium
