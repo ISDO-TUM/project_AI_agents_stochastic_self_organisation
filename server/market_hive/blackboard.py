@@ -425,7 +425,7 @@ class Blackboard:
         *,
         run_id: str,
         current_round: int,
-        participants_by_thread: dict[str, int],
+        participants_by_thread: dict[str, int] | None = None,
     ) -> list[ConfirmedEntrySchema]:
         """Promote draft entries that have reached the citation threshold M.
 
@@ -467,7 +467,7 @@ class Blackboard:
             entry_id = row["id"]
             if entry_id in already_promoted:
                 continue
-            n = participants_by_thread.get(row["thread_id"], 1)
+            n = (participants_by_thread or {}).get(row["thread_id"], 1)
             threshold = max(1, n // 3 + 1)
             if row["distinct_citers"] >= threshold:
                 confirmed_id = str(uuid.uuid4())
