@@ -41,6 +41,10 @@ cd api && uv run pytest tests/ -v   # should be 38 tests, all green
 | 12  | DraftSection + ConfirmedSection                 | ✅ Done | `cfb074f`            |
 | 13  | BlackboardPanel                                 | ✅ Done | `cfb074f`            |
 | 14  | Wire BlackboardPanel into App                   | ✅ Done | `cfb074f`            |
+| 15  | §6.3 — Real content embeddings in post()        | ✅ Done | `2fa0178`            |
+| 16  | §6.3 — top_k_visible() attention query          | ✅ Done | `2fa0178`            |
+| 17  | §6.3 — Mention pinning outside top-k window     | ✅ Done | `2fa0178`            |
+| 18  | §6.3 — Mention writes to messages table         | ✅ Done | `2fa0178`            |
 
 ---
 

@@ -276,3 +276,9 @@ class SeedRequest(BaseModel):
 class SeedResponse(BaseModel):
     run_id: str
     thread_id: str
+
+
+class SeedRichResponse(BaseModel):
+    run_id: str
+    thread_ids: list[str]
+    agent_ids: list[str]
