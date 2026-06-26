@@ -37,9 +37,8 @@ export function ProposalCard({
       animate={{ opacity: entry.is_visible ? 1 : 0.35, y: 0, scale: 1 }}
       transition={{ duration: 0.3, ease: "easeOut" }}
       style={{
-        background: dark ? "rgba(255,255,255,0.035)" : "rgba(0,0,0,0.025)",
-        border: `1px solid ${t.border}`,
-        borderLeft: `3px solid ${color}`,
+        background: dark ? "rgba(139,26,47,0.07)" : "rgba(139,26,47,0.04)",
+        border: "1px solid rgba(139,26,47,0.3)",
         borderRadius: 10,
         padding: "11px 14px",
         marginBottom: 10,
@@ -73,15 +72,6 @@ export function ProposalCard({
         </span>
         <span style={{ fontSize: 12.5, fontWeight: 700, color: t.text }}>
           {entry.author_name}
-        </span>
-        <span
-          style={{
-            fontSize: 10,
-            color: t.textDim,
-            fontFamily: "'JetBrains Mono', monospace",
-          }}
-        >
-          R{entry.round}
         </span>
         <span
           style={{

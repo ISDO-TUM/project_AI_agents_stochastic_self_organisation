@@ -73,7 +73,9 @@ export function ThreadedEntry({
         marginLeft: indent,
         marginBottom: 8,
         paddingLeft: 10,
-        borderLeft: `2px solid ${color}55`,
+        border: `1px solid ${t.border}`,
+        borderRadius: 8,
+        padding: "8px 10px",
       }}
     >
       <div
@@ -103,15 +105,6 @@ export function ThreadedEntry({
         </span>
         <span style={{ fontSize: 11.5, fontWeight: 700, color: t.text }}>
           {entry.author_name}
-        </span>
-        <span
-          style={{
-            fontSize: 10,
-            color: t.textDim,
-            fontFamily: "'JetBrains Mono', monospace",
-          }}
-        >
-          R{entry.round}
         </span>
         <span
           style={{
