@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import uuid
 from datetime import UTC, datetime
 from typing import Any
@@ -11,6 +12,8 @@ from sqlalchemy import text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection
 
+from server.db import record_message
+from server.llm.embeddings import cosine, embed_texts
 from server.market_hive.schemas import (
     ConfirmedEntrySchema,
     DraftEntrySchema,
@@ -47,9 +50,16 @@ class Blackboard:
         round: int,
         reply_to: str | None = None,
         mention_agents: list[str] | None = None,
+        round_id: int | None = None,
     ) -> str:
-        """Insert a draft entry. Returns the new entry_id."""
+        """Insert a draft entry. Returns the new entry_id.
+
+        When mention_agents is non-empty a companion system entry is also
+        inserted so the mention is visible as a card on the blackboard.
+        """
         entry_id = str(uuid.uuid4())
+        vecs = await embed_texts([content])
+        embedding = json.dumps(vecs[0]) if vecs else _ZERO_EMBEDDING
         await self._db.execute(
             text(
                 """
@@ -69,15 +79,120 @@ class Blackboard:
                 "author_id": author_id,
                 "entry_type": entry_type,
                 "content": content,
-                "embedding": _ZERO_EMBEDDING,
+                "embedding": embedding,
                 "reply_to": reply_to,
                 "mention_agents": json.dumps(mention_agents or []),
             },
         )
+        if mention_agents:
+            mention_list = ", ".join(f"@{aid[:8]}" for aid in mention_agents)
+            await self._db.execute(
+                text(
+                    """
+                    INSERT INTO draft_entries
+                        (id, run_id, thread_id, round, author_id, entry_type,
+                         content, content_embedding, reply_to, mention_agents,
+                         is_visible, last_cited_round)
+                    VALUES (:id, :run_id, :thread_id, :round, :author_id, 'system',
+                            :content, :embedding, :reply_to, :mention_agents, 1, :round)
+                    """
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "run_id": run_id,
+                    "thread_id": thread_id,
+                    "round": round,
+                    "author_id": author_id,
+                    "content": f"mentioned: {mention_list}",
+                    "embedding": _ZERO_EMBEDDING,
+                    "reply_to": entry_id,
+                    "mention_agents": json.dumps(mention_agents),
+                },
+            )
+            if round_id is not None:
+                for mentioned_id in mention_agents:
+                    await record_message(
+                        self._db,
+                        round_id,
+                        author_id,
+                        mentioned_id,
+                        "bb_mention",
+                        content,
+                    )
         await self._db.commit()
         return entry_id
 
     # ── read ──────────────────────────────────────────────────────────────
+
+    async def top_k_visible(
+        self,
+        *,
+        query: str,
+        thread_id: str | None,
+        run_id: str,
+        k: int = 10,
+    ) -> list[DraftEntrySchema]:
+        """Return top-k visible draft entries scored by cosine(query, entry) x log(1+citations).
+
+        Falls back to pure citation-count ranking when the embedding API is unavailable.
+        """
+        thread_clause = "AND de.thread_id = :thread_id" if thread_id is not None else ""
+        params: dict[str, Any] = {"run_id1": run_id, "run_id2": run_id}
+        if thread_id is not None:
+            params["thread_id"] = thread_id
+
+        result = await self._db.execute(
+            text(
+                f"""
+                SELECT de.id, de.run_id, de.thread_id, de.round, de.author_id,
+                       COALESCE(a.name, de.author_id) AS author_name,
+                       de.entry_type, de.content, de.content_embedding,
+                       de.reply_to, de.mention_agents, de.is_visible,
+                       de.deleted_at, de.last_cited_round, de.created_at,
+                       COALESCE(cc.cnt, 0) AS citation_count
+                FROM draft_entries de
+                LEFT JOIN agents a ON a.id = de.author_id
+                LEFT JOIN (
+                    SELECT cited_entry_id, COUNT(*) AS cnt
+                    FROM   citations
+                    WHERE  run_id = :run_id1
+                    GROUP  BY cited_entry_id
+                ) cc ON cc.cited_entry_id = de.id
+                WHERE de.run_id = :run_id2 AND de.is_visible = true
+                {thread_clause}
+                """
+            ),
+            params,
+        )
+        rows = result.mappings().fetchall()
+
+        query_vecs = await embed_texts([query])
+        query_vec: list[float] | None = query_vecs[0] if query_vecs else None
+
+        scored: list[tuple[float, DraftEntrySchema]] = []
+        for row in rows:
+            d = dict(row)
+            raw_embedding = d.pop("content_embedding", None)
+            citation_count = d["citation_count"]
+            d["mention_agents"] = json.loads(d["mention_agents"] or "[]")
+            d["children"] = []
+            entry = DraftEntrySchema(**d)
+
+            weight = math.log(1.0 + citation_count)
+            if query_vec and raw_embedding:
+                try:
+                    entry_vec: list[float] = json.loads(raw_embedding)
+                    sim = cosine(query_vec, entry_vec)
+                except Exception:
+                    sim = 0.0
+                score = sim * weight
+            else:
+                score = weight  # embedding unavailable — rank by citation weight only
+
+            scored.append((score, entry))
+
+        scored.sort(key=lambda x: x[0], reverse=True)
+        return [entry for _, entry in scored[:k]]
 
     async def read(
         self,
@@ -88,9 +203,18 @@ class Blackboard:
         k: int = 10,
         agent_id: str | None = None,
     ) -> list[DraftEntrySchema]:
-        """Return top-k visible entries, sorted by citation_count DESC."""
-        thread_clause = "AND de.thread_id = :thread_id" if thread_id is not None else ""
-        params: dict[str, Any] = {"run_id1": run_id, "run_id2": run_id}
+        """Return top-k entries via top_k_visible, with mention pinning applied.
+
+        Mentioned entries are fetched via a separate query so they surface at
+        position 0 regardless of their attention score — even if they would
+        otherwise fall outside the top-k window.
+        """
+        if not agent_id:
+            return await self.top_k_visible(query=query, thread_id=thread_id, run_id=run_id, k=k)
+
+        # Fetch all entries that mention this agent (independent of score).
+        thread_clause = "AND thread_id = :thread_id" if thread_id is not None else ""
+        params: dict[str, Any] = {"run_id": run_id, "agent_id": f'%"{agent_id}"%'}
         if thread_id is not None:
             params["thread_id"] = thread_id
 
@@ -108,31 +232,69 @@ class Blackboard:
                 LEFT JOIN (
                     SELECT cited_entry_id, COUNT(*) AS cnt
                     FROM   citations
-                    WHERE  run_id = :run_id1
+                    WHERE  run_id = :run_id
                     GROUP  BY cited_entry_id
                 ) cc ON cc.cited_entry_id = de.id
-                WHERE de.run_id = :run_id2 AND de.is_visible = true
+                WHERE de.run_id = :run_id AND de.is_visible = true
+                  AND de.mention_agents LIKE :agent_id
                 {thread_clause}
-                ORDER BY citation_count DESC, de.created_at ASC
                 """
             ),
             params,
         )
         rows = result.mappings().fetchall()
-
-        entries: list[DraftEntrySchema] = []
         pinned: list[DraftEntrySchema] = []
         for row in rows:
             d = dict(row)
             d["mention_agents"] = json.loads(d["mention_agents"] or "[]")
             d["children"] = []
             entry = DraftEntrySchema(**d)
-            if agent_id and agent_id in entry.mention_agents:
+            if agent_id in entry.mention_agents:
                 pinned.append(entry)
-            else:
-                entries.append(entry)
 
-        return (pinned + entries)[:k]
+        if not pinned:
+            return await self.top_k_visible(query=query, thread_id=thread_id, run_id=run_id, k=k)
+
+        # Fill remaining slots with scored results, excluding already-pinned IDs.
+        pinned_ids = {e.id for e in pinned}
+        remaining = k - len(pinned)
+        if remaining > 0:
+            scored = await self.top_k_visible(
+                query=query, thread_id=thread_id, run_id=run_id, k=k + len(pinned)
+            )
+            rest = [e for e in scored if e.id not in pinned_ids]
+            return (pinned + rest)[:k]
+
+        return pinned[:k]
+
+    async def post_anchor(
+        self,
+        *,
+        run_id: str,
+        thread_id: str,
+        content: str,
+        round_confirmed: int = 0,
+    ) -> str:
+        """Insert a permanent anchor entry into confirmed_entries. Returns anchor_id."""
+        anchor_id = str(uuid.uuid4())
+        await self._db.execute(
+            text(
+                """
+                INSERT INTO confirmed_entries
+                    (id, run_id, thread_id, content, entry_type, citation_count, round_confirmed)
+                VALUES (:id, :run_id, :thread_id, :content, 'anchor', 0, :round_confirmed)
+                """
+            ),
+            {
+                "id": anchor_id,
+                "run_id": run_id,
+                "thread_id": thread_id,
+                "content": content,
+                "round_confirmed": round_confirmed,
+            },
+        )
+        await self._db.commit()
+        return anchor_id
 
     # ── Task 5 methods ────────────────────────────────────────────────────
 
@@ -263,11 +425,13 @@ class Blackboard:
         *,
         run_id: str,
         current_round: int,
+        participants_by_thread: dict[str, int] | None = None,
     ) -> list[ConfirmedEntrySchema]:
         """Promote draft entries that have reached the citation threshold M.
 
-        M = max(1, n_distinct_posting_agents // 3 + 1) per thread.
-        Already-promoted entries are skipped.
+        M = max(1, n_takers // 3 + 1) per thread, where n_takers is provided
+        by the caller (auction.self_select result) rather than inferred from
+        poster count. Already-promoted entries are skipped.
         Returns the list of newly promoted ConfirmedEntry objects.
         """
         result = await self._db.execute(
@@ -278,15 +442,6 @@ class Blackboard:
             {"run_id": run_id},
         )
         already_promoted = {row[0] for row in result.fetchall()}
-
-        result = await self._db.execute(
-            text(
-                "SELECT thread_id, COUNT(DISTINCT author_id) AS n "
-                "FROM draft_entries WHERE run_id = :run_id GROUP BY thread_id"
-            ),
-            {"run_id": run_id},
-        )
-        participants_by_thread: dict[str, int] = {row[0]: row[1] for row in result.fetchall()}
 
         result = await self._db.execute(
             text(
@@ -312,7 +467,7 @@ class Blackboard:
             entry_id = row["id"]
             if entry_id in already_promoted:
                 continue
-            n = participants_by_thread.get(row["thread_id"], 1)
+            n = (participants_by_thread or {}).get(row["thread_id"], 1)
             threshold = max(1, n // 3 + 1)
             if row["distinct_citers"] >= threshold:
                 confirmed_id = str(uuid.uuid4())
