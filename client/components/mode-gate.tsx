@@ -280,15 +280,16 @@ export function ModeGate({ onSelect }: ModeGateProps) {
   return (
     <div
       style={{
-        position: "fixed",
-        inset: 0,
+        position: "relative",
+        width: "100%",
+        height: "100%",
         background: t.bg,
         display: "flex",
         flexDirection: "column",
         alignItems: "center",
         justifyContent: "center",
         gap: 48,
-        zIndex: 9999,
+        zIndex: 1,
       }}
     >
       {/* Subtle grid background */}

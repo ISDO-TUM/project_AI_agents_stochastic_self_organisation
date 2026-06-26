@@ -71,9 +71,7 @@ export function HeroSection({ onEnter }: HeroSectionProps) {
           top: 20,
           right: 24,
           zIndex: 10,
-          background: dark
-            ? "rgba(255,255,255,0.07)"
-            : "rgba(0,0,0,0.06)",
+          background: dark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.06)",
           border: dark
             ? "1px solid rgba(255,255,255,0.14)"
             : "1px solid rgba(0,0,0,0.1)",
@@ -117,9 +115,7 @@ export function HeroSection({ onEnter }: HeroSectionProps) {
           textAlign: "center",
           padding: "40px 56px",
           // subtle frosted card so text is legible over any wave colour
-          background: dark
-            ? "rgba(6,6,8,0.38)"
-            : "rgba(250,248,255,0.38)",
+          background: dark ? "rgba(6,6,8,0.38)" : "rgba(250,248,255,0.38)",
           backdropFilter: "blur(2px)",
           borderRadius: 24,
         }}
@@ -155,8 +151,8 @@ export function HeroSection({ onEnter }: HeroSectionProps) {
           }}
         >
           Drop a new agent in.{" "}
-          <span style={{ fontStyle: "italic" }}>It finds its place.</span>{" "}
-          The system adapts.
+          <span style={{ fontStyle: "italic" }}>It finds its place.</span> The
+          system adapts.
         </p>
       </div>
 

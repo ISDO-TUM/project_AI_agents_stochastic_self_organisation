@@ -16,7 +16,10 @@ export function AppShell() {
   const scrollRef = useRef<HTMLDivElement>(null);
 
   const scrollToApp = useCallback(() => {
-    scrollRef.current?.scrollTo({ top: window.innerHeight, behavior: "smooth" });
+    scrollRef.current?.scrollTo({
+      top: window.innerHeight,
+      behavior: "smooth",
+    });
   }, []);
 
   return (
