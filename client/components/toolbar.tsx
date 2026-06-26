@@ -934,6 +934,7 @@ export function Toolbar({
             cursor: "pointer",
             color: t.textSub,
             padding: "5px 7px",
+            marginRight: 6,
             borderRadius: 8,
             display: "flex",
             alignItems: "center",
