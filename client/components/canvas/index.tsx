@@ -51,6 +51,9 @@ interface CanvasProps {
   swarmRunId?: string | null;
   topbarWidth?: number | null;
   topbarHeight?: number | null;
+  /** Height of the PromptBar — used to keep the AgentDock equidistant
+   *  between the board bottom and the chat box top. */
+  promptBarHeight?: number | null;
   onSelectAgentChip?: (id: string) => void;
   /** When provided, renders the PhonebookPanel inside the world transform so
    *  it pans/zooms with the canvas like any other element. */
@@ -107,6 +110,7 @@ export function Canvas({
   swarmRunId,
   topbarWidth,
   topbarHeight,
+  promptBarHeight,
   onSelectAgentChip,
   phonebook = null,
   biddingBoard = null,
@@ -129,7 +133,12 @@ export function Canvas({
   const BOARD_GAP = 24;
   const TOPBAR_TOP = 16;
   const SWARM_GAP = 28;
-  const DOCK_BOTTOM = 150;
+  // Prompt bar sits `bottom: 24` in the canvas; DOCK_BOTTOM is computed so
+  // the gap below the dock (dock bottom → prompt bar top) equals the gap
+  // above it (board bottom → dock top = SWARM_GAP). Falls back to 48px pill
+  // height when not yet measured.
+  const PROMPT_MARGIN = 24;
+  const DOCK_BOTTOM = PROMPT_MARGIN + (promptBarHeight ?? 48) + SWARM_GAP;
   const BOARD_HEADER_HEIGHT = 32;
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [dockHeight, setDockHeight] = useState<number | null>(null);
@@ -169,7 +178,7 @@ export function Canvas({
     recompute();
     window.addEventListener("resize", recompute);
     return () => window.removeEventListener("resize", recompute);
-  }, [appMode, topbarWidth, topbarHeight, dockHeight]);
+  }, [appMode, topbarWidth, topbarHeight, dockHeight, promptBarHeight]);
 
   const draftPos = boardLayout?.draftPos ?? null;
   const confirmedPos = boardLayout?.confirmedPos ?? null;

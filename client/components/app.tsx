@@ -133,6 +133,7 @@ export function App({ onModeSelected }: AppProps = {}) {
   const [pendingSwarmPrompt, setPendingSwarmPrompt] = useState("");
   const [topbarWidth, setTopbarWidth] = useState<number | null>(null);
   const [topbarHeight, setTopbarHeight] = useState<number | null>(null);
+  const [promptBarHeight, setPromptBarHeight] = useState<number | null>(null);
   const dummy = useDummySwarm();
   const { state: realBlackboardState } = useBlackboard(
     appMode === "swarm" && !dummy.state.active ? runId : null,
@@ -585,6 +586,7 @@ export function App({ onModeSelected }: AppProps = {}) {
           swarmRunId={appMode === "swarm" ? runId : null}
           topbarWidth={topbarWidth}
           topbarHeight={topbarHeight}
+          promptBarHeight={promptBarHeight}
           onSelectAgentChip={openPanel}
           phonebook={
             topology === "dynamic"
@@ -637,6 +639,7 @@ export function App({ onModeSelected }: AppProps = {}) {
           iterations={iterations}
           onIterationsChange={setIterations}
           batchProgress={batchProgress}
+          onHeightChange={setPromptBarHeight}
         />
       </div>
 

@@ -19,6 +19,7 @@ interface PromptBarProps {
   iterations?: number;
   onIterationsChange?: (n: number) => void;
   batchProgress?: { completed: number; total: number } | null;
+  onHeightChange?: (h: number) => void;
 }
 
 export function PromptBar({
@@ -30,12 +31,14 @@ export function PromptBar({
   iterations = 1,
   onIterationsChange,
   batchProgress,
+  onHeightChange,
 }: PromptBarProps) {
   const [val, setVal] = useState("");
   const [preview, setPreview] = useState(false);
   const { dark } = useTheme();
   const t = getTheme(dark);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const rootRef = useRef<HTMLDivElement>(null);
   const { keys } = useApiKeys();
   const hasLocalKey = Object.values(keys).some((k) => k.length > 0);
   const [hasServerModels, setHasServerModels] = useState(false);
@@ -45,6 +48,17 @@ export function PromptBar({
       .then((m) => setHasServerModels(m.length > 0))
       .catch(() => setHasServerModels(false));
   }, [hasLocalKey]);
+
+  useEffect(() => {
+    const el = rootRef.current;
+    if (!el || !onHeightChange) return;
+    const ro = new ResizeObserver((entries) => {
+      const h = entries[0]?.contentRect.height;
+      if (h) onHeightChange(h);
+    });
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [onHeightChange]);
 
   const hasAnyKey = hasLocalKey || hasServerModels;
   const inputDisabled = running || !hasAnyKey;
@@ -98,6 +112,7 @@ export function PromptBar({
 
   return (
     <div
+      ref={rootRef}
       style={{
         position: "absolute",
         bottom: 24,
