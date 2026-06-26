@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   Agent,
   Source,
@@ -12,13 +12,15 @@ import {
   AgentSwarmRole,
 } from "@/lib/types";
 import { clamp } from "@/lib/utils";
+import { computePromotedAuthorIds } from "@/lib/blackboard-utils";
 import { useTheme } from "@/lib/theme-context";
 
 import { AgentNode } from "./agent-node";
 import { SourceNode } from "./source-node";
 import { EdgeLayer } from "./edge-layer";
 import { Minimap } from "./minimap";
-import { BlackboardCanvas } from "./blackboard-canvas";
+import { DraftBoard } from "./draft-board";
+import { ConfirmedBoard } from "./confirmed-board";
 import { SwarmNodes } from "./swarm-nodes";
 import { ThreadNode } from "./blackboard/thread-node";
 import { PhonebookPanel } from "../phonebook-panel";
@@ -125,12 +127,16 @@ export function Canvas({
 
   // ── Swarm widget positions (viewport-relative px) ──
   const MM_SIZE = 88;
-  const BB_DEFAULT_W = 315;
-  const [bbPos, setBbPos] = useState<{ x: number; y: number } | null>(null);
+  const BOARD_DEFAULT_W = 315;
+  const BOARD_DEFAULT_H = 300;
+  const BOARD_GAP = 32;
+  const [draftPos, setDraftPos] = useState<{ x: number; y: number } | null>(null);
+  const [confirmedPos, setConfirmedPos] = useState<{ x: number; y: number } | null>(null);
   const [mmPos, setMmPos] = useState<{ x: number; y: number } | null>(null);
-  const [bbWidth, setBbWidth] = useState(BB_DEFAULT_W);
-  const BB_DEFAULT_H = 300;
-  const [bbHeight, setBbHeight] = useState(BB_DEFAULT_H);
+  const [draftWidth, setDraftWidth] = useState(BOARD_DEFAULT_W);
+  const [draftHeight, setDraftHeight] = useState(BOARD_DEFAULT_H);
+  const [confirmedWidth, setConfirmedWidth] = useState(BOARD_DEFAULT_W);
+  const [confirmedHeight, setConfirmedHeight] = useState(BOARD_DEFAULT_H);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
 
   // Initialise positions from canvas dimensions once mounted
@@ -142,9 +148,18 @@ export function Canvas({
     const cx = width / 2;
     const cy = height / 2;
     const gap = 32;
-    setBbPos({ x: cx - BB_DEFAULT_W / 2, y: cy - 120 });
-    setMmPos({ x: cx - BB_DEFAULT_W / 2 - MM_SIZE - gap, y: cy - MM_SIZE / 2 });
+    setDraftPos({ x: cx - BOARD_DEFAULT_W / 2, y: cy - 120 });
+    setConfirmedPos({
+      x: cx - BOARD_DEFAULT_W / 2 + BOARD_DEFAULT_W + BOARD_GAP,
+      y: cy - 120,
+    });
+    setMmPos({ x: cx - BOARD_DEFAULT_W / 2 - MM_SIZE - gap, y: cy - MM_SIZE / 2 });
   }, [appMode]);
+
+  const promotedAuthorIds = useMemo(
+    () => computePromotedAuthorIds(blackboardState?.draft ?? [], blackboardState?.confirmed ?? []),
+    [blackboardState],
+  );
 
   // Apply external pan delta (e.g. from sidebar resize) to keep nodes stable.
   // panAdjust is a new object reference on every resize tick (seq increments),
@@ -483,8 +498,10 @@ export function Canvas({
       {/* ── Swarm-mode viewport overlays (not in world transform) ── */}
       {appMode === "swarm" && (
         <>
-          {/* Dashed connector between MM and Blackboard */}
-          {bbPos && mmPos && (
+          {/* Dashed connector between MM and Draft board; per-agent connectors
+              that re-target from Draft to Confirmed once an agent has a
+              promoted entry. */}
+          {draftPos && mmPos && (
             <svg
               style={{
                 position: "absolute",
@@ -496,12 +513,12 @@ export function Canvas({
                 overflow: "visible",
               }}
             >
-              {/* MM → BB connector */}
+              {/* MM → Draft board connector */}
               <line
                 x1={mmPos.x + MM_SIZE * zoom}
                 y1={mmPos.y + (MM_SIZE / 2) * zoom}
-                x2={bbPos.x}
-                y2={bbPos.y + 19 * zoom}
+                x2={draftPos.x}
+                y2={draftPos.y + 19 * zoom}
                 stroke="rgba(139,26,47,0.4)"
                 strokeWidth="1.5"
                 strokeDasharray="6,4"
@@ -513,17 +530,22 @@ export function Canvas({
                 fill="rgba(139,26,47,0.5)"
               />
               <circle
-                cx={bbPos.x}
-                cy={bbPos.y + 19 * zoom}
+                cx={draftPos.x}
+                cy={draftPos.y + 19 * zoom}
                 r="3"
                 fill="rgba(139,26,47,0.5)"
               />
-              {/* Agent → BB connectors */}
+              {/* Agent → board connectors: Draft by default, Confirmed (solid
+                  gold) once that agent has a promoted entry. */}
               {agents.map((agent) => {
                 const ax = agent.position.x * zoom + pan.x;
                 const ay = agent.position.y * zoom + pan.y;
-                const bx = bbPos.x + (bbWidth * zoom) / 2;
-                const by = bbPos.y;
+                const promoted = promotedAuthorIds.has(agent.id);
+                const targetPos = promoted ? confirmedPos : draftPos;
+                const targetWidth = promoted ? confirmedWidth : draftWidth;
+                if (!targetPos) return null;
+                const bx = targetPos.x + (targetWidth * zoom) / 2;
+                const by = targetPos.y;
                 return (
                   <line
                     key={agent.id}
@@ -531,21 +553,21 @@ export function Canvas({
                     y1={ay}
                     x2={bx}
                     y2={by}
-                    stroke="rgba(139,26,47,0.25)"
-                    strokeWidth="1"
-                    strokeDasharray="4,5"
+                    stroke={promoted ? "#b5860d" : "rgba(139,26,47,0.25)"}
+                    strokeWidth={promoted ? "1.5" : "1"}
+                    strokeDasharray={promoted ? undefined : "4,5"}
                   />
                 );
               })}
             </svg>
           )}
           <SwarmNodes pos={mmPos} onPosChange={setMmPos} zoom={zoom} />
-          {bbPos && (blackboardState?.threads.length ?? 0) > 0 && (
+          {draftPos && (blackboardState?.threads.length ?? 0) > 0 && (
             <>
               <ThreadNode
                 thread={{ id: "__all__", title: "All threads" }}
                 active={activeThreadId === null}
-                pos={{ x: bbPos.x, y: bbPos.y - 32 }}
+                pos={{ x: draftPos.x, y: draftPos.y - 32 }}
                 onClick={() => setActiveThreadId(null)}
               />
               {blackboardState!.threads.map((th, i) => (
@@ -553,13 +575,13 @@ export function Canvas({
                   key={th.id}
                   thread={th}
                   active={activeThreadId === th.id}
-                  pos={{ x: bbPos.x + (i + 1) * 110, y: bbPos.y - 32 }}
+                  pos={{ x: draftPos.x + (i + 1) * 110, y: draftPos.y - 32 }}
                   onClick={() => setActiveThreadId(th.id)}
                 />
               ))}
             </>
           )}
-          <BlackboardCanvas
+          <DraftBoard
             state={
               blackboardState ?? {
                 confirmed: [],
@@ -572,12 +594,31 @@ export function Canvas({
             runId={swarmRunId ?? null}
             onSeed={onSeed}
             seeding={seeding}
-            pos={bbPos}
-            onPosChange={setBbPos}
-            width={bbWidth}
-            onWidthChange={setBbWidth}
-            height={bbHeight}
-            onHeightChange={setBbHeight}
+            pos={draftPos}
+            onPosChange={setDraftPos}
+            width={draftWidth}
+            onWidthChange={setDraftWidth}
+            height={draftHeight}
+            onHeightChange={setDraftHeight}
+            zoom={zoom}
+            activeThreadId={activeThreadId}
+          />
+          <ConfirmedBoard
+            state={
+              blackboardState ?? {
+                confirmed: [],
+                draft: [],
+                threads: [],
+                loading: false,
+                error: null,
+              }
+            }
+            pos={confirmedPos}
+            onPosChange={setConfirmedPos}
+            width={confirmedWidth}
+            onWidthChange={setConfirmedWidth}
+            height={confirmedHeight}
+            onHeightChange={setConfirmedHeight}
             zoom={zoom}
             activeThreadId={activeThreadId}
           />
