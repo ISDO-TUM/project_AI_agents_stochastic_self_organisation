@@ -20,7 +20,7 @@ import { Minimap } from "./minimap";
 import { DraftBoard } from "./draft-board";
 import { ConfirmedBoard } from "./confirmed-board";
 import { AgentDock } from "./agent-dock";
-import { ThreadNode } from "./blackboard/thread-node";
+import { ThreadFilterDropdown } from "./blackboard/thread-filter-dropdown";
 import { PhonebookPanel } from "../phonebook-panel";
 import { BiddingBoardPanel } from "../bidding-board-panel";
 
@@ -506,23 +506,12 @@ export function Canvas({
         <>
           <AgentDock agents={agents} onSelectAgent={onSelectAgentChip ?? (() => {})} />
           {draftPos && (blackboardState?.threads.length ?? 0) > 0 && (
-            <>
-              <ThreadNode
-                thread={{ id: "__all__", title: "All threads" }}
-                active={activeThreadId === null}
-                pos={{ x: draftPos.x, y: draftPos.y - 32 }}
-                onClick={() => setActiveThreadId(null)}
-              />
-              {blackboardState!.threads.map((th, i) => (
-                <ThreadNode
-                  key={th.id}
-                  thread={th}
-                  active={activeThreadId === th.id}
-                  pos={{ x: draftPos.x + (i + 1) * 110, y: draftPos.y - 32 }}
-                  onClick={() => setActiveThreadId(th.id)}
-                />
-              ))}
-            </>
+            <ThreadFilterDropdown
+              threads={blackboardState!.threads}
+              activeThreadId={activeThreadId}
+              onSelect={setActiveThreadId}
+              pos={{ x: draftPos.x, y: draftPos.y - 32 }}
+            />
           )}
           <DraftBoard
             state={
