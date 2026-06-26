@@ -189,8 +189,8 @@ export function Canvas({
   }, [panAdjust]);
   const handleWheel = useCallback(
     (e: WheelEvent) => {
-      e.preventDefault();
       if (appMode === "swarm") return;
+      e.preventDefault();
       const el = canvasRef.current;
       if (!el) return;
       const rect = el.getBoundingClientRect();
