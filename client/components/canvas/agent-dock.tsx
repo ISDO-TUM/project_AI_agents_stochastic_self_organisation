@@ -33,7 +33,9 @@ export function AgentDock({
     const el = dockRef.current;
     if (!el || !onHeightChange) return;
     const observer = new ResizeObserver((entries) => {
-      const height = entries[0]?.contentRect.height;
+      const entry = entries[0];
+      if (!entry) return;
+      const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
       if (height) onHeightChange(height);
     });
     observer.observe(el);

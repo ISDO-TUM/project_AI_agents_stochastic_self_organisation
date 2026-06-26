@@ -772,10 +772,13 @@ export function Toolbar({
     const el = pillRef.current;
     if (!el || (!onWidthChange && !onHeightChange)) return;
     const observer = new ResizeObserver((entries) => {
-      const rect = entries[0]?.contentRect;
-      if (!rect) return;
-      if (rect.width) onWidthChange?.(rect.width);
-      if (rect.height) onHeightChange?.(rect.height);
+      const entry = entries[0];
+      if (!entry) return;
+      const borderBox = entry.borderBoxSize?.[0];
+      const width = borderBox?.inlineSize ?? entry.contentRect.width;
+      const height = borderBox?.blockSize ?? entry.contentRect.height;
+      if (width) onWidthChange?.(width);
+      if (height) onHeightChange?.(height);
     });
     observer.observe(el);
     return () => observer.disconnect();
