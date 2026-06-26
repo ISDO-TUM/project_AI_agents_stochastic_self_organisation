@@ -130,6 +130,7 @@ export function Canvas({
   const TOPBAR_TOP = 16;
   const SWARM_GAP = 28;
   const DOCK_BOTTOM = 150;
+  const BOARD_HEADER_HEIGHT = 32;
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [dockHeight, setDockHeight] = useState<number | null>(null);
   const [boardLayout, setBoardLayout] = useState<{
@@ -155,7 +156,7 @@ export function Canvas({
       const dockTopY = height - DOCK_BOTTOM - (dockHeight ?? 80);
       const boardHeight = Math.max(
         BOARD_MIN_HEIGHT,
-        dockTopY - boardsY - SWARM_GAP,
+        dockTopY - boardsY - SWARM_GAP - BOARD_HEADER_HEIGHT,
       );
       setBoardLayout({
         draftPos: { x: cx - boardWidth - BOARD_GAP / 2, y: boardsY },
