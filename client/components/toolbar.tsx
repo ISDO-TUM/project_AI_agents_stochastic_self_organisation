@@ -830,7 +830,7 @@ export function Toolbar({
               letterSpacing: 0.4,
             }}
           >
-            Stochastic Agents
+            Mycellium
           </span>
         </div>
 

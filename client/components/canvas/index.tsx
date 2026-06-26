@@ -662,7 +662,7 @@ export function Canvas({
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={dark ? "/logo_dark.png" : "/logo_light.png"}
-              alt="Stochastic Agents"
+              alt="Mycellium"
               style={{ height: 160, width: "auto" }}
             />
           </div>
@@ -684,7 +684,7 @@ export function Canvas({
                 textTransform: "uppercase",
               }}
             >
-              Stochastic Agents
+              Mycellium
             </div>
             <div
               style={{

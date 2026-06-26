@@ -1,38 +1,28 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useTheme } from "@/lib/theme-context";
-import { ChevronDown, Sun, Moon } from "lucide-react";
+import { ChevronDown } from "lucide-react";
 
 // Loaded client-side only — WebGL requires the browser
 const PlasmaWave = dynamic(() => import("@/components/plasma-wave"), {
   ssr: false,
 });
 
-// Light burgundy + dark burgundy for the plasma waves
-const COLORS_DARK: [string, string] = ["#8B1A2F", "#3D0B16"];
-const COLORS_LIGHT: [string, string] = ["#C4374F", "#8B1A2F"];
+// Burgundy palette — hero is always dark
+const WAVE_COLORS: [string, string] = ["#8B1A2F", "#3D0B16"];
 
 interface HeroSectionProps {
   onEnter: () => void;
 }
 
 export function HeroSection({ onEnter }: HeroSectionProps) {
-  const { dark, toggle } = useTheme();
-
-  const bg = dark ? "#060608" : "#faf8ff";
-  const titleColor = dark ? "#f5f3ff" : "#0a0810";
-  const subtitleColor = dark ? "rgba(245,243,255,0.55)" : "rgba(10,8,16,0.5)";
-  const enterColor = dark ? "rgba(245,243,255,0.35)" : "rgba(10,8,16,0.3)";
-  const enterHoverColor = dark ? "rgba(245,243,255,0.7)" : "rgba(10,8,16,0.65)";
-
   return (
     <div
       style={{
         position: "relative",
         width: "100%",
         height: "100%",
-        background: bg,
+        background: "#060608",
         overflow: "hidden",
         display: "flex",
         flexDirection: "column",
@@ -47,11 +37,11 @@ export function HeroSection({ onEnter }: HeroSectionProps) {
           position: "absolute",
           inset: 0,
           zIndex: 0,
-          opacity: dark ? 0.9 : 0.75,
+          opacity: 0.88,
         }}
       >
         <PlasmaWave
-          colors={dark ? COLORS_DARK : COLORS_LIGHT}
+          colors={WAVE_COLORS}
           speed1={0.04}
           speed2={0.035}
           focalLength={0.9}
@@ -61,47 +51,6 @@ export function HeroSection({ onEnter }: HeroSectionProps) {
           rotationDeg={-8}
         />
       </div>
-
-      {/* ── Theme toggle — top right ── */}
-      <button
-        onClick={toggle}
-        aria-label="Toggle theme"
-        style={{
-          position: "absolute",
-          top: 20,
-          right: 24,
-          zIndex: 10,
-          background: dark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.06)",
-          border: dark
-            ? "1px solid rgba(255,255,255,0.14)"
-            : "1px solid rgba(0,0,0,0.1)",
-          borderRadius: 40,
-          padding: "7px 14px",
-          display: "flex",
-          alignItems: "center",
-          gap: 7,
-          cursor: "pointer",
-          backdropFilter: "blur(8px)",
-          transition: "background 0.2s",
-          color: dark ? "rgba(245,243,255,0.7)" : "rgba(10,8,16,0.55)",
-          fontSize: 12,
-          fontWeight: 500,
-          fontFamily: "var(--font-space-grotesk), system-ui",
-          letterSpacing: "0.03em",
-        }}
-      >
-        {dark ? (
-          <>
-            <Sun size={13} strokeWidth={2} />
-            Light
-          </>
-        ) : (
-          <>
-            <Moon size={13} strokeWidth={2} />
-            Dark
-          </>
-        )}
-      </button>
 
       {/* ── Hero text ── */}
       <div
@@ -114,10 +63,7 @@ export function HeroSection({ onEnter }: HeroSectionProps) {
           gap: 20,
           textAlign: "center",
           padding: "40px 56px",
-          // subtle frosted card so text is legible over any wave colour
-          background: dark ? "rgba(6,6,8,0.38)" : "rgba(250,248,255,0.38)",
-          backdropFilter: "blur(2px)",
-          borderRadius: 24,
+          background: "transparent",
         }}
       >
         <h1
@@ -128,11 +74,10 @@ export function HeroSection({ onEnter }: HeroSectionProps) {
             fontSize: "clamp(3.5rem, 10vw, 8rem)",
             lineHeight: 1.0,
             letterSpacing: "-0.02em",
-            color: titleColor,
+            color: "#eceaf5",
             userSelect: "none",
-            textShadow: dark
-              ? "0 2px 40px rgba(139,26,47,0.5)"
-              : "0 2px 30px rgba(139,26,47,0.25)",
+            textShadow:
+              "0 2px 48px rgba(0,0,0,0.9), 0 0 80px rgba(139,26,47,0.4)",
           }}
         >
           Mycellium
@@ -143,11 +88,12 @@ export function HeroSection({ onEnter }: HeroSectionProps) {
             fontFamily: "var(--font-space-grotesk), system-ui",
             fontWeight: 400,
             fontSize: "clamp(0.95rem, 2vw, 1.2rem)",
-            color: subtitleColor,
+            color: "rgba(236,234,245,0.52)",
             letterSpacing: "0.01em",
             maxWidth: 460,
             lineHeight: 1.55,
             userSelect: "none",
+            textShadow: "0 1px 12px rgba(0,0,0,0.95)",
           }}
         >
           Drop a new agent in.{" "}
@@ -169,7 +115,7 @@ export function HeroSection({ onEnter }: HeroSectionProps) {
           background: "none",
           border: "none",
           cursor: "pointer",
-          color: enterColor,
+          color: "rgba(236,234,245,0.32)",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
@@ -183,10 +129,12 @@ export function HeroSection({ onEnter }: HeroSectionProps) {
           textTransform: "uppercase",
         }}
         onMouseEnter={(e) => {
-          (e.currentTarget as HTMLElement).style.color = enterHoverColor;
+          (e.currentTarget as HTMLElement).style.color =
+            "rgba(236,234,245,0.72)";
         }}
         onMouseLeave={(e) => {
-          (e.currentTarget as HTMLElement).style.color = enterColor;
+          (e.currentTarget as HTMLElement).style.color =
+            "rgba(236,234,245,0.32)";
         }}
       >
         <span style={{ letterSpacing: "0.14em" }}>Enter</span>
