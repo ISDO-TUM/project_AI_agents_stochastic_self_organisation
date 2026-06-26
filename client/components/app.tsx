@@ -37,6 +37,7 @@ import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
 import { useBlackboard } from "@/hooks/useBlackboard";
 import { ModeGate, AppMode } from "@/components/mode-gate";
+import { SwarmConfigModal, SwarmRunConfig } from "@/components/swarm-config-modal";
 import { getTheme } from "@/lib/theme";
 
 const defaultTweaks: Tweaks = {
@@ -120,18 +121,20 @@ export function App() {
   const [runId, setRunId] = useState<string | null>(null);
   const [appMode, setAppMode] = useState<AppMode | null>(null);
   const [seeding, setSeeding] = useState(false);
+  const [swarmConfigOpen, setSwarmConfigOpen] = useState(false);
+  const [pendingSwarmPrompt, setPendingSwarmPrompt] = useState("");
   const { state: blackboardState } = useBlackboard(
     appMode === "swarm" ? runId : null,
   );
 
-  const handleSeed = useCallback(async () => {
+  const handleSeed = useCallback(async (promptOverride?: string) => {
     setSeeding(true);
     try {
       const res = await fetch("/api/simulation/seed", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prompt: "Test blackboard seeding",
+          prompt: promptOverride?.trim() || "Test blackboard seeding",
           agent_ids: [],
         }),
       });
@@ -176,6 +179,11 @@ export function App() {
 
   const handleRun = useCallback(
     (prompt: string) => {
+      if (appMode === "swarm") {
+        setPendingSwarmPrompt(prompt);
+        setSwarmConfigOpen(true);
+        return;
+      }
       const active = rules.filter((r) => selectedRules.has(r.id));
       const ruleset = active.length
         ? active.map((r) => `- ${r.instruction}`).join("\n")
@@ -183,7 +191,15 @@ export function App() {
       if (consensusMode === "bidding") setBiddingBoardOpen(true);
       runSim(prompt, consensusMode, ruleset, topology, fanout, iterations);
     },
-    [rules, selectedRules, runSim, consensusMode, topology, fanout, iterations],
+    [appMode, rules, selectedRules, runSim, consensusMode, topology, fanout, iterations],
+  );
+
+  const handleSwarmConfigConfirm = useCallback(
+    (_config: SwarmRunConfig) => {
+      setSwarmConfigOpen(false);
+      handleSeed(pendingSwarmPrompt);
+    },
+    [handleSeed, pendingSwarmPrompt],
   );
   const importErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -613,6 +629,13 @@ export function App() {
           onFanoutChange={setFanout}
           simRunning={simMode}
           onClose={() => setShowTweaks(false)}
+        />
+      )}
+
+      {swarmConfigOpen && (
+        <SwarmConfigModal
+          onCancel={() => setSwarmConfigOpen(false)}
+          onConfirm={handleSwarmConfigConfirm}
         />
       )}
 
