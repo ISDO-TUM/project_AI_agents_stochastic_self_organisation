@@ -2,7 +2,7 @@
 
 import { useCallback } from "react";
 import { Agent, AgentSwarmRole, Tweaks } from "@/lib/types";
-import { TOOL_ICON, LIcon } from "@/lib/icons";
+import { LIcon } from "@/lib/icons";
 import { BURG_LT, BURG_GLOW, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { AgentTrustPanel } from "./blackboard/agent-trust-panel";
@@ -160,25 +160,6 @@ export function AgentNode({
         >
           {initial}
         </span>
-        {agent.tools.length > 0 && (
-          <div
-            style={{
-              display: "flex",
-              gap: 3,
-              marginTop: 3,
-              justifyContent: "center",
-            }}
-          >
-            {agent.tools.slice(0, 4).map((tool) => (
-              <LIcon
-                key={tool}
-                name={TOOL_ICON[tool] || "Wrench"}
-                size={9}
-                color={dark ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.25)"}
-              />
-            ))}
-          </div>
-        )}
         {!simMode && !swarmMode && (
           <div
             className="connect-handle"
