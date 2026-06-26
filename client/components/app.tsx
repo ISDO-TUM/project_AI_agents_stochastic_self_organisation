@@ -674,6 +674,7 @@ export function App() {
           onFanoutChange={setFanout}
           simRunning={simMode}
           onClose={() => setShowTweaks(false)}
+          appMode={appMode}
         />
       )}
 

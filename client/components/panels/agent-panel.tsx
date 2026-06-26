@@ -2,12 +2,12 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { Agent, Provider, Source, Edge } from "@/lib/types";
-import { uuid, shortId, PROVIDERS } from "@/lib/utils";
+import { uuid, shortId, PROVIDERS, TOOLS } from "@/lib/utils";
 import { fetchModels, ModelEntry } from "@/lib/api";
 import { getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { useApiKeys } from "@/lib/api-keys-context";
-import { LIcon } from "@/lib/icons";
+import { LIcon, TOOL_ICON } from "@/lib/icons";
 import { FLabel, FInput, FSelect, FBtn, PanelShell } from "./panel-primitives";
 
 interface AgentPanelProps {
@@ -35,6 +35,23 @@ const defaultForm = (): AgentForm => ({
   model: PROVIDERS["openai"].models[0].value,
   systemPrompt: "",
 });
+
+const TOOL_LABELS: Record<string, { label: string; description: string }> = {
+  files: { label: "Files", description: "Read content from attached files." },
+  table_query: {
+    label: "Table Query",
+    description: "Read rows from a connected dataset.",
+  },
+  table_mutate: {
+    label: "Table Mutate",
+    description: "Insert or update rows in a connected dataset.",
+  },
+};
+
+function truncateContent(text: string, max = 70): string {
+  const clean = text.replace(/\s+/g, " ").trim();
+  return clean.length > max ? `${clean.slice(0, max).trimEnd()}…` : clean;
+}
 
 export function AgentPanel({
   agent,
@@ -119,6 +136,11 @@ export function AgentPanel({
     return sources.filter((s) => sourceIds.has(s.id));
   }, [agent, edges, sources]);
 
+  const generalTools = useMemo(
+    () => (agent?.tools ?? []).filter((tool) => TOOLS.includes(tool)),
+    [agent],
+  );
+
   const handleSave = () => {
     const position = agent?.position ?? {
       x: 220 + Math.random() * 480,
@@ -133,7 +155,6 @@ export function AgentPanel({
     });
   };
 
-  const [toolsOpen, setToolsOpen] = useState(false);
   const [connsOpen, setConnsOpen] = useState(false);
 
   const { dark } = useTheme();
@@ -235,22 +256,16 @@ export function AgentPanel({
         rows={5}
       />
 
-      {connectedSources.length > 0 && (
+      {(connectedSources.length > 0 || generalTools.length > 0) && (
         <>
-          {dropdownHeader(
-            "Tools",
-            "Wrench",
-            connectedSources.length,
-            toolsOpen,
-            () => setToolsOpen((o) => !o),
-          )}
-          {toolsOpen && (
+          <FLabel>Tools</FLabel>
+          {connectedSources.length > 0 && (
             <div
               style={{
                 display: "flex",
                 flexDirection: "column",
-                gap: 4,
-                marginTop: 4,
+                gap: 6,
+                marginBottom: generalTools.length > 0 ? 10 : 0,
               }}
             >
               {connectedSources.map((src) => (
@@ -258,22 +273,67 @@ export function AgentPanel({
                   key={src.id}
                   style={{
                     display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "7px 12px",
+                    flexDirection: "column",
+                    gap: 3,
+                    padding: "8px 12px",
                     borderRadius: 8,
                     border: `1.5px solid ${t.border}`,
                     background: t.inputBg,
                   }}
                 >
-                  <LIcon
-                    name={src.type === "dataset" ? "Table2" : "FileText"}
-                    size={13}
-                    color={t.textSub}
-                  />
-                  <span style={{ fontSize: 12, color: t.text }}>
-                    {src.name}
-                  </span>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <LIcon
+                      name={src.type === "dataset" ? "Table2" : "FileText"}
+                      size={13}
+                      color={t.textSub}
+                    />
+                    <span style={{ fontSize: 12, color: t.text, fontWeight: 600 }}>
+                      {src.name}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 9.5,
+                        color: t.textDim,
+                        textTransform: "uppercase",
+                        marginLeft: "auto",
+                      }}
+                    >
+                      {src.type}
+                    </span>
+                  </div>
+                  {src.content && (
+                    <span style={{ fontSize: 11, color: t.textSub }}>
+                      {truncateContent(src.content)}
+                    </span>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+          {generalTools.length > 0 && (
+            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+              {generalTools.map((tool) => (
+                <div
+                  key={tool}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 10,
+                    padding: "8px 12px",
+                    borderRadius: 8,
+                    border: `1.5px solid ${t.border}`,
+                    background: t.inputBg,
+                  }}
+                >
+                  <LIcon name={TOOL_ICON[tool] || "Wrench"} size={13} color={t.textSub} />
+                  <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
+                    <span style={{ fontSize: 12, color: t.text, fontWeight: 600 }}>
+                      {TOOL_LABELS[tool]?.label ?? tool}
+                    </span>
+                    <span style={{ fontSize: 10.5, color: t.textSub }}>
+                      {TOOL_LABELS[tool]?.description ?? ""}
+                    </span>
+                  </div>
                 </div>
               ))}
             </div>
