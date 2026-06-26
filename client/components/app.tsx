@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useMemo, useRef } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   CanvasState,
@@ -43,8 +43,6 @@ import {
 } from "@/components/swarm-config-modal";
 import { useDummySwarm } from "@/hooks/useDummySwarm";
 import { generateDummyRun } from "@/lib/dummy-swarm";
-import { computeCitationsByAuthor } from "@/lib/blackboard-utils";
-import { AgentSwarmRole } from "@/lib/types";
 import { getTheme } from "@/lib/theme";
 
 const defaultTweaks: Tweaks = {
@@ -127,7 +125,6 @@ export function App() {
   const [importError, setImportError] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [appMode, setAppMode] = useState<AppMode | null>(null);
-  const [seeding, setSeeding] = useState(false);
   const [swarmConfigOpen, setSwarmConfigOpen] = useState(false);
   const [pendingSwarmPrompt, setPendingSwarmPrompt] = useState("");
   const [topbarWidth, setTopbarWidth] = useState<number | null>(null);
@@ -138,18 +135,8 @@ export function App() {
   const blackboardState = dummy.state.active
     ? dummy.state.blackboard
     : realBlackboardState;
-  const swarmRoles = useMemo(() => {
-    const map = new Map<string, AgentSwarmRole>();
-    dummy.state.agents.forEach((a) => map.set(a.id, a.role));
-    return map;
-  }, [dummy.state.agents]);
-  const swarmCitations = useMemo(
-    () => computeCitationsByAuthor(blackboardState.draft),
-    [blackboardState.draft],
-  );
 
   const handleSeed = useCallback(async (promptOverride?: string) => {
-    setSeeding(true);
     try {
       const res = await fetch("/api/simulation/seed", {
         method: "POST",
@@ -164,8 +151,6 @@ export function App() {
       setRunId(data.run_id);
     } catch (err) {
       console.error("Seed failed:", err);
-    } finally {
-      setSeeding(false);
     }
   }, []);
 
@@ -586,10 +571,6 @@ export function App() {
           blackboardState={blackboardState}
           appMode={appMode}
           swarmRunId={appMode === "swarm" ? runId : null}
-          onSeed={handleSeed}
-          seeding={seeding}
-          swarmRoles={swarmRoles}
-          swarmCitations={swarmCitations}
           topbarWidth={topbarWidth}
           onSelectAgentChip={openPanel}
           phonebook={

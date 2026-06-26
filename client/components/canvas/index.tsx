@@ -9,7 +9,6 @@ import {
   Tweaks,
   BlackboardState,
   SimStep,
-  AgentSwarmRole,
 } from "@/lib/types";
 import { clamp } from "@/lib/utils";
 import { computePromotedAuthorIds } from "@/lib/blackboard-utils";
@@ -51,10 +50,6 @@ interface CanvasProps {
   appMode?: "topology" | "swarm" | null;
   /** Swarm: current run id — controls whether world nodes are visible */
   swarmRunId?: string | null;
-  onSeed?: () => void;
-  seeding?: boolean;
-  swarmRoles?: Map<string, AgentSwarmRole>;
-  swarmCitations?: Map<string, number>;
   topbarWidth?: number | null;
   onSelectAgentChip?: (id: string) => void;
   /** When provided, renders the PhonebookPanel inside the world transform so
@@ -110,10 +105,6 @@ export function Canvas({
   blackboardState,
   appMode,
   swarmRunId,
-  onSeed,
-  seeding,
-  swarmRoles,
-  swarmCitations,
   topbarWidth,
   onSelectAgentChip,
   phonebook = null,
@@ -131,9 +122,8 @@ export function Canvas({
 
   // ── Swarm widget positions (viewport-relative px) ──
   // Boards are fixed forever — geometry is derived from the measured topbar
-  // width, never independently moved or resized. Only mmPos stays a plain
-  // setter for now (Task 3 of this plan removes the Market Maker badge and
-  // its connector entirely, folding it into the new AgentDock).
+  // width, never independently moved or resized. The agent dock anchor is
+  // derived the same way (see dockAnchor below).
   const BOARD_DEFAULT_W = 315;
   const BOARD_HEIGHT = 300;
   const BOARD_GAP = 24;
