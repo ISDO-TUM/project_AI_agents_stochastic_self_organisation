@@ -412,3 +412,10 @@ export interface BlackboardState {
   loading: boolean;
   error: string | null;
 }
+
+export interface AgentTrustEntry {
+  domain: string;
+  trust_score: number;
+  runs_participated: number;
+  updated_at: string;
+}
