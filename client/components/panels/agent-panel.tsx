@@ -2,12 +2,12 @@
 
 import { useState, useMemo, useEffect } from "react";
 import { Agent, Provider, Source, Edge } from "@/lib/types";
-import { uuid, shortId, PROVIDERS, TOOLS } from "@/lib/utils";
+import { uuid, shortId, PROVIDERS } from "@/lib/utils";
 import { fetchModels, ModelEntry } from "@/lib/api";
 import { getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { useApiKeys } from "@/lib/api-keys-context";
-import { LIcon, TOOL_ICON } from "@/lib/icons";
+import { LIcon } from "@/lib/icons";
 import { FLabel, FInput, FSelect, FBtn, PanelShell } from "./panel-primitives";
 
 interface AgentPanelProps {
@@ -36,17 +36,41 @@ const defaultForm = (): AgentForm => ({
   systemPrompt: "",
 });
 
-const TOOL_LABELS: Record<string, { label: string; description: string }> = {
-  files: { label: "Files", description: "Read content from attached files." },
-  table_query: {
-    label: "Table Query",
-    description: "Read rows from a connected dataset.",
+/** Two UI-level tool categories shown in the panel.
+ *  "table" expands to both backend tools (table_query + table_mutate). */
+const UI_TOOLS: { key: string; label: string; description: string; icon: string }[] = [
+  {
+    key: "files",
+    label: "Text File",
+    description: "Read content from attached text files.",
+    icon: "FileText",
   },
-  table_mutate: {
-    label: "Table Mutate",
-    description: "Insert or update rows in a connected dataset.",
+  {
+    key: "table",
+    label: "Table",
+    description: "Query and mutate rows in a connected dataset.",
+    icon: "Table2",
   },
+];
+
+/** Expand a UI tool key to the actual backend tool name(s). */
+const UI_TO_BACKEND: Record<string, string[]> = {
+  files: ["files"],
+  table: ["table_query", "table_mutate"],
 };
+
+/** All backend tool names that are governed by the UI model. */
+const ALL_BACKEND_TOOLS = Object.values(UI_TO_BACKEND).flat();
+
+/** Collapse a list of backend tool names into deduped UI tool keys. */
+function backendToUiTools(backendTools: string[]): string[] {
+  const keys = new Set<string>();
+  for (const t of backendTools) {
+    if (t === "files") keys.add("files");
+    if (t === "table_query" || t === "table_mutate") keys.add("table");
+  }
+  return UI_TOOLS.map((u) => u.key).filter((k) => keys.has(k));
+}
 
 function truncateContent(text: string, max = 70): string {
   const clean = text.replace(/\s+/g, " ").trim();
@@ -137,18 +161,18 @@ export function AgentPanel({
   }, [agent, edges, sources]);
 
   const generalTools = useMemo(
-    () => (agent?.tools ?? []).filter((tool) => TOOLS.includes(tool)),
+    () => backendToUiTools(agent?.tools ?? []),
     [agent],
   );
 
   const [localTools, setLocalTools] = useState<string[]>(generalTools);
 
-  const addTool = (tool: string) =>
-    setLocalTools((prev) => (prev.includes(tool) ? prev : [...prev, tool]));
-  const removeTool = (tool: string) =>
-    setLocalTools((prev) => prev.filter((t) => t !== tool));
+  const addTool = (key: string) =>
+    setLocalTools((prev) => (prev.includes(key) ? prev : [...prev, key]));
+  const removeTool = (key: string) =>
+    setLocalTools((prev) => prev.filter((k) => k !== key));
 
-  const availableToAdd = TOOLS.filter((t) => !localTools.includes(t));
+  const availableToAdd = UI_TOOLS.filter((u) => !localTools.includes(u.key));
 
   const handleSave = () => {
     const position = agent?.position ?? {
@@ -159,10 +183,10 @@ export function AgentPanel({
       ...form,
       id: agent?.id ?? uuid(),
       position,
-      // Preserve any non-TOOLS entries (future-proof), then merge local tool toggles
+      // Preserve any non-governed backend tools, then expand UI keys to backend names
       tools: [
-        ...(agent?.tools ?? []).filter((t) => !TOOLS.includes(t)),
-        ...localTools,
+        ...(agent?.tools ?? []).filter((t) => !ALL_BACKEND_TOOLS.includes(t)),
+        ...localTools.flatMap((key) => UI_TO_BACKEND[key] ?? []),
       ],
       connections: agent?.connections ?? [],
     });
@@ -357,9 +381,12 @@ export function AgentPanel({
                 No tools assigned yet.
               </span>
             )}
-            {localTools.map((tool) => (
+            {localTools.map((key) => {
+              const uiTool = UI_TOOLS.find((u) => u.key === key);
+              if (!uiTool) return null;
+              return (
               <div
-                key={tool}
+                key={key}
                 style={{
                   display: "flex",
                   alignItems: "center",
@@ -375,7 +402,7 @@ export function AgentPanel({
                   style={{ display: "flex", alignItems: "center", gap: 10 }}
                 >
                   <LIcon
-                    name={TOOL_ICON[tool] ?? "Wrench"}
+                    name={uiTool.icon}
                     size={13}
                     color={t.textSub}
                   />
@@ -389,15 +416,15 @@ export function AgentPanel({
                     <span
                       style={{ fontSize: 12, color: t.text, fontWeight: 600 }}
                     >
-                      {TOOL_LABELS[tool]?.label ?? tool}
+                      {uiTool.label}
                     </span>
                     <span style={{ fontSize: 10.5, color: t.textSub }}>
-                      {TOOL_LABELS[tool]?.description ?? ""}
+                      {uiTool.description}
                     </span>
                   </div>
                 </div>
                 <button
-                  onClick={() => removeTool(tool)}
+                  onClick={() => removeTool(key)}
                   title="Remove tool"
                   style={{
                     background: "none",
@@ -427,7 +454,8 @@ export function AgentPanel({
                   <LIcon name="X" size={13} color="currentColor" />
                 </button>
               </div>
-            ))}
+              );
+            })}
 
             {/* Available tools to add */}
             {availableToAdd.length > 0 && (
@@ -444,11 +472,11 @@ export function AgentPanel({
                       : undefined,
                 }}
               >
-                {availableToAdd.map((tool) => (
+                {availableToAdd.map((uiTool) => (
                   <button
-                    key={tool}
-                    onClick={() => addTool(tool)}
-                    title={`Add ${TOOL_LABELS[tool]?.label ?? tool}`}
+                    key={uiTool.key}
+                    onClick={() => addTool(uiTool.key)}
+                    title={`Add ${uiTool.label}`}
                     style={{
                       display: "flex",
                       alignItems: "center",
@@ -477,7 +505,7 @@ export function AgentPanel({
                     }}
                   >
                     <LIcon name="Plus" size={11} color="currentColor" />
-                    {TOOL_LABELS[tool]?.label ?? tool}
+                    {uiTool.label}
                   </button>
                 ))}
               </div>
