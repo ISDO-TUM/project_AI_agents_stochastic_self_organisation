@@ -141,6 +141,15 @@ export function AgentPanel({
     [agent],
   );
 
+  const [localTools, setLocalTools] = useState<string[]>(generalTools);
+
+  const addTool = (tool: string) =>
+    setLocalTools((prev) => (prev.includes(tool) ? prev : [...prev, tool]));
+  const removeTool = (tool: string) =>
+    setLocalTools((prev) => prev.filter((t) => t !== tool));
+
+  const availableToAdd = TOOLS.filter((t) => !localTools.includes(t));
+
   const handleSave = () => {
     const position = agent?.position ?? {
       x: 220 + Math.random() * 480,
@@ -150,12 +159,17 @@ export function AgentPanel({
       ...form,
       id: agent?.id ?? uuid(),
       position,
-      tools: agent?.tools ?? [],
+      // Preserve any non-TOOLS entries (future-proof), then merge local tool toggles
+      tools: [
+        ...(agent?.tools ?? []).filter((t) => !TOOLS.includes(t)),
+        ...localTools,
+      ],
       connections: agent?.connections ?? [],
     });
   };
 
   const [connsOpen, setConnsOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(true);
 
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -256,78 +270,125 @@ export function AgentPanel({
         rows={5}
       />
 
-      {(connectedSources.length > 0 || generalTools.length > 0) && (
+      {connectedSources.length > 0 && (
         <>
-          <FLabel>Tools</FLabel>
-          {connectedSources.length > 0 && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 6,
-                marginBottom: generalTools.length > 0 ? 10 : 0,
-              }}
-            >
-              {connectedSources.map((src) => (
-                <div
-                  key={src.id}
-                  style={{
-                    display: "flex",
-                    flexDirection: "column",
-                    gap: 3,
-                    padding: "8px 12px",
-                    borderRadius: 8,
-                    border: `1.5px solid ${t.border}`,
-                    background: t.inputBg,
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <LIcon
-                      name={src.type === "dataset" ? "Table2" : "FileText"}
-                      size={13}
-                      color={t.textSub}
-                    />
-                    <span style={{ fontSize: 12, color: t.text, fontWeight: 600 }}>
-                      {src.name}
-                    </span>
-                    <span
-                      style={{
-                        fontSize: 9.5,
-                        color: t.textDim,
-                        textTransform: "uppercase",
-                        marginLeft: "auto",
-                      }}
-                    >
-                      {src.type}
-                    </span>
-                  </div>
-                  {src.content && (
-                    <span style={{ fontSize: 11, color: t.textSub }}>
-                      {truncateContent(src.content)}
-                    </span>
-                  )}
+          <FLabel>Connected Files</FLabel>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              marginBottom: 4,
+            }}
+          >
+            {connectedSources.map((src) => (
+              <div
+                key={src.id}
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 3,
+                  padding: "8px 12px",
+                  borderRadius: 8,
+                  border: `1.5px solid ${t.border}`,
+                  background: t.inputBg,
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <LIcon
+                    name={src.type === "dataset" ? "Table2" : "FileText"}
+                    size={13}
+                    color={t.textSub}
+                  />
+                  <span style={{ fontSize: 12, color: t.text, fontWeight: 600 }}>
+                    {src.name}
+                  </span>
+                  <span
+                    style={{
+                      fontSize: 9.5,
+                      color: t.textDim,
+                      textTransform: "uppercase",
+                      marginLeft: "auto",
+                    }}
+                  >
+                    {src.type}
+                  </span>
                 </div>
-              ))}
-            </div>
-          )}
-          {generalTools.length > 0 && (
-            <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-              {generalTools.map((tool) => (
+                {src.content && (
+                  <span style={{ fontSize: 11, color: t.textSub }}>
+                    {truncateContent(src.content)}
+                  </span>
+                )}
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {/* ── Tools — expandable with add / remove ── */}
+      <>
+        <FLabel>Tools</FLabel>
+        {dropdownHeader(
+          "Assigned tools",
+          "Wrench",
+          localTools.length,
+          toolsOpen,
+          () => setToolsOpen((o) => !o),
+        )}
+        {toolsOpen && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              marginTop: 6,
+              padding: "2px 0 4px",
+            }}
+          >
+            {/* Assigned tool cards with remove button */}
+            {localTools.length === 0 && (
+              <span
+                style={{
+                  fontSize: 11.5,
+                  color: t.textDim,
+                  padding: "4px 4px 2px",
+                }}
+              >
+                No tools assigned yet.
+              </span>
+            )}
+            {localTools.map((tool) => (
+              <div
+                key={tool}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  padding: "9px 12px",
+                  borderRadius: 8,
+                  border: `1.5px solid ${t.border}`,
+                  background: t.inputBg,
+                  gap: 10,
+                }}
+              >
                 <div
-                  key={tool}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "8px 12px",
-                    borderRadius: 8,
-                    border: `1.5px solid ${t.border}`,
-                    background: t.inputBg,
-                  }}
+                  style={{ display: "flex", alignItems: "center", gap: 10 }}
                 >
-                  <LIcon name={TOOL_ICON[tool] || "Wrench"} size={13} color={t.textSub} />
-                  <div style={{ display: "flex", flexDirection: "column", gap: 1 }}>
-                    <span style={{ fontSize: 12, color: t.text, fontWeight: 600 }}>
+                  <LIcon
+                    name={TOOL_ICON[tool] ?? "Wrench"}
+                    size={13}
+                    color={t.textSub}
+                  />
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 2,
+                    }}
+                  >
+                    <span
+                      style={{ fontSize: 12, color: t.text, fontWeight: 600 }}
+                    >
                       {TOOL_LABELS[tool]?.label ?? tool}
                     </span>
                     <span style={{ fontSize: 10.5, color: t.textSub }}>
@@ -335,11 +396,95 @@ export function AgentPanel({
                     </span>
                   </div>
                 </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
+                <button
+                  onClick={() => removeTool(tool)}
+                  title="Remove tool"
+                  style={{
+                    background: "none",
+                    border: "none",
+                    cursor: "pointer",
+                    padding: "3px 5px",
+                    borderRadius: 6,
+                    display: "flex",
+                    alignItems: "center",
+                    color: t.textDim,
+                    flexShrink: 0,
+                    transition: "color 0.15s, background 0.15s",
+                  }}
+                  onMouseEnter={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.color =
+                      "#e05555";
+                    (e.currentTarget as HTMLButtonElement).style.background =
+                      "rgba(224,85,85,0.1)";
+                  }}
+                  onMouseLeave={(e) => {
+                    (e.currentTarget as HTMLButtonElement).style.color =
+                      t.textDim;
+                    (e.currentTarget as HTMLButtonElement).style.background =
+                      "none";
+                  }}
+                >
+                  <LIcon name="X" size={13} color="currentColor" />
+                </button>
+              </div>
+            ))}
+
+            {/* Available tools to add */}
+            {availableToAdd.length > 0 && (
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 6,
+                  marginTop: localTools.length > 0 ? 4 : 0,
+                  paddingTop: localTools.length > 0 ? 8 : 0,
+                  borderTop:
+                    localTools.length > 0
+                      ? `1px dashed ${t.border}`
+                      : undefined,
+                }}
+              >
+                {availableToAdd.map((tool) => (
+                  <button
+                    key={tool}
+                    onClick={() => addTool(tool)}
+                    title={`Add ${TOOL_LABELS[tool]?.label ?? tool}`}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 5,
+                      padding: "4px 10px",
+                      borderRadius: 20,
+                      border: `1.5px dashed ${t.border}`,
+                      background: "transparent",
+                      color: t.textSub,
+                      fontSize: 11.5,
+                      fontFamily: "'Space Grotesk', sans-serif",
+                      cursor: "pointer",
+                      transition: "all 0.15s",
+                    }}
+                    onMouseEnter={(e) => {
+                      const el = e.currentTarget as HTMLButtonElement;
+                      el.style.borderColor = t.borderHi;
+                      el.style.color = t.text;
+                      el.style.background = t.hover;
+                    }}
+                    onMouseLeave={(e) => {
+                      const el = e.currentTarget as HTMLButtonElement;
+                      el.style.borderColor = t.border;
+                      el.style.color = t.textSub;
+                      el.style.background = "transparent";
+                    }}
+                  >
+                    <LIcon name="Plus" size={11} color="currentColor" />
+                    {TOOL_LABELS[tool]?.label ?? tool}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </>
 
       {agent && agent.connections.length > 0 && (
         <>
