@@ -906,6 +906,7 @@ class SimulationRunRequest(BaseModel):
 class SimulationStartResponse(BaseModel):
     """Response returned immediately after a background simulation is scheduled."""
 
+    experiment_id: str = Field(description="ID of the experiment that owns the scheduled trials.")
     trial_id: str = Field(description="ID of the first trial (used for live message streaming).")
     trial_ids: list[str] = Field(description="IDs of all scheduled trials.")
     status: str = Field(default="started", description="Background simulation status.")

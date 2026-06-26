@@ -105,6 +105,7 @@ async def run_simulation(
         topology=body.topology,
         fanout=body.fanout,
         agent_context=body.agent_context,
+        reuse_existing=False,
     )
 
     trial_ids = [
@@ -125,4 +126,8 @@ async def run_simulation(
         body.fanout,
         captured_creds,
     )
-    return SimulationStartResponse(trial_id=trial_ids[0], trial_ids=trial_ids)
+    return SimulationStartResponse(
+        experiment_id=experiment_id,
+        trial_id=trial_ids[0],
+        trial_ids=trial_ids,
+    )
