@@ -701,6 +701,18 @@ export function App({ onModeSelected }: AppProps = {}) {
             setCtx(null);
           }}
           onClose={() => setPanel(null)}
+          onEditSource={(sourceId) => setPanel({ type: "source", id: sourceId })}
+          onDetachSource={(sourceId) => {
+            if (!panelAgent) return;
+            const edge = edges.find(
+              (e) =>
+                (e.from === panelAgent.id && e.to === sourceId) ||
+                (e.to === panelAgent.id && e.from === sourceId),
+            );
+            if (edge) deleteEdge(edge.id);
+          }}
+          onAddFile={() => setPanel({ type: "source", id: null, sourceType: "text" })}
+          onAddDataset={() => setPanel({ type: "source", id: null, sourceType: "dataset" })}
         />
       )}
       {panel?.type === "source" && (
