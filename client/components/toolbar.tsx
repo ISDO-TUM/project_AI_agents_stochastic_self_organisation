@@ -30,6 +30,7 @@ interface ToolbarProps {
   showBiddingBoardToggle?: boolean;
   biddingBoardOpen?: boolean;
   onToggleBiddingBoard?: () => void;
+  onWidthChange?: (w: number) => void;
 }
 
 function Sep({ t }: { t: ReturnType<typeof getTheme> }) {
@@ -759,9 +760,22 @@ export function Toolbar({
   showBiddingBoardToggle,
   biddingBoardOpen,
   onToggleBiddingBoard,
+  onWidthChange,
 }: ToolbarProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
+  const pillRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = pillRef.current;
+    if (!el || !onWidthChange) return;
+    const observer = new ResizeObserver((entries) => {
+      const width = entries[0]?.contentRect.width;
+      if (width) onWidthChange(width);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [onWidthChange]);
 
   const pillStyle: React.CSSProperties = {
     display: "flex",
@@ -792,7 +806,7 @@ export function Toolbar({
         gap: 8,
       }}
     >
-      <div style={pillStyle}>
+      <div ref={pillRef} style={pillStyle}>
         {/* Logo */}
         <div
           style={{

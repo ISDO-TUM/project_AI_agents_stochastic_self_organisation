@@ -33,7 +33,10 @@ function insertEntry(tree: DraftEntry[], entry: DraftEntry): DraftEntry[] {
   return placed ? next : [...tree, entry];
 }
 
-function insertEntryRec(tree: DraftEntry[], entry: DraftEntry): [DraftEntry[], boolean] {
+function insertEntryRec(
+  tree: DraftEntry[],
+  entry: DraftEntry,
+): [DraftEntry[], boolean] {
   let placed = false;
   const next = tree.map((node) => {
     if (placed) return node;
@@ -67,7 +70,12 @@ function updateEntry(
   });
 }
 
-const INITIAL: DummySwarmState = { active: false, blackboard: EMPTY_STATE, agents: [], trustVectors: {} };
+const INITIAL: DummySwarmState = {
+  active: false,
+  blackboard: EMPTY_STATE,
+  agents: [],
+  trustVectors: {},
+};
 
 function reducer(state: DummySwarmState, action: Action): DummySwarmState {
   switch (action.type) {
@@ -87,7 +95,10 @@ function reducer(state: DummySwarmState, action: Action): DummySwarmState {
     case "POST":
       return {
         ...state,
-        blackboard: { ...state.blackboard, draft: insertEntry(state.blackboard.draft, action.entry) },
+        blackboard: {
+          ...state.blackboard,
+          draft: insertEntry(state.blackboard.draft, action.entry),
+        },
       };
     case "CITE":
       return {
@@ -97,7 +108,10 @@ function reducer(state: DummySwarmState, action: Action): DummySwarmState {
           draft: updateEntry(state.blackboard.draft, action.entryId, (e) => ({
             ...e,
             citation_count: e.citation_count + 1,
-            citers: [...(e.citers ?? []), { agentName: action.citerName, round: action.round }],
+            citers: [
+              ...(e.citers ?? []),
+              { agentName: action.citerName, round: action.round },
+            ],
           })),
         },
       };
@@ -146,7 +160,8 @@ export function useDummySwarm(): {
       dispatch({ type: "BEGIN", fixture });
       fixture.events.forEach((event: DummyEvent) => {
         const timer = setTimeout(() => {
-          if (event.kind === "post") dispatch({ type: "POST", entry: event.entry });
+          if (event.kind === "post")
+            dispatch({ type: "POST", entry: event.entry });
           if (event.kind === "cite")
             dispatch({
               type: "CITE",
@@ -154,8 +169,10 @@ export function useDummySwarm(): {
               citerName: event.citerName,
               round: event.round,
             });
-          if (event.kind === "promote") dispatch({ type: "PROMOTE", confirmed: event.confirmed });
-          if (event.kind === "delete") dispatch({ type: "DELETE", entryId: event.entryId });
+          if (event.kind === "promote")
+            dispatch({ type: "PROMOTE", confirmed: event.confirmed });
+          if (event.kind === "delete")
+            dispatch({ type: "DELETE", entryId: event.entryId });
         }, event.delay);
         timers.current.push(timer);
       });

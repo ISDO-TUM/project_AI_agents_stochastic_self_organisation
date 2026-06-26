@@ -19,12 +19,33 @@ body {
     sans-serif;
 }
 
+/* Hide scrollbar on the two-section shell */
+.no-scrollbar {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+
 body {
   background: #060608;
   color: #eceaf5;
 }
 
 /* ─── Keyframe animations ─── */
+
+@keyframes heroBounce {
+  0%,
+  100% {
+    transform: translateY(0);
+    opacity: 0.6;
+  }
+  50% {
+    transform: translateY(6px);
+    opacity: 1;
+  }
+}
 
 @keyframes pulseRing {
   0% {

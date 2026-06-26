@@ -39,7 +39,9 @@ export function resolveParentPreview(
 }
 
 /** Sums citation_count over every entry authored by each agent, recursively. */
-export function computeCitationsByAuthor(draft: DraftEntry[]): Map<string, number> {
+export function computeCitationsByAuthor(
+  draft: DraftEntry[],
+): Map<string, number> {
   const map = new Map<string, number>();
   function walk(entries: DraftEntry[]): void {
     for (const e of entries) {

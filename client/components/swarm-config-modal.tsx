@@ -35,7 +35,10 @@ interface SwarmConfigModalProps {
   onConfirm: (config: SwarmRunConfig) => void;
 }
 
-export function SwarmConfigModal({ onCancel, onConfirm }: SwarmConfigModalProps) {
+export function SwarmConfigModal({
+  onCancel,
+  onConfirm,
+}: SwarmConfigModalProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
   const [config, setConfig] = useState<SwarmRunConfig>(DEFAULT_SWARM_CONFIG);
@@ -101,7 +104,9 @@ export function SwarmConfigModal({ onCancel, onConfirm }: SwarmConfigModalProps)
           boxShadow: "0 28px 90px rgba(0,0,0,0.5)",
         }}
       >
-        <div style={{ display: "flex", alignItems: "center", marginBottom: 16 }}>
+        <div
+          style={{ display: "flex", alignItems: "center", marginBottom: 16 }}
+        >
           <span
             style={{
               fontSize: 12,
@@ -129,18 +134,26 @@ export function SwarmConfigModal({ onCancel, onConfirm }: SwarmConfigModalProps)
 
         <div style={{ display: "flex", gap: 8 }}>
           <div style={{ flex: 1 }}>
-            {field("Takers min", config.takersMin, (n) => setConfig((c) => ({ ...c, takersMin: n })))}
+            {field("Takers min", config.takersMin, (n) =>
+              setConfig((c) => ({ ...c, takersMin: n })),
+            )}
           </div>
           <div style={{ flex: 1 }}>
-            {field("max", config.takersMax, (n) => setConfig((c) => ({ ...c, takersMax: n })))}
+            {field("max", config.takersMax, (n) =>
+              setConfig((c) => ({ ...c, takersMax: n })),
+            )}
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
           <div style={{ flex: 1 }}>
-            {field("Rounds min", config.roundsMin, (n) => setConfig((c) => ({ ...c, roundsMin: n })))}
+            {field("Rounds min", config.roundsMin, (n) =>
+              setConfig((c) => ({ ...c, roundsMin: n })),
+            )}
           </div>
           <div style={{ flex: 1 }}>
-            {field("max", config.roundsMax, (n) => setConfig((c) => ({ ...c, roundsMax: n })))}
+            {field("max", config.roundsMax, (n) =>
+              setConfig((c) => ({ ...c, roundsMax: n })),
+            )}
           </div>
         </div>
         {field(
@@ -171,7 +184,10 @@ export function SwarmConfigModal({ onCancel, onConfirm }: SwarmConfigModalProps)
         >
           <ChevronDown
             size={11}
-            style={{ transform: advanced ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}
+            style={{
+              transform: advanced ? "rotate(180deg)" : "none",
+              transition: "transform 0.15s",
+            }}
           />
           Advanced settings
         </button>
@@ -192,7 +208,14 @@ export function SwarmConfigModal({ onCancel, onConfirm }: SwarmConfigModalProps)
           </div>
         )}
 
-        <div style={{ display: "flex", gap: 8, justifyContent: "flex-end", marginTop: 16 }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            justifyContent: "flex-end",
+            marginTop: 16,
+          }}
+        >
           <button
             onClick={onCancel}
             style={{

@@ -1526,11 +1526,11 @@ Presentation: modal over blurred canvas background.
 
 ## 12.3 Canvas Nodes — Swarm Mode
 
-| Node                   | Component                      | Visual                                                                                                                                                   | Status  | Notes                                                                                                         |
-| ---------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------- |
-| **Market Maker badge** | `canvas/swarm-nodes.tsx`       | Draggable burgundy badge, receipt icon, "MM" label                                                                                                       | ✅ DONE | Repositionable in world space; dashed SVG connector drawn to BlackboardCanvas                                 |
-| **BlackboardCanvas**   | `canvas/blackboard-canvas.tsx` | Draggable + resizable panel in world space; tabs for Confirmed / Draft entries; entry type badges (📌 ANCHOR, ✅ FINDING, ⚙ SYSTEM, P/R proposal-reply) | ✅ DONE | Full in-world blackboard widget — **not** a simple icon node. See §12.7 for distinction from BlackboardPanel. |
-| **Thread node**        | `canvas/blackboard/thread-node.tsx` | Rounded pill, one per thread, color-coded, appears after threads exist; click filters BlackboardCanvas | ✅ DONE | Lives as a viewport overlay sibling of BlackboardCanvas, not inside its world-transform group       |
+| Node                   | Component                           | Visual                                                                                                                                                   | Status  | Notes                                                                                                         |
+| ---------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------- |
+| **Market Maker badge** | `canvas/swarm-nodes.tsx`            | Draggable burgundy badge, receipt icon, "MM" label                                                                                                       | ✅ DONE | Repositionable in world space; dashed SVG connector drawn to BlackboardCanvas                                 |
+| **BlackboardCanvas**   | `canvas/blackboard-canvas.tsx`      | Draggable + resizable panel in world space; tabs for Confirmed / Draft entries; entry type badges (📌 ANCHOR, ✅ FINDING, ⚙ SYSTEM, P/R proposal-reply) | ✅ DONE | Full in-world blackboard widget — **not** a simple icon node. See §12.7 for distinction from BlackboardPanel. |
+| **Thread node**        | `canvas/blackboard/thread-node.tsx` | Rounded pill, one per thread, color-coded, appears after threads exist; click filters BlackboardCanvas                                                   | ✅ DONE | Lives as a viewport overlay sibling of BlackboardCanvas, not inside its world-transform group                 |
 
 Existing agent nodes in swarm mode:
 
@@ -1867,11 +1867,11 @@ agent_trust = Table(
 
 ### Frontend components affected
 
-| Component                      | Change needed                                         | Status  |
-| ------------------------------ | ----------------------------------------------------- | ------- |
-| `canvas/agent-node.tsx`        | add ♡ N badge on agent node in swarm mode             | ✅ DONE |
-| `blackboard-panel.tsx` header  | show citation summary row per taker                   | ✅ DONE — superseded: `blackboard-panel.tsx` itself was retired (§12.7); the per-node ♡ badge + `agent-trust-panel.tsx` now cover this |
-| `trust-panel.tsx` (see §12.5)  | expandable per-domain trust scores with progress bars | ✅ DONE — `canvas/blackboard/agent-trust-panel.tsx` |
+| Component                      | Change needed                                         | Status                                                                                                                                       |
+| ------------------------------ | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `canvas/agent-node.tsx`        | add ♡ N badge on agent node in swarm mode             | ✅ DONE                                                                                                                                      |
+| `blackboard-panel.tsx` header  | show citation summary row per taker                   | ✅ DONE — superseded: `blackboard-panel.tsx` itself was retired (§12.7); the per-node ♡ badge + `agent-trust-panel.tsx` now cover this       |
+| `trust-panel.tsx` (see §12.5)  | expandable per-domain trust scores with progress bars | ✅ DONE — `canvas/blackboard/agent-trust-panel.tsx`                                                                                          |
 | `canvas/blackboard-canvas.tsx` | show agent citation ranks in compact agent list       | ❌ TODO — not built this plan; the per-agent ♡ badge (canvas) and the trust panel give equivalent visibility without a dedicated ranked list |
 
 ---

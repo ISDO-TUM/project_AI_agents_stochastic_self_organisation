@@ -41,7 +41,9 @@ export function SystemRow({ entry }: SystemRowProps) {
         }}
       >
         <Settings2 size={10} strokeWidth={2} />
-        <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>R{entry.round}</span>
+        <span style={{ fontFamily: "'JetBrains Mono', monospace" }}>
+          R{entry.round}
+        </span>
         <span
           style={{
             flex: 1,
@@ -54,7 +56,10 @@ export function SystemRow({ entry }: SystemRowProps) {
         </span>
         <ChevronDown
           size={10}
-          style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}
+          style={{
+            transform: open ? "rotate(180deg)" : "none",
+            transition: "transform 0.15s",
+          }}
         />
       </button>
     </div>

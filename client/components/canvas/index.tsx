@@ -55,6 +55,7 @@ interface CanvasProps {
   seeding?: boolean;
   swarmRoles?: Map<string, AgentSwarmRole>;
   swarmCitations?: Map<string, number>;
+  topbarWidth?: number | null;
   /** When provided, renders the PhonebookPanel inside the world transform so
    *  it pans/zooms with the canvas like any other element. */
   phonebook?: {
@@ -112,6 +113,7 @@ export function Canvas({
   seeding,
   swarmRoles,
   swarmCitations,
+  topbarWidth,
   phonebook = null,
   biddingBoard = null,
 }: CanvasProps) {
@@ -126,38 +128,62 @@ export function Canvas({
   const spaceDown = useRef(false);
 
   // ── Swarm widget positions (viewport-relative px) ──
+  // Boards are fixed forever — geometry is derived from the measured topbar
+  // width, never independently moved or resized. Only mmPos stays a plain
+  // setter for now (Task 3 of this plan removes the Market Maker badge and
+  // its connector entirely, folding it into the new AgentDock).
   const MM_SIZE = 88;
   const BOARD_DEFAULT_W = 315;
-  const BOARD_DEFAULT_H = 300;
-  const BOARD_GAP = 32;
-  const [draftPos, setDraftPos] = useState<{ x: number; y: number } | null>(null);
-  const [confirmedPos, setConfirmedPos] = useState<{ x: number; y: number } | null>(null);
+  const BOARD_HEIGHT = 300;
+  const BOARD_GAP = 24;
   const [mmPos, setMmPos] = useState<{ x: number; y: number } | null>(null);
-  const [draftWidth, setDraftWidth] = useState(BOARD_DEFAULT_W);
-  const [draftHeight, setDraftHeight] = useState(BOARD_DEFAULT_H);
-  const [confirmedWidth, setConfirmedWidth] = useState(BOARD_DEFAULT_W);
-  const [confirmedHeight, setConfirmedHeight] = useState(BOARD_DEFAULT_H);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [boardLayout, setBoardLayout] = useState<{
+    draftPos: { x: number; y: number };
+    confirmedPos: { x: number; y: number };
+    boardWidth: number;
+  } | null>(null);
 
-  // Initialise positions from canvas dimensions once mounted
+  // Recompute whenever the canvas resizes or the measured topbar width
+  // changes — this is the only thing that ever updates board geometry.
   useEffect(() => {
     if (appMode !== "swarm") return;
     const el = canvasRef.current;
     if (!el) return;
-    const { width, height } = el.getBoundingClientRect();
-    const cx = width / 2;
-    const cy = height / 2;
-    const gap = 32;
-    setDraftPos({ x: cx - BOARD_DEFAULT_W / 2, y: cy - 120 });
-    setConfirmedPos({
-      x: cx - BOARD_DEFAULT_W / 2 + BOARD_DEFAULT_W + BOARD_GAP,
-      y: cy - 120,
-    });
-    setMmPos({ x: cx - BOARD_DEFAULT_W / 2 - MM_SIZE - gap, y: cy - MM_SIZE / 2 });
-  }, [appMode]);
+
+    const recompute = () => {
+      const { width, height } = el.getBoundingClientRect();
+      const cx = width / 2;
+      const cy = height / 2;
+      const gap = 32;
+      const totalWidth = topbarWidth ?? BOARD_DEFAULT_W * 2 + BOARD_GAP;
+      const boardWidth = (totalWidth - BOARD_GAP) / 2;
+      setBoardLayout({
+        draftPos: { x: cx - boardWidth - BOARD_GAP / 2, y: cy - 120 },
+        confirmedPos: { x: cx + BOARD_GAP / 2, y: cy - 120 },
+        boardWidth,
+      });
+      setMmPos({
+        x: cx - BOARD_DEFAULT_W / 2 - MM_SIZE - gap,
+        y: cy - MM_SIZE / 2,
+      });
+    };
+
+    recompute();
+    window.addEventListener("resize", recompute);
+    return () => window.removeEventListener("resize", recompute);
+  }, [appMode, topbarWidth]);
+
+  const draftPos = boardLayout?.draftPos ?? null;
+  const confirmedPos = boardLayout?.confirmedPos ?? null;
+  const boardWidth = boardLayout?.boardWidth ?? BOARD_DEFAULT_W;
 
   const promotedAuthorIds = useMemo(
-    () => computePromotedAuthorIds(blackboardState?.draft ?? [], blackboardState?.confirmed ?? []),
+    () =>
+      computePromotedAuthorIds(
+        blackboardState?.draft ?? [],
+        blackboardState?.confirmed ?? [],
+      ),
     [blackboardState],
   );
 
@@ -542,9 +568,8 @@ export function Canvas({
                 const ay = agent.position.y * zoom + pan.y;
                 const promoted = promotedAuthorIds.has(agent.id);
                 const targetPos = promoted ? confirmedPos : draftPos;
-                const targetWidth = promoted ? confirmedWidth : draftWidth;
                 if (!targetPos) return null;
-                const bx = targetPos.x + (targetWidth * zoom) / 2;
+                const bx = targetPos.x + (boardWidth * zoom) / 2;
                 const by = targetPos.y;
                 return (
                   <line
@@ -592,14 +617,9 @@ export function Canvas({
               }
             }
             runId={swarmRunId ?? null}
-            onSeed={onSeed}
-            seeding={seeding}
             pos={draftPos}
-            onPosChange={setDraftPos}
-            width={draftWidth}
-            onWidthChange={setDraftWidth}
-            height={draftHeight}
-            onHeightChange={setDraftHeight}
+            width={boardWidth}
+            height={BOARD_HEIGHT}
             zoom={zoom}
             activeThreadId={activeThreadId}
           />
@@ -614,11 +634,8 @@ export function Canvas({
               }
             }
             pos={confirmedPos}
-            onPosChange={setConfirmedPos}
-            width={confirmedWidth}
-            onWidthChange={setConfirmedWidth}
-            height={confirmedHeight}
-            onHeightChange={setConfirmedHeight}
+            width={boardWidth}
+            height={BOARD_HEIGHT}
             zoom={zoom}
             activeThreadId={activeThreadId}
           />

@@ -30,9 +30,17 @@ export function VoteChip({ entry, votedEntryPreview }: VoteChipProps) {
       }}
     >
       <CheckCircle size={12} strokeWidth={2} color="#3dba8c" />
-      <span style={{ fontWeight: 700, color: t.text }}>{entry.author_name}</span>
+      <span style={{ fontWeight: 700, color: t.text }}>
+        {entry.author_name}
+      </span>
       <span style={{ color: t.textDim }}>voted</span>
-      <span style={{ color: t.textDim, fontFamily: "'JetBrains Mono', monospace", fontSize: 10 }}>
+      <span
+        style={{
+          color: t.textDim,
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: 10,
+        }}
+      >
         R{entry.round}
       </span>
       {votedEntryPreview && (

@@ -127,7 +127,12 @@ export function CitationRing({
           )}
         </span>
       ) : (
-        <Heart size={11} strokeWidth={2} color={color} fill={pct >= 1 ? color : "none"} />
+        <Heart
+          size={11}
+          strokeWidth={2}
+          color={color}
+          fill={pct >= 1 ? color : "none"}
+        />
       )}
       <span style={{ fontSize: 11, fontWeight: 600, color: t.textSub }}>
         {count} / {threshold}
@@ -170,7 +175,8 @@ export function CitationRing({
         ))}
         {pct < 1 && (
           <div style={{ marginTop: 6, fontSize: 10.5, color: t.textDim }}>
-            {threshold - count} more citation{threshold - count === 1 ? "" : "s"} → Confirmed
+            {threshold - count} more citation
+            {threshold - count === 1 ? "" : "s"} → Confirmed
           </div>
         )}
       </HoverCardContent>

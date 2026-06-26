@@ -55,7 +55,14 @@ export function ConfirmedCard({ entry }: ConfirmedCardProps) {
         marginBottom: 8,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 6,
+        }}
+      >
         {s.icon}
         <span
           style={{
@@ -70,7 +77,9 @@ export function ConfirmedCard({ entry }: ConfirmedCardProps) {
           {s.label}
         </span>
         {entry.entry_type !== "anchor" && (
-          <span style={{ fontSize: 10, color: t.textDim }}>Round {entry.round_confirmed}</span>
+          <span style={{ fontSize: 10, color: t.textDim }}>
+            Round {entry.round_confirmed}
+          </span>
         )}
         {entry.citation_count > 0 && (
           <span style={{ marginLeft: "auto", fontSize: 10, color: t.textDim }}>

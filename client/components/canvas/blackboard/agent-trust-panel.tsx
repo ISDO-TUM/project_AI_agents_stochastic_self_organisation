@@ -6,7 +6,11 @@ import { useTheme } from "@/lib/theme-context";
 import { getTheme, BURG_LT } from "@/lib/theme";
 import { fetchAgentTrust } from "@/lib/api";
 import { AgentSwarmRole, AgentTrustEntry } from "@/lib/types";
-import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
+import {
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 interface AgentTrustPanelProps {
   agentId: string;
@@ -27,7 +31,9 @@ export function AgentTrustPanel({
 }: AgentTrustPanelProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
-  const [trustVector, setTrustVector] = useState<AgentTrustEntry[] | null>(null);
+  const [trustVector, setTrustVector] = useState<AgentTrustEntry[] | null>(
+    null,
+  );
   const [loading, setLoading] = useState(false);
   const [expanded, setExpanded] = useState(false);
 
@@ -44,8 +50,17 @@ export function AgentTrustPanel({
     <Popover onOpenChange={(open) => open && loadTrust()}>
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-          <span style={{ fontSize: 13, fontWeight: 700, color: t.text }}>{agentName}</span>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            marginBottom: 8,
+          }}
+        >
+          <span style={{ fontSize: 13, fontWeight: 700, color: t.text }}>
+            {agentName}
+          </span>
           {role && (
             <span
               style={{
@@ -87,7 +102,9 @@ export function AgentTrustPanel({
               style={{
                 height: 5,
                 borderRadius: 100,
-                background: dark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)",
+                background: dark
+                  ? "rgba(255,255,255,0.08)"
+                  : "rgba(0,0,0,0.08)",
                 overflow: "hidden",
               }}
             >
@@ -124,15 +141,22 @@ export function AgentTrustPanel({
           Trust Vector (cross-run)
           <ChevronDown
             size={10}
-            style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}
+            style={{
+              transform: expanded ? "rotate(180deg)" : "none",
+              transition: "transform 0.15s",
+            }}
           />
         </button>
 
         {expanded && (
           <div style={{ marginTop: 8 }}>
-            {loading && <div style={{ fontSize: 11, color: t.textDim }}>Loading…</div>}
+            {loading && (
+              <div style={{ fontSize: 11, color: t.textDim }}>Loading…</div>
+            )}
             {!loading && trustVector?.length === 0 && (
-              <div style={{ fontSize: 11, color: t.textDim }}>No cross-run history yet.</div>
+              <div style={{ fontSize: 11, color: t.textDim }}>
+                No cross-run history yet.
+              </div>
             )}
             {!loading &&
               trustVector?.map((entry) => (
@@ -148,7 +172,8 @@ export function AgentTrustPanel({
                   >
                     <span>{entry.domain}</span>
                     <span>
-                      {entry.trust_score.toFixed(2)} · {entry.runs_participated} run
+                      {entry.trust_score.toFixed(2)} · {entry.runs_participated}{" "}
+                      run
                       {entry.runs_participated === 1 ? "" : "s"}
                     </span>
                   </div>
@@ -156,7 +181,9 @@ export function AgentTrustPanel({
                     style={{
                       height: 4,
                       borderRadius: 100,
-                      background: dark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.07)",
+                      background: dark
+                        ? "rgba(255,255,255,0.07)"
+                        : "rgba(0,0,0,0.07)",
                       overflow: "hidden",
                     }}
                   >

@@ -18,7 +18,11 @@ interface ProposalCardProps {
   promotedMap: Map<string, number>;
 }
 
-export function ProposalCard({ entry, threshold, promotedMap }: ProposalCardProps) {
+export function ProposalCard({
+  entry,
+  threshold,
+  promotedMap,
+}: ProposalCardProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
   const [expanded, setExpanded] = useState(true);
@@ -41,7 +45,14 @@ export function ProposalCard({ entry, threshold, promotedMap }: ProposalCardProp
         marginBottom: 10,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 7 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginBottom: 7,
+        }}
+      >
         <span
           style={{
             width: 22,
@@ -63,7 +74,13 @@ export function ProposalCard({ entry, threshold, promotedMap }: ProposalCardProp
         <span style={{ fontSize: 12.5, fontWeight: 700, color: t.text }}>
           {entry.author_name}
         </span>
-        <span style={{ fontSize: 10, color: t.textDim, fontFamily: "'JetBrains Mono', monospace" }}>
+        <span
+          style={{
+            fontSize: 10,
+            color: t.textDim,
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
           R{entry.round}
         </span>
         <span
@@ -98,12 +115,26 @@ export function ProposalCard({ entry, threshold, promotedMap }: ProposalCardProp
       </div>
 
       {!entry.is_visible && (
-        <div style={{ fontSize: 10.5, color: t.textDim, fontStyle: "italic", marginBottom: 4 }}>
+        <div
+          style={{
+            fontSize: 10.5,
+            color: t.textDim,
+            fontStyle: "italic",
+            marginBottom: 4,
+          }}
+        >
           evaporated (R{entry.round})
         </div>
       )}
 
-      <div style={{ fontSize: 13.5, color: t.text, lineHeight: 1.6, marginBottom: 9 }}>
+      <div
+        style={{
+          fontSize: 13.5,
+          color: t.text,
+          lineHeight: 1.6,
+          marginBottom: 9,
+        }}
+      >
         <MarkdownRenderer content={entry.content} />
       </div>
 
@@ -134,7 +165,10 @@ export function ProposalCard({ entry, threshold, promotedMap }: ProposalCardProp
             {entry.children.length}
             <ChevronDown
               size={10}
-              style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}
+              style={{
+                transform: expanded ? "rotate(180deg)" : "none",
+                transition: "transform 0.15s",
+              }}
             />
           </button>
         )}

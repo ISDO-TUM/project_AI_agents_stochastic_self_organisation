@@ -37,7 +37,10 @@ import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
 import { useBlackboard } from "@/hooks/useBlackboard";
 import { ModeGate, AppMode } from "@/components/mode-gate";
-import { SwarmConfigModal, SwarmRunConfig } from "@/components/swarm-config-modal";
+import {
+  SwarmConfigModal,
+  SwarmRunConfig,
+} from "@/components/swarm-config-modal";
 import { useDummySwarm } from "@/hooks/useDummySwarm";
 import { generateDummyRun } from "@/lib/dummy-swarm";
 import { computeCitationsByAuthor } from "@/lib/blackboard-utils";
@@ -127,11 +130,14 @@ export function App() {
   const [seeding, setSeeding] = useState(false);
   const [swarmConfigOpen, setSwarmConfigOpen] = useState(false);
   const [pendingSwarmPrompt, setPendingSwarmPrompt] = useState("");
+  const [topbarWidth, setTopbarWidth] = useState<number | null>(null);
   const dummy = useDummySwarm();
   const { state: realBlackboardState } = useBlackboard(
     appMode === "swarm" && !dummy.state.active ? runId : null,
   );
-  const blackboardState = dummy.state.active ? dummy.state.blackboard : realBlackboardState;
+  const blackboardState = dummy.state.active
+    ? dummy.state.blackboard
+    : realBlackboardState;
   const swarmRoles = useMemo(() => {
     const map = new Map<string, AgentSwarmRole>();
     dummy.state.agents.forEach((a) => map.set(a.id, a.role));
@@ -206,7 +212,16 @@ export function App() {
       if (consensusMode === "bidding") setBiddingBoardOpen(true);
       runSim(prompt, consensusMode, ruleset, topology, fanout, iterations);
     },
-    [appMode, rules, selectedRules, runSim, consensusMode, topology, fanout, iterations],
+    [
+      appMode,
+      rules,
+      selectedRules,
+      runSim,
+      consensusMode,
+      topology,
+      fanout,
+      iterations,
+    ],
   );
 
   const handleSwarmConfigConfirm = useCallback(
@@ -575,6 +590,7 @@ export function App() {
           seeding={seeding}
           swarmRoles={swarmRoles}
           swarmCitations={swarmCitations}
+          topbarWidth={topbarWidth}
           phonebook={
             topology === "dynamic"
               ? {
@@ -613,6 +629,7 @@ export function App() {
           showBiddingBoardToggle={consensusMode === "bidding"}
           biddingBoardOpen={biddingBoardOpen}
           onToggleBiddingBoard={() => setBiddingBoardOpen((x) => !x)}
+          onWidthChange={setTopbarWidth}
         />
 
         <PromptBar

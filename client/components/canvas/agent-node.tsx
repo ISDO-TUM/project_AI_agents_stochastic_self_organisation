@@ -82,7 +82,13 @@ export function AgentNode({
     : "radial-gradient(circle at 35% 35%, rgba(255,255,255,0.95) 0%, rgba(235,232,248,0.85) 100%)";
 
   // PRD §12.3: takers full opacity, observers 30%, non-participants 10%.
-  const swarmOpacity = !swarmMode ? 1 : swarmRole === "observer" ? 0.3 : swarmRole === "taker" ? 1 : 0.1;
+  const swarmOpacity = !swarmMode
+    ? 1
+    : swarmRole === "observer"
+      ? 0.3
+      : swarmRole === "taker"
+        ? 1
+        : 0.1;
 
   return (
     <div
@@ -212,7 +218,9 @@ export function AgentNode({
                   display: "flex",
                   alignItems: "center",
                   gap: 2,
-                  background: dark ? "rgba(8,6,16,0.92)" : "rgba(255,255,255,0.95)",
+                  background: dark
+                    ? "rgba(8,6,16,0.92)"
+                    : "rgba(255,255,255,0.95)",
                   border: `1px solid ${BURG_LT}55`,
                   borderRadius: 100,
                   padding: "2px 6px",

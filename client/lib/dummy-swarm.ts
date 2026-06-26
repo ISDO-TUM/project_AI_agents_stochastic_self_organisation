@@ -21,7 +21,13 @@ export interface DummyAgentInfo {
 
 export type DummyEvent =
   | { kind: "post"; delay: number; entry: DraftEntry }
-  | { kind: "cite"; delay: number; entryId: string; citerName: string; round: number }
+  | {
+      kind: "cite";
+      delay: number;
+      entryId: string;
+      citerName: string;
+      round: number;
+    }
   | { kind: "promote"; delay: number; confirmed: ConfirmedEntry }
   | { kind: "delete"; delay: number; entryId: string };
 
@@ -37,11 +43,31 @@ export interface DummyRunFixture {
 }
 
 const SYNTHETIC_AGENTS: Omit<DummyAgentInfo, "role">[] = [
-  { id: "dummy-alpha", name: "Alpha", provider: "anthropic", model: "claude-sonnet-4-6" },
+  {
+    id: "dummy-alpha",
+    name: "Alpha",
+    provider: "anthropic",
+    model: "claude-sonnet-4-6",
+  },
   { id: "dummy-beta", name: "Beta", provider: "openai", model: "gpt-4o" },
-  { id: "dummy-gamma", name: "Gamma", provider: "anthropic", model: "claude-haiku-4-5" },
-  { id: "dummy-delta", name: "Delta", provider: "gemini", model: "gemini-2.5-pro" },
-  { id: "dummy-sigma", name: "Sigma", provider: "groq", model: "llama-3.3-70b" },
+  {
+    id: "dummy-gamma",
+    name: "Gamma",
+    provider: "anthropic",
+    model: "claude-haiku-4-5",
+  },
+  {
+    id: "dummy-delta",
+    name: "Delta",
+    provider: "gemini",
+    model: "gemini-2.5-pro",
+  },
+  {
+    id: "dummy-sigma",
+    name: "Sigma",
+    provider: "groq",
+    model: "llama-3.3-70b",
+  },
 ];
 
 const PROPOSALS = [
@@ -81,9 +107,15 @@ export function generateDummyRun(
           model: a.model,
           role: i < takers ? "taker" : "observer",
         }))
-      : SYNTHETIC_AGENTS.map((a, i) => ({ ...a, role: i < takers ? "taker" : "observer" }));
+      : SYNTHETIC_AGENTS.map((a, i) => ({
+          ...a,
+          role: i < takers ? "taker" : "observer",
+        }));
 
-  const agents = pool.slice(0, Math.max(takers, Math.min(pool.length, takers + 2)));
+  const agents = pool.slice(
+    0,
+    Math.max(takers, Math.min(pool.length, takers + 2)),
+  );
   const takerAgents = agents.filter((a) => a.role === "taker");
 
   const threadIds = ["dummy-thread-1", "dummy-thread-2"];
@@ -117,7 +149,15 @@ export function generateDummyRun(
 
   function makeEntry(
     overrides: Partial<DraftEntry> &
-      Pick<DraftEntry, "author_id" | "author_name" | "entry_type" | "content" | "round" | "thread_id">,
+      Pick<
+        DraftEntry,
+        | "author_id"
+        | "author_name"
+        | "entry_type"
+        | "content"
+        | "round"
+        | "thread_id"
+      >,
   ): DraftEntry {
     counter += 1;
     return {
@@ -170,7 +210,8 @@ export function generateDummyRun(
   for (let r = 2; r <= rounds; r += 1) {
     takerAgents.forEach((agent, i) => {
       const targetId = proposalIds[i % proposalIds.length];
-      const mentionAgent = i === 0 && takerAgents.length > 1 ? takerAgents[1] : null;
+      const mentionAgent =
+        i === 0 && takerAgents.length > 1 ? takerAgents[1] : null;
       const reply = makeEntry({
         author_id: agent.id,
         author_name: agent.name,
@@ -199,7 +240,10 @@ export function generateDummyRun(
   }
 
   // Promote the first proposal once citations have accumulated.
-  const promotionThreshold = Math.max(1, Math.floor(takerAgents.length / 3) + 1);
+  const promotionThreshold = Math.max(
+    1,
+    Math.floor(takerAgents.length / 3) + 1,
+  );
   events.push({
     kind: "promote",
     delay: t,
@@ -219,10 +263,19 @@ export function generateDummyRun(
 
   // Soft-delete the least-cited proposal — stale after the decay window.
   if (proposalIds.length > 1) {
-    events.push({ kind: "delete", delay: t, entryId: proposalIds[proposalIds.length - 1] });
+    events.push({
+      kind: "delete",
+      delay: t,
+      entryId: proposalIds[proposalIds.length - 1],
+    });
   }
 
-  const domains = ["contract-law", "financial-analysis", "regulatory", "general"];
+  const domains = [
+    "contract-law",
+    "financial-analysis",
+    "regulatory",
+    "general",
+  ];
   const trustVectors: DummyRunFixture["trustVectors"] = {};
   agents.forEach((a, i) => {
     trustVectors[a.id] = domains.map((domain, di) => ({

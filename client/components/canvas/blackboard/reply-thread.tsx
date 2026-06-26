@@ -76,7 +76,14 @@ export function ThreadedEntry({
         borderLeft: `2px solid ${color}55`,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 3 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 3,
+        }}
+      >
         <span
           style={{
             width: 16,
@@ -94,11 +101,26 @@ export function ThreadedEntry({
         >
           {(entry.author_name || "?")[0]?.toUpperCase() ?? "?"}
         </span>
-        <span style={{ fontSize: 11.5, fontWeight: 700, color: t.text }}>{entry.author_name}</span>
-        <span style={{ fontSize: 10, color: t.textDim, fontFamily: "'JetBrains Mono', monospace" }}>
+        <span style={{ fontSize: 11.5, fontWeight: 700, color: t.text }}>
+          {entry.author_name}
+        </span>
+        <span
+          style={{
+            fontSize: 10,
+            color: t.textDim,
+            fontFamily: "'JetBrains Mono', monospace",
+          }}
+        >
           R{entry.round}
         </span>
-        <span style={{ fontSize: 9, fontWeight: 700, color: t.textDim, textTransform: "uppercase" }}>
+        <span
+          style={{
+            fontSize: 9,
+            fontWeight: 700,
+            color: t.textDim,
+            textTransform: "uppercase",
+          }}
+        >
           reply
         </span>
       </div>
@@ -113,16 +135,34 @@ export function ThreadedEntry({
             fontStyle: "italic",
           }}
         >
-          <CornerDownRight size={11} strokeWidth={2} style={{ flexShrink: 0, marginTop: 1 }} />
+          <CornerDownRight
+            size={11}
+            strokeWidth={2}
+            style={{ flexShrink: 0, marginTop: 1 }}
+          />
           <span>{parentContent}</span>
         </div>
       )}
       {!entry.is_visible && (
-        <div style={{ fontSize: 10, color: t.textDim, fontStyle: "italic", marginBottom: 3 }}>
+        <div
+          style={{
+            fontSize: 10,
+            color: t.textDim,
+            fontStyle: "italic",
+            marginBottom: 3,
+          }}
+        >
           evaporated (R{entry.round})
         </div>
       )}
-      <div style={{ fontSize: 12.5, color: t.textSub, lineHeight: 1.55, marginBottom: 6 }}>
+      <div
+        style={{
+          fontSize: 12.5,
+          color: t.textSub,
+          lineHeight: 1.55,
+          marginBottom: 6,
+        }}
+      >
         <MarkdownRenderer content={entry.content} />
       </div>
       <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
@@ -152,7 +192,10 @@ export function ThreadedEntry({
             {entry.children.length}
             <ChevronDown
               size={9}
-              style={{ transform: expanded ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}
+              style={{
+                transform: expanded ? "rotate(180deg)" : "none",
+                transition: "transform 0.15s",
+              }}
             />
           </button>
         )}

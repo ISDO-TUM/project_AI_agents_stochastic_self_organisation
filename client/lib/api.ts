@@ -166,7 +166,9 @@ export async function patchAgentTools(
   await request<AgentOut>("PATCH", `/api/agents/${id}`, { tools });
 }
 
-export async function fetchAgentTrust(agentId: string): Promise<AgentTrustEntry[]> {
+export async function fetchAgentTrust(
+  agentId: string,
+): Promise<AgentTrustEntry[]> {
   return request<AgentTrustEntry[]>("GET", `/api/agents/${agentId}/trust`);
 }
 
