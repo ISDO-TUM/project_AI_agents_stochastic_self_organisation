@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useMemo, useRef } from "react";
 import { createPortal } from "react-dom";
 import {
   CanvasState,
@@ -38,6 +38,10 @@ import { SourcePanel } from "@/components/panels/source-panel";
 import { useBlackboard } from "@/hooks/useBlackboard";
 import { ModeGate, AppMode } from "@/components/mode-gate";
 import { SwarmConfigModal, SwarmRunConfig } from "@/components/swarm-config-modal";
+import { useDummySwarm } from "@/hooks/useDummySwarm";
+import { generateDummyRun } from "@/lib/dummy-swarm";
+import { computeCitationsByAuthor } from "@/lib/blackboard-utils";
+import { AgentSwarmRole } from "@/lib/types";
 import { getTheme } from "@/lib/theme";
 
 const defaultTweaks: Tweaks = {
@@ -123,8 +127,19 @@ export function App() {
   const [seeding, setSeeding] = useState(false);
   const [swarmConfigOpen, setSwarmConfigOpen] = useState(false);
   const [pendingSwarmPrompt, setPendingSwarmPrompt] = useState("");
-  const { state: blackboardState } = useBlackboard(
-    appMode === "swarm" ? runId : null,
+  const dummy = useDummySwarm();
+  const { state: realBlackboardState } = useBlackboard(
+    appMode === "swarm" && !dummy.state.active ? runId : null,
+  );
+  const blackboardState = dummy.state.active ? dummy.state.blackboard : realBlackboardState;
+  const swarmRoles = useMemo(() => {
+    const map = new Map<string, AgentSwarmRole>();
+    dummy.state.agents.forEach((a) => map.set(a.id, a.role));
+    return map;
+  }, [dummy.state.agents]);
+  const swarmCitations = useMemo(
+    () => computeCitationsByAuthor(blackboardState.draft),
+    [blackboardState.draft],
   );
 
   const handleSeed = useCallback(async (promptOverride?: string) => {
@@ -195,11 +210,21 @@ export function App() {
   );
 
   const handleSwarmConfigConfirm = useCallback(
-    (_config: SwarmRunConfig) => {
+    (config: SwarmRunConfig) => {
       setSwarmConfigOpen(false);
+      if (pendingSwarmPrompt.trim().toLowerCase() === "test_mohamed") {
+        const fixture = generateDummyRun(
+          { takers: config.takersMax, rounds: config.roundsMax },
+          agents,
+        );
+        dummy.start(fixture);
+        setRunId(fixture.runId);
+        return;
+      }
+      dummy.reset();
       handleSeed(pendingSwarmPrompt);
     },
-    [handleSeed, pendingSwarmPrompt],
+    [pendingSwarmPrompt, agents, dummy, handleSeed],
   );
   const importErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -548,6 +573,8 @@ export function App() {
           swarmRunId={appMode === "swarm" ? runId : null}
           onSeed={handleSeed}
           seeding={seeding}
+          swarmRoles={swarmRoles}
+          swarmCitations={swarmCitations}
           phonebook={
             topology === "dynamic"
               ? {

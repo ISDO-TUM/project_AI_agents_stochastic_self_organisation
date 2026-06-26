@@ -9,6 +9,7 @@ import {
   Tweaks,
   BlackboardState,
   SimStep,
+  AgentSwarmRole,
 } from "@/lib/types";
 import { clamp } from "@/lib/utils";
 import { useTheme } from "@/lib/theme-context";
@@ -50,6 +51,8 @@ interface CanvasProps {
   swarmRunId?: string | null;
   onSeed?: () => void;
   seeding?: boolean;
+  swarmRoles?: Map<string, AgentSwarmRole>;
+  swarmCitations?: Map<string, number>;
   /** When provided, renders the PhonebookPanel inside the world transform so
    *  it pans/zooms with the canvas like any other element. */
   phonebook?: {
@@ -105,6 +108,8 @@ export function Canvas({
   swarmRunId,
   onSeed,
   seeding,
+  swarmRoles,
+  swarmCitations,
   phonebook = null,
   biddingBoard = null,
 }: CanvasProps) {
@@ -431,6 +436,8 @@ export function Canvas({
             active={activeNodeId === agent.id}
             simMode={simMode}
             swarmMode={appMode === "swarm"}
+            swarmRole={swarmRoles?.get(agent.id) ?? null}
+            citationCount={swarmCitations?.get(agent.id) ?? 0}
             zoom={zoom}
             onSelect={onSelectNode}
             onDragEnd={onMoveNode}
