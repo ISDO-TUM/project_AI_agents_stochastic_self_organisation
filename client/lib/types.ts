@@ -37,6 +37,8 @@ export interface Source {
   type: SourceType;
   content: string;
   position: Position;
+  /** Agent ids that should receive this file when the swarm starts. */
+  agentIds?: string[];
 }
 
 export interface KnowledgeFile {

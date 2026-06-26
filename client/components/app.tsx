@@ -56,7 +56,11 @@ const defaultTweaks: Tweaks = {
   accentColor: BURG,
 };
 
-export function App() {
+interface AppProps {
+  onModeSelected?: () => void;
+}
+
+export function App({ onModeSelected }: AppProps = {}) {
   const { dark, toggle: toggleTheme } = useTheme();
 
   const [tweaks] = useState<Tweaks>(defaultTweaks);
@@ -497,7 +501,14 @@ export function App() {
   const hasNodes = agents.length > 0 || sources.length > 0;
 
   if (!appMode) {
-    return <ModeGate onSelect={setAppMode} />;
+    return (
+      <ModeGate
+        onSelect={(mode) => {
+          setAppMode(mode);
+          onModeSelected?.();
+        }}
+      />
+    );
   }
 
   return (
@@ -694,6 +705,7 @@ export function App() {
           key={panel.id ?? "new-source"}
           source={panelSource}
           initialType={panel.sourceType}
+          agents={agents}
           onSave={(data) => {
             saveSource(data);
             setPanel(null);

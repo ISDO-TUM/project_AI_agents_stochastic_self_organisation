@@ -1,17 +1,20 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Source, SourceType } from "@/lib/types";
+import { Agent, Source, SourceType } from "@/lib/types";
 import { uuid } from "@/lib/utils";
 import { getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 
 import { FLabel, FInput, FSelect, FBtn, PanelShell } from "./panel-primitives";
+import { BURG_LT } from "@/lib/theme";
 
 interface SourcePanelProps {
   source: Source | null;
   /** Pre-selected type when creating a new source (source === null). */
   initialType?: SourceType;
+  /** Available agents for assignment. */
+  agents?: Agent[];
   onSave: (source: Source) => void;
   onDelete: (id: string) => void;
   onClose: () => void;
@@ -92,6 +95,7 @@ function CsvPreview({ text, dark }: { text: string; dark: boolean }) {
 export function SourcePanel({
   source,
   initialType,
+  agents = [],
   onSave,
   onDelete,
   onClose,
@@ -100,6 +104,9 @@ export function SourcePanel({
   const [content, setContent] = useState(source?.content ?? "");
   const [type, setType] = useState<SourceType>(
     source?.type ?? initialType ?? "text",
+  );
+  const [agentIds, setAgentIds] = useState<string[]>(
+    source?.agentIds ?? [],
   );
   const fileInput = useRef<HTMLInputElement>(null);
 
@@ -110,7 +117,7 @@ export function SourcePanel({
       x: 300 + Math.random() * 380,
       y: 260 + Math.random() * 200,
     };
-    onSave({ id: source?.id ?? uuid(), name, type, content, position });
+    onSave({ id: source?.id ?? uuid(), name, type, content, position, agentIds });
   };
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -149,6 +156,55 @@ export function SourcePanel({
         onChange={setName}
         placeholder={isDataset ? "data.csv" : "filename.txt"}
       />
+
+      {agents.length > 0 && (
+        <>
+          <FLabel>Assign to agents</FLabel>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 6,
+              marginBottom: 14,
+            }}
+          >
+            {agents.map((agent) => {
+              const selected = agentIds.includes(agent.id);
+              return (
+                <button
+                  key={agent.id}
+                  onClick={() =>
+                    setAgentIds((prev) =>
+                      selected
+                        ? prev.filter((id) => id !== agent.id)
+                        : [...prev, agent.id],
+                    )
+                  }
+                  style={{
+                    padding: "3px 10px",
+                    borderRadius: 20,
+                    border: selected
+                      ? `1.5px solid ${BURG_LT}`
+                      : `1.5px solid ${t.border}`,
+                    background: selected
+                      ? `${BURG_LT}22`
+                      : t.inputBg,
+                    color: selected ? BURG_LT : t.textSub,
+                    fontSize: 12,
+                    fontFamily: "'Space Grotesk', sans-serif",
+                    fontWeight: selected ? 600 : 400,
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {agent.name}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       {isDataset && (
         <>

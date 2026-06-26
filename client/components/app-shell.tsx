@@ -1,6 +1,6 @@
 "use client";
 
-import { useRef, useCallback } from "react";
+import { useRef, useCallback, useState } from "react";
 import { HeroSection } from "@/components/hero-section";
 import { App } from "@/components/app";
 
@@ -14,6 +14,7 @@ import { App } from "@/components/app";
  */
 export function AppShell() {
   const scrollRef = useRef<HTMLDivElement>(null);
+  const [locked, setLocked] = useState(false);
 
   const scrollToApp = useCallback(() => {
     scrollRef.current?.scrollTo({
@@ -22,14 +23,20 @@ export function AppShell() {
     });
   }, []);
 
+  const handleModeSelected = useCallback(() => {
+    // Snap to app section first, then lock overflow so hero is unreachable
+    scrollRef.current?.scrollTo({ top: window.innerHeight, behavior: "instant" });
+    setLocked(true);
+  }, []);
+
   return (
     <div
       ref={scrollRef}
       style={{
         width: "100vw",
         height: "100vh",
-        overflowY: "scroll",
-        scrollSnapType: "y mandatory",
+        overflowY: locked ? "hidden" : "scroll",
+        scrollSnapType: locked ? "none" : "y mandatory",
         // Hide the scrollbar — navigation is intentional (arrow / wheel)
         scrollbarWidth: "none",
       }}
@@ -44,6 +51,7 @@ export function AppShell() {
           flexShrink: 0,
           scrollSnapAlign: "start",
           position: "relative",
+          pointerEvents: locked ? "none" : undefined,
         }}
       >
         <HeroSection onEnter={scrollToApp} />
@@ -60,7 +68,7 @@ export function AppShell() {
           overflow: "hidden",
         }}
       >
-        <App />
+        <App onModeSelected={handleModeSelected} />
       </div>
     </div>
   );
