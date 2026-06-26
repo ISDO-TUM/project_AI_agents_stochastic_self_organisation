@@ -9,6 +9,7 @@ import { Layers, Maximize2, X } from "lucide-react";
 import { computePromotionThreshold } from "@/lib/blackboard-utils";
 import { ProposalCard } from "./blackboard/proposal-card";
 import { ThreadedEntry } from "./blackboard/reply-thread";
+import { ThreadFilterDropdown } from "./blackboard/thread-filter-dropdown";
 
 interface DraftBoardProps {
   state: BlackboardState;
@@ -21,6 +22,8 @@ interface DraftBoardProps {
   zoom?: number;
   /** Filters to one thread; null/undefined shows all threads. */
   activeThreadId?: string | null;
+  /** When provided, renders the thread filter in the board header. */
+  onThreadSelect?: (id: string | null) => void;
 }
 
 export function DraftBoard({
@@ -31,6 +34,7 @@ export function DraftBoard({
   height,
   zoom = 1,
   activeThreadId = null,
+  onThreadSelect,
 }: DraftBoardProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -130,6 +134,14 @@ export function DraftBoard({
             alignItems: "center",
           }}
         >
+          {/* Thread filter — only shown when there are threads to choose from */}
+          {state.threads.length > 0 && onThreadSelect && (
+            <ThreadFilterDropdown
+              threads={state.threads}
+              activeThreadId={activeThreadId}
+              onSelect={onThreadSelect}
+            />
+          )}
           {runId && (
             <>
               <div

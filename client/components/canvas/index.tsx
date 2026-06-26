@@ -20,7 +20,6 @@ import { Minimap } from "./minimap";
 import { DraftBoard } from "./draft-board";
 import { ConfirmedBoard } from "./confirmed-board";
 import { AgentDock } from "./agent-dock";
-import { ThreadFilterDropdown } from "./blackboard/thread-filter-dropdown";
 import { PhonebookPanel } from "../phonebook-panel";
 import { BiddingBoardPanel } from "../bidding-board-panel";
 
@@ -530,31 +529,26 @@ export function Canvas({
             bottom={DOCK_BOTTOM}
             onHeightChange={setDockHeight}
           />
-          {draftPos && (blackboardState?.threads.length ?? 0) > 0 && (
-            <ThreadFilterDropdown
-              threads={blackboardState!.threads}
+          {draftPos && (
+            <DraftBoard
+              state={
+                blackboardState ?? {
+                  confirmed: [],
+                  draft: [],
+                  threads: [],
+                  loading: false,
+                  error: null,
+                }
+              }
+              runId={swarmRunId ?? null}
+              pos={draftPos}
+              width={boardWidth}
+              height={boardHeight}
+              zoom={zoom}
               activeThreadId={activeThreadId}
-              onSelect={setActiveThreadId}
-              pos={{ x: draftPos.x, y: draftPos.y - 32 }}
+              onThreadSelect={setActiveThreadId}
             />
           )}
-          <DraftBoard
-            state={
-              blackboardState ?? {
-                confirmed: [],
-                draft: [],
-                threads: [],
-                loading: false,
-                error: null,
-              }
-            }
-            runId={swarmRunId ?? null}
-            pos={draftPos}
-            width={boardWidth}
-            height={boardHeight}
-            zoom={zoom}
-            activeThreadId={activeThreadId}
-          />
           <ConfirmedBoard
             state={
               blackboardState ?? {

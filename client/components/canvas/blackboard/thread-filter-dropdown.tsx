@@ -15,14 +15,12 @@ interface ThreadFilterDropdownProps {
   threads: ThreadInfo[];
   activeThreadId: string | null;
   onSelect: (id: string | null) => void;
-  pos: { x: number; y: number };
 }
 
 export function ThreadFilterDropdown({
   threads,
   activeThreadId,
   onSelect,
-  pos,
 }: ThreadFilterDropdownProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -31,46 +29,37 @@ export function ThreadFilterDropdown({
     threads.find((th) => th.id === activeThreadId)?.title ?? "All threads";
 
   return (
-    <div
-      style={{
-        position: "absolute",
-        left: pos.x,
-        top: pos.y,
-        zIndex: 19,
-      }}
-    >
-      <Popover open={open} onOpenChange={setOpen}>
-        <PopoverTrigger asChild>
-          <button
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger asChild>
+        <button
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            padding: "3px 9px",
+            borderRadius: 100,
+            border: `1px solid rgba(139,26,47,0.35)`,
+            background: "rgba(139,26,47,0.12)",
+            color: "#C4374F",
+            fontSize: 10,
+            fontWeight: 700,
+            fontFamily: "'Space Grotesk', system-ui, sans-serif",
+            cursor: "pointer",
+            whiteSpace: "nowrap",
+          }}
+        >
+          <ListFilter size={10} strokeWidth={2} />
+          {activeTitle}
+          <ChevronDown
+            size={9}
             style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "5px 12px",
-              borderRadius: 100,
-              border: `1.5px solid ${t.border}`,
-              background: t.pill,
-              color: t.textSub,
-              fontSize: 10.5,
-              fontWeight: 700,
-              fontFamily: "'Space Grotesk', system-ui, sans-serif",
-              cursor: "pointer",
-              whiteSpace: "nowrap",
-              backdropFilter: "blur(10px)",
+              transform: open ? "rotate(180deg)" : "none",
+              transition: "transform 0.15s",
             }}
-          >
-            <ListFilter size={11} strokeWidth={2} />
-            {activeTitle}
-            <ChevronDown
-              size={10}
-              style={{
-                transform: open ? "rotate(180deg)" : "none",
-                transition: "transform 0.15s",
-              }}
-            />
-          </button>
-        </PopoverTrigger>
-        <PopoverContent>
+          />
+        </button>
+      </PopoverTrigger>
+      <PopoverContent>
           {/* PopoverContent spreads incoming props after its own `style={{}}`
               (see client/components/ui/popover.tsx), so a `style` prop here
               would replace its background/border/shadow entirely rather than
@@ -136,6 +125,5 @@ export function ThreadFilterDropdown({
           </div>
         </PopoverContent>
       </Popover>
-    </div>
   );
 }
