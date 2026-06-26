@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback, useMemo } from "react";
+import { useState, useRef, useEffect, useCallback } from "react";
 import {
   Agent,
   Source,
@@ -11,7 +11,6 @@ import {
   SimStep,
 } from "@/lib/types";
 import { clamp } from "@/lib/utils";
-import { computePromotedAuthorIds } from "@/lib/blackboard-utils";
 import { useTheme } from "@/lib/theme-context";
 
 import { AgentNode } from "./agent-node";
@@ -124,8 +123,7 @@ export function Canvas({
 
   // ── Swarm widget positions (viewport-relative px) ──
   // Boards are fixed forever — geometry is derived from the measured topbar
-  // width/height, never independently moved or resized. The agent dock anchor is
-  // derived the same way (see dockAnchor below).
+  // width/height, never independently moved or resized.
   const BOARD_DEFAULT_W = 315;
   const BOARD_HEIGHT = 300;
   const BOARD_GAP = 24;
@@ -136,7 +134,6 @@ export function Canvas({
     draftPos: { x: number; y: number };
     confirmedPos: { x: number; y: number };
     boardWidth: number;
-    dockAnchor: { x: number; y: number };
   } | null>(null);
 
   // Recompute whenever the canvas resizes or the measured topbar width/height
@@ -147,7 +144,7 @@ export function Canvas({
     if (!el) return;
 
     const recompute = () => {
-      const { width, height } = el.getBoundingClientRect();
+      const { width } = el.getBoundingClientRect();
       const cx = width / 2;
       const totalWidth = topbarWidth ?? BOARD_DEFAULT_W * 2 + BOARD_GAP;
       const boardWidth = (totalWidth - BOARD_GAP) / 2;
@@ -156,7 +153,6 @@ export function Canvas({
         draftPos: { x: cx - boardWidth - BOARD_GAP / 2, y: boardsY },
         confirmedPos: { x: cx + BOARD_GAP / 2, y: boardsY },
         boardWidth,
-        dockAnchor: { x: cx, y: height - 130 },
       });
     };
 
@@ -168,16 +164,6 @@ export function Canvas({
   const draftPos = boardLayout?.draftPos ?? null;
   const confirmedPos = boardLayout?.confirmedPos ?? null;
   const boardWidth = boardLayout?.boardWidth ?? BOARD_DEFAULT_W;
-  const dockAnchor = boardLayout?.dockAnchor ?? null;
-
-  const promotedAuthorIds = useMemo(
-    () =>
-      computePromotedAuthorIds(
-        blackboardState?.draft ?? [],
-        blackboardState?.confirmed ?? [],
-      ),
-    [blackboardState],
-  );
 
   // Apply external pan delta (e.g. from sidebar resize) to keep nodes stable.
   // panAdjust is a new object reference on every resize tick (seq increments),
@@ -518,46 +504,6 @@ export function Canvas({
       {/* ── Swarm-mode viewport overlays (not in world transform) ── */}
       {appMode === "swarm" && (
         <>
-          {/* Dashed connector between MM and Draft board; per-agent connectors
-              that re-target from Draft to Confirmed once an agent has a
-              promoted entry. */}
-          {draftPos && dockAnchor && (
-            <svg
-              style={{
-                position: "absolute",
-                inset: 0,
-                width: "100%",
-                height: "100%",
-                pointerEvents: "none",
-                zIndex: 18,
-                overflow: "visible",
-              }}
-            >
-              {/* Agent → board connectors, all originating from the fixed
-                  AgentDock anchor (agents have no individual canvas position
-                  in swarm mode anymore): Draft by default, Confirmed (solid
-                  gold) once that agent has a promoted entry. */}
-              {agents.map((agent) => {
-                const promoted = promotedAuthorIds.has(agent.id);
-                const targetPos = promoted ? confirmedPos : draftPos;
-                if (!targetPos) return null;
-                const bx = targetPos.x + (boardWidth * zoom) / 2;
-                const by = targetPos.y;
-                return (
-                  <line
-                    key={agent.id}
-                    x1={dockAnchor.x}
-                    y1={dockAnchor.y}
-                    x2={bx}
-                    y2={by}
-                    stroke={promoted ? "#b5860d" : "rgba(139,26,47,0.25)"}
-                    strokeWidth={promoted ? "1.5" : "1"}
-                    strokeDasharray={promoted ? undefined : "4,5"}
-                  />
-                );
-              })}
-            </svg>
-          )}
           <AgentDock agents={agents} onSelectAgent={onSelectAgentChip ?? (() => {})} />
           {draftPos && (blackboardState?.threads.length ?? 0) > 0 && (
             <>
