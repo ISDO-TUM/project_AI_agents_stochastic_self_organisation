@@ -1,4 +1,4 @@
-import { ConfirmedEntry, DraftEntry } from "./types";
+import { DraftEntry } from "./types";
 
 export function truncate(text: string, max = 60): string {
   const clean = text.replace(/\s+/g, " ").trim();
