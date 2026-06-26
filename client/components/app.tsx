@@ -591,6 +591,7 @@ export function App() {
           swarmRoles={swarmRoles}
           swarmCitations={swarmCitations}
           topbarWidth={topbarWidth}
+          onSelectAgentChip={openPanel}
           phonebook={
             topology === "dynamic"
               ? {

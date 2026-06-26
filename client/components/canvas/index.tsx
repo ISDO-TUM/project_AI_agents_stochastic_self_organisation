@@ -21,7 +21,7 @@ import { EdgeLayer } from "./edge-layer";
 import { Minimap } from "./minimap";
 import { DraftBoard } from "./draft-board";
 import { ConfirmedBoard } from "./confirmed-board";
-import { SwarmNodes } from "./swarm-nodes";
+import { AgentDock } from "./agent-dock";
 import { ThreadNode } from "./blackboard/thread-node";
 import { PhonebookPanel } from "../phonebook-panel";
 import { BiddingBoardPanel } from "../bidding-board-panel";
@@ -56,6 +56,7 @@ interface CanvasProps {
   swarmRoles?: Map<string, AgentSwarmRole>;
   swarmCitations?: Map<string, number>;
   topbarWidth?: number | null;
+  onSelectAgentChip?: (id: string) => void;
   /** When provided, renders the PhonebookPanel inside the world transform so
    *  it pans/zooms with the canvas like any other element. */
   phonebook?: {
@@ -114,6 +115,7 @@ export function Canvas({
   swarmRoles,
   swarmCitations,
   topbarWidth,
+  onSelectAgentChip,
   phonebook = null,
   biddingBoard = null,
 }: CanvasProps) {
@@ -132,20 +134,19 @@ export function Canvas({
   // width, never independently moved or resized. Only mmPos stays a plain
   // setter for now (Task 3 of this plan removes the Market Maker badge and
   // its connector entirely, folding it into the new AgentDock).
-  const MM_SIZE = 88;
   const BOARD_DEFAULT_W = 315;
   const BOARD_HEIGHT = 300;
   const BOARD_GAP = 24;
-  const [mmPos, setMmPos] = useState<{ x: number; y: number } | null>(null);
   const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
   const [boardLayout, setBoardLayout] = useState<{
     draftPos: { x: number; y: number };
     confirmedPos: { x: number; y: number };
     boardWidth: number;
+    dockAnchor: { x: number; y: number };
   } | null>(null);
 
   // Recompute whenever the canvas resizes or the measured topbar width
-  // changes — this is the only thing that ever updates board geometry.
+  // changes — this is the only thing that ever updates board/dock geometry.
   useEffect(() => {
     if (appMode !== "swarm") return;
     const el = canvasRef.current;
@@ -155,17 +156,13 @@ export function Canvas({
       const { width, height } = el.getBoundingClientRect();
       const cx = width / 2;
       const cy = height / 2;
-      const gap = 32;
       const totalWidth = topbarWidth ?? BOARD_DEFAULT_W * 2 + BOARD_GAP;
       const boardWidth = (totalWidth - BOARD_GAP) / 2;
       setBoardLayout({
         draftPos: { x: cx - boardWidth - BOARD_GAP / 2, y: cy - 120 },
         confirmedPos: { x: cx + BOARD_GAP / 2, y: cy - 120 },
         boardWidth,
-      });
-      setMmPos({
-        x: cx - BOARD_DEFAULT_W / 2 - MM_SIZE - gap,
-        y: cy - MM_SIZE / 2,
+        dockAnchor: { x: cx, y: height - 130 },
       });
     };
 
@@ -177,6 +174,7 @@ export function Canvas({
   const draftPos = boardLayout?.draftPos ?? null;
   const confirmedPos = boardLayout?.confirmedPos ?? null;
   const boardWidth = boardLayout?.boardWidth ?? BOARD_DEFAULT_W;
+  const dockAnchor = boardLayout?.dockAnchor ?? null;
 
   const promotedAuthorIds = useMemo(
     () =>
@@ -472,23 +470,22 @@ export function Canvas({
             />
           </svg>
         )}
-        {agents.map((agent) => (
-          <AgentNode
-            key={agent.id}
-            agent={agent}
-            selected={selectedNode === agent.id}
-            active={activeNodeId === agent.id}
-            simMode={simMode}
-            swarmMode={appMode === "swarm"}
-            swarmRole={swarmRoles?.get(agent.id) ?? null}
-            citationCount={swarmCitations?.get(agent.id) ?? 0}
-            zoom={zoom}
-            onSelect={onSelectNode}
-            onDragEnd={onMoveNode}
-            onConnectStart={handleConnectStart}
-            tweaks={tweaks}
-          />
-        ))}
+        {appMode !== "swarm" &&
+          agents.map((agent) => (
+            <AgentNode
+              key={agent.id}
+              agent={agent}
+              selected={selectedNode === agent.id}
+              active={activeNodeId === agent.id}
+              simMode={simMode}
+              swarmMode={false}
+              zoom={zoom}
+              onSelect={onSelectNode}
+              onDragEnd={onMoveNode}
+              onConnectStart={handleConnectStart}
+              tweaks={tweaks}
+            />
+          ))}
         {sources.map((source) => (
           <SourceNode
             key={source.id}
@@ -530,7 +527,7 @@ export function Canvas({
           {/* Dashed connector between MM and Draft board; per-agent connectors
               that re-target from Draft to Confirmed once an agent has a
               promoted entry. */}
-          {draftPos && mmPos && (
+          {draftPos && dockAnchor && (
             <svg
               style={{
                 position: "absolute",
@@ -542,33 +539,11 @@ export function Canvas({
                 overflow: "visible",
               }}
             >
-              {/* MM → Draft board connector */}
-              <line
-                x1={mmPos.x + MM_SIZE * zoom}
-                y1={mmPos.y + (MM_SIZE / 2) * zoom}
-                x2={draftPos.x}
-                y2={draftPos.y + 19 * zoom}
-                stroke="rgba(139,26,47,0.4)"
-                strokeWidth="1.5"
-                strokeDasharray="6,4"
-              />
-              <circle
-                cx={mmPos.x + MM_SIZE * zoom}
-                cy={mmPos.y + (MM_SIZE / 2) * zoom}
-                r="3"
-                fill="rgba(139,26,47,0.5)"
-              />
-              <circle
-                cx={draftPos.x}
-                cy={draftPos.y + 19 * zoom}
-                r="3"
-                fill="rgba(139,26,47,0.5)"
-              />
-              {/* Agent → board connectors: Draft by default, Confirmed (solid
+              {/* Agent → board connectors, all originating from the fixed
+                  AgentDock anchor (agents have no individual canvas position
+                  in swarm mode anymore): Draft by default, Confirmed (solid
                   gold) once that agent has a promoted entry. */}
               {agents.map((agent) => {
-                const ax = agent.position.x * zoom + pan.x;
-                const ay = agent.position.y * zoom + pan.y;
                 const promoted = promotedAuthorIds.has(agent.id);
                 const targetPos = promoted ? confirmedPos : draftPos;
                 if (!targetPos) return null;
@@ -577,8 +552,8 @@ export function Canvas({
                 return (
                   <line
                     key={agent.id}
-                    x1={ax}
-                    y1={ay}
+                    x1={dockAnchor.x}
+                    y1={dockAnchor.y}
                     x2={bx}
                     y2={by}
                     stroke={promoted ? "#b5860d" : "rgba(139,26,47,0.25)"}
@@ -589,7 +564,7 @@ export function Canvas({
               })}
             </svg>
           )}
-          <SwarmNodes pos={mmPos} onPosChange={setMmPos} zoom={zoom} />
+          <AgentDock agents={agents} onSelectAgent={onSelectAgentChip ?? (() => {})} />
           {draftPos && (blackboardState?.threads.length ?? 0) > 0 && (
             <>
               <ThreadNode
