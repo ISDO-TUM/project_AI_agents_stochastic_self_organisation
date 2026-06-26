@@ -29,20 +29,28 @@ type Action =
 
 function insertEntry(tree: DraftEntry[], entry: DraftEntry): DraftEntry[] {
   if (!entry.reply_to) return [...tree, entry];
+  const [next, placed] = insertEntryRec(tree, entry);
+  return placed ? next : [...tree, entry];
+}
+
+function insertEntryRec(tree: DraftEntry[], entry: DraftEntry): [DraftEntry[], boolean] {
   let placed = false;
   const next = tree.map((node) => {
+    if (placed) return node;
     if (node.id === entry.reply_to) {
       placed = true;
       return { ...node, children: [...node.children, entry] };
     }
     if (node.children.length > 0) {
-      const children = insertEntry(node.children, entry);
-      if (children !== node.children) placed = true;
-      return { ...node, children };
+      const [children, childPlaced] = insertEntryRec(node.children, entry);
+      if (childPlaced) {
+        placed = true;
+        return { ...node, children };
+      }
     }
     return node;
   });
-  return placed ? next : [...tree, entry];
+  return [next, placed];
 }
 
 function updateEntry(
