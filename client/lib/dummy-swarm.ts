@@ -85,6 +85,14 @@ const REPLIES = [
   "This changes my confidence on the termination clause too.",
 ];
 
+const REPLIES_TO_REPLIES = [
+  "To push back on that: the SOFR transition was already addressed in the side letter from Feb 2024 — does that change your read?",
+  "Exactly — if the DCF rate assumption drifts by 2%, the enforceability argument inverts. Have you modelled that scenario?",
+  "That said, the 45-day SLA clause predates the amended annex, so the inconsistency may be intentional. Worth confirming with the counterparty.",
+  "I'd flag this as unresolved rather than confirmed — a second source isn't in the data room yet.",
+  "Counter: the force-majeure reading only holds if §4.5(b)'s material-breach threshold is met, which we haven't defined yet.",
+];
+
 function makeId(prefix: string, n: number): string {
   return `${prefix}-${n}`;
 }
@@ -206,25 +214,47 @@ export function generateDummyRun(
     t += 500;
   });
 
-  // Rounds 2..rounds — replies + citations accumulating on the first proposal.
+  // Rounds 2..rounds — replies + citations.
+  // Round 2: all agents reply directly to proposals.
+  // Round 3+: every other agent (odd index) replies to a round-2 reply
+  //           instead of the proposal, producing visible reply-to-reply nesting.
+  const replyIdsByRound: Record<number, string[]> = {};
+
   for (let r = 2; r <= rounds; r += 1) {
+    replyIdsByRound[r] = [];
     takerAgents.forEach((agent, i) => {
-      const targetId = proposalIds[i % proposalIds.length];
+      const prevReplies = replyIdsByRound[r - 1] ?? [];
+      const isReplyToReply =
+        r >= 3 && i % 2 === 1 && prevReplies.length > 0;
+
+      const targetId = isReplyToReply
+        ? prevReplies[(i - 1) % prevReplies.length]
+        : proposalIds[i % proposalIds.length];
+
       const mentionAgent =
-        i === 0 && takerAgents.length > 1 ? takerAgents[1] : null;
+        !isReplyToReply && i === 0 && takerAgents.length > 1
+          ? takerAgents[1]
+          : null;
+
+      const content = isReplyToReply
+        ? REPLIES_TO_REPLIES[(r + i) % REPLIES_TO_REPLIES.length]
+        : REPLIES[(r + i) % REPLIES.length].replace(
+            "{mention}",
+            mentionAgent ? `@${mentionAgent.name} — ` : "",
+          );
+
       const reply = makeEntry({
         author_id: agent.id,
         author_name: agent.name,
         entry_type: "reply",
-        content: REPLIES[(r + i) % REPLIES.length].replace(
-          "{mention}",
-          mentionAgent ? `@${mentionAgent.name} — ` : "",
-        ),
+        content,
         round: r,
         thread_id: threadIds[i % threadIds.length],
         reply_to: targetId,
         mention_agents: mentionAgent ? [mentionAgent.id] : [],
       });
+
+      replyIdsByRound[r].push(reply.id);
       events.push({ kind: "post", delay: t, entry: reply });
       t += 650;
 
