@@ -288,7 +288,9 @@ export function DraftBoard({
           {/* Convergence meter — only shown when there are threads */}
           {totalThreads > 0 && runId && (
             <span
-              title={`${convergingCount} of ${totalThreads} thread${totalThreads === 1 ? "" : "s"} converging`}
+              title={`${convergingCount} of ${totalThreads} thread${
+                totalThreads === 1 ? "" : "s"
+              } converging`}
               style={{
                 fontSize: 9.5,
                 fontWeight: 700,
