@@ -1,12 +1,15 @@
 """Manual smoke test for the Contract Amendment engine.
 
 Drives a propose → vote → approve lifecycle against an in-memory DB and prints
-each step. No API keys needed — taker/MM votes and the thread embedding are
-injected fakes.
+each step.
 
-The two idle agents are given capability embeddings: Delta aligns with the new
-thread's vector, Epsilon is orthogonal — so the thread-scoped mini-auction should
-recruit Delta and exclude Epsilon.
+Embedding mode is adaptive:
+  * If an OpenAI key is configured (``OPENAI_API_KEY`` in ``.env``), the two idle
+    agents are embedded from their REAL natural-language descriptions and the
+    recruiter computes the REAL thread embedding — a genuine semantic test.
+  * Otherwise it falls back to deterministic 3-dim fake vectors so it still runs
+    offline. Either way the on-topic finance agent is recruited and the off-topic
+    gardening agent is excluded.
 
 Run from the repo root:
     server/.venv/bin/python -m server.scripts.amendment_smoke
@@ -17,21 +20,52 @@ import json
 import uuid
 from typing import Literal
 
+from dotenv import load_dotenv
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from server.db.tables import metadata
-from server.market_hive.amendment import AmendmentEngine, make_auction_recruiter
+from server.llm.credentials import resolve_api_key
+from server.llm.embeddings import embed_texts
+from server.market_hive.amendment import (
+    AmendmentEngine,
+    EmbedderFn,
+    make_auction_recruiter,
+)
 from server.market_hive.schemas import AmendmentSchema
 
-# A made-up 3-dim "embedding space". The thread points along the first axis.
-_THREAD_VEC = [1.0, 0.0, 0.0]
-_DELTA_VEC = [1.0, 0.0, 0.0]  # on-topic   → cosine 1.0 (recruited)
-_EPSILON_VEC = [0.0, 1.0, 0.0]  # off-topic → cosine 0.0 (excluded)
+# Idle (non-taker) agents the mini-auction can recruit. One is genuinely about
+# finance (on-topic for the amendment), one is about something unrelated.
+IDLE_AGENTS = {
+    "FinanceQuant": (
+        "Expert in financial modeling, discounted cash flow analysis, valuation, "
+        "interest-rate risk and quantitative finance."
+    ),
+    "GardenBot": (
+        "Specialist in organic vegetable gardening, soil composition, composting, "
+        "and seasonal planting schedules."
+    ),
+}
+
+# Deterministic fallback vectors (used only when no OpenAI key is configured).
+_FAKE_THREAD_VEC = [1.0, 0.0, 0.0]
+_FAKE_CAPABILITY = {"FinanceQuant": [1.0, 0.0, 0.0], "GardenBot": [0.0, 1.0, 0.0]}
+
+
+async def _fake_thread_embedder(texts: list[str]) -> list[list[float]] | None:
+    return [_FAKE_THREAD_VEC for _ in texts]
+
+
+def _openai_key_available() -> bool:
+    try:
+        return bool(resolve_api_key("openai"))
+    except Exception:
+        return False
 
 
 async def main() -> None:
+    load_dotenv()
     engine = create_async_engine(
         "sqlite+aiosqlite:///:memory:",
         connect_args={"check_same_thread": False},
@@ -69,16 +103,36 @@ async def main() -> None:
                 ),
                 {"id": aid, "n": name},
             )
-        # Two idle (non-taker) agents the mini-auction can recruit onto the new
-        # thread. Delta's embedding aligns with the thread; Epsilon's is orthogonal.
-        for name, vec in (("Delta", _DELTA_VEC), ("Epsilon", _EPSILON_VEC)):
+
+        # ── pick embedding mode: real OpenAI when a key is present ───────────
+        names = list(IDLE_AGENTS)
+        capability: dict[str, list[float]] | None = None
+        if _openai_key_available():
+            real = await embed_texts([IDLE_AGENTS[n] for n in names])
+            if real is not None:
+                capability = dict(zip(names, real, strict=True))
+        embedder: EmbedderFn
+        if capability is not None:
+            embedder = embed_texts  # recruiter computes the REAL thread embedding
+            print("Embedding mode: REAL OpenAI embeddings\n")
+        else:
+            capability = _FAKE_CAPABILITY
+            embedder = _fake_thread_embedder
+            print("Embedding mode: deterministic fakes (no OPENAI_API_KEY)\n")
+
+        for name in names:
             await db.execute(
                 text(
                     "INSERT INTO agents "
                     "(id, name, description, system_prompt, provider, model, capability_embedding) "
-                    "VALUES (:id, :n, 'd', 's', 'openai', 'gpt-4o', :emb)"
+                    "VALUES (:id, :n, :desc, 's', 'openai', 'gpt-4o', :emb)"
                 ),
-                {"id": str(uuid.uuid4()), "n": name, "emb": json.dumps(vec)},
+                {
+                    "id": str(uuid.uuid4()),
+                    "n": name,
+                    "desc": IDLE_AGENTS[name],
+                    "emb": json.dumps(capability[name]),
+                },
             )
         await db.commit()
 
@@ -108,15 +162,11 @@ async def main() -> None:
             return "approve"
 
         print("\n2. End of round — vote opens (3 takers + Market Maker):")
-
-        async def thread_embedder(texts: list[str]) -> list[list[float]]:
-            return [_THREAD_VEC for _ in texts]  # deterministic stand-in for embed_texts
-
         # Real mini-auction recruiter — invites non-taker agents via AuctionEngine,
-        # re-scores each against the new thread's embedding (Delta in, Epsilon out),
+        # re-scores each against the new thread's embedding (finance in, garden out),
         # auto-bids the matches (LLM self-selection is the orchestrator's seam),
         # and selects takers.
-        recruiter = make_auction_recruiter(db, exclude_agent_ids=takers, embedder=thread_embedder)
+        recruiter = make_auction_recruiter(db, exclude_agent_ids=takers, embedder=embedder)
         async for step in eng.process_pending(
             run_id=run_id,
             current_round=2,
@@ -153,7 +203,7 @@ async def main() -> None:
             )
         ).fetchall()
         print("\n   Recruited onto the amendment thread (thread-scoped mini-auction):")
-        print(f"   - {[r[0] for r in recruited]}  (Epsilon excluded: off-topic embedding)")
+        print(f"   - {[r[0] for r in recruited]}  (GardenBot excluded: off-topic)")
 
         confirmed = (
             await db.execute(

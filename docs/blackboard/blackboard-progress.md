@@ -327,8 +327,10 @@ mini-auction recruiter: non-taker assignment, `max_new_takers` cap, `self_select
 abstention, and **thread-embedding scoring** — an orthogonal agent is excluded).
 
 **`server/scripts/amendment_smoke.py`** — manual smoke that drives propose → vote →
-approve → recruit against an in-memory DB and prints each step (no API keys needed;
-votes are injected fakes).
+approve → recruit against an in-memory DB and prints each step. Adaptive embeddings:
+uses **real OpenAI embeddings** when `OPENAI_API_KEY` is set (a finance agent is
+recruited over a gardening agent by real cosine match), else deterministic fakes so
+it still runs offline. Votes are injected fakes.
 
 **`server/pyproject.toml`** — `S608` per-file ignore for `amendment.py` (the dynamic
 `WHERE` clause is a hardcoded constant, same pattern as `blackboard.py` / `auction.py`).
