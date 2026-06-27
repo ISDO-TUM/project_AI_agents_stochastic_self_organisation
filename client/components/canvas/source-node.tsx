@@ -38,7 +38,7 @@ export function SourceNode({
     source.position,
     onSelect,
     onDragEnd,
-    simMode,
+    simMode || swarmMode,
     zoom,
   );
 

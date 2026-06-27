@@ -12,6 +12,7 @@ import Link from "next/link";
 import { LIcon } from "@/lib/icons";
 import { BURG, BURG_LT, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
+import { Toast } from "./panels/panel-primitives";
 
 interface ToolbarProps {
   simMode: boolean;
@@ -30,6 +31,8 @@ interface ToolbarProps {
   showBiddingBoardToggle?: boolean;
   biddingBoardOpen?: boolean;
   onToggleBiddingBoard?: () => void;
+  onWidthChange?: (w: number) => void;
+  onHeightChange?: (h: number) => void;
 }
 
 function Sep({ t }: { t: ReturnType<typeof getTheme> }) {
@@ -289,8 +292,12 @@ function validateCanvas(parsed: unknown): string | null {
       return `agents[${i}] "${a.name}": 'tools' must be an array.`;
     if (!Array.isArray(a.connections))
       return `agents[${i}] "${a.name}": 'connections' must be an array.`;
-    const pos = a.position as Record<string, unknown>;
-    if (!pos || typeof pos.x !== "number" || typeof pos.y !== "number")
+    // position is optional — missing/invalid positions are auto-assigned on load
+    const pos = a.position as Record<string, unknown> | undefined;
+    if (
+      pos !== undefined &&
+      (typeof pos.x !== "number" || typeof pos.y !== "number")
+    )
       return `agents[${i}] "${a.name}": 'position' must have numeric x and y.`;
   }
 
@@ -316,47 +323,6 @@ function validateCanvas(parsed: unknown): string | null {
   }
 
   return null;
-}
-
-// ── toast ──────────────────────────────────────────────────────────────────
-
-function ImportToast({
-  message,
-  onDone,
-}: {
-  message: string;
-  onDone: () => void;
-}) {
-  useEffect(() => {
-    const id = setTimeout(onDone, 4000);
-    return () => clearTimeout(id);
-  }, [onDone]);
-
-  return createPortal(
-    <div
-      style={{
-        position: "fixed",
-        top: "50%",
-        left: "50%",
-        transform: "translate(-50%, -50%)",
-        zIndex: 9999,
-        background: BURG,
-        color: "#fff",
-        padding: "13px 22px",
-        borderRadius: 10,
-        fontSize: 13,
-        fontWeight: 600,
-        boxShadow: "0 8px 32px rgba(0,0,0,0.45)",
-        animation: "fadeIn 0.18s ease-out",
-        maxWidth: 420,
-        textAlign: "center",
-        pointerEvents: "none",
-      }}
-    >
-      {message}
-    </div>,
-    document.body,
-  );
 }
 
 // ── modal ──────────────────────────────────────────────────────────────────
@@ -592,7 +558,7 @@ function JsonPasteModal({
         </div>
       </div>
 
-      {toast && <ImportToast message={toast} onDone={() => setToast(null)} />}
+      {toast && <Toast message={toast} onDone={() => setToast(null)} />}
     </>,
     document.body,
   );
@@ -759,9 +725,28 @@ export function Toolbar({
   showBiddingBoardToggle,
   biddingBoardOpen,
   onToggleBiddingBoard,
+  onWidthChange,
+  onHeightChange,
 }: ToolbarProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
+  const pillRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const el = pillRef.current;
+    if (!el || (!onWidthChange && !onHeightChange)) return;
+    const observer = new ResizeObserver((entries) => {
+      const entry = entries[0];
+      if (!entry) return;
+      const borderBox = entry.borderBoxSize?.[0];
+      const width = borderBox?.inlineSize ?? entry.contentRect.width;
+      const height = borderBox?.blockSize ?? entry.contentRect.height;
+      if (width) onWidthChange?.(width);
+      if (height) onHeightChange?.(height);
+    });
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [onWidthChange, onHeightChange]);
 
   const pillStyle: React.CSSProperties = {
     display: "flex",
@@ -792,31 +777,39 @@ export function Toolbar({
         gap: 8,
       }}
     >
-      <div style={pillStyle}>
+      <div ref={pillRef} style={pillStyle}>
         {/* Logo */}
         <div
           style={{
             display: "flex",
             alignItems: "center",
-            gap: 9,
-            paddingRight: 8,
+            gap: 7,
+            paddingRight: 6,
+            flexShrink: 0,
           }}
         >
           {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={dark ? "/logo_dark.png" : "/logo_light.png"}
             alt="logo"
-            style={{ height: 28, width: "auto", display: "block" }}
+            style={{
+              height: 22,
+              width: "auto",
+              display: "block",
+              flexShrink: 0,
+            }}
           />
           <span
             style={{
               fontWeight: 700,
-              fontSize: 13.5,
+              fontSize: 12,
               color: t.text,
-              letterSpacing: 0.4,
+              letterSpacing: 0.2,
+              fontFamily: "var(--font-space-grotesk), system-ui",
+              whiteSpace: "nowrap",
             }}
           >
-            Stochastic Agents
+            Mycellium
           </span>
         </div>
 
@@ -912,6 +905,7 @@ export function Toolbar({
             cursor: "pointer",
             color: t.textSub,
             padding: "5px 7px",
+            marginRight: 6,
             borderRadius: 8,
             display: "flex",
             alignItems: "center",

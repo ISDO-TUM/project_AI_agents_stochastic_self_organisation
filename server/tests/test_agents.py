@@ -19,7 +19,33 @@ async def test_create_agent(client: AsyncClient) -> None:
     data = response.json()
     assert data["name"] == "SalesBot"
     assert "id" in data
-    assert data["tools"] == ["crm", "search"]
+    assert data["tools"][:2] == ["crm", "search"]
+
+
+async def test_create_agent_auto_wires_blackboard_tools(client: AsyncClient) -> None:
+    response = await client.post("/api/agents", json=_AGENT_PAYLOAD)
+    assert response.status_code == 201
+    data = response.json()
+    assert data["tools"][:2] == ["crm", "search"]
+    for tool_name in (
+        "read_blackboard",
+        "post_to_blackboard",
+        "cite",
+        "vote",
+        "get_confirmed",
+        "submit_bid",
+        "abstain",
+    ):
+        assert tool_name in data["tools"]
+
+
+async def test_create_agent_does_not_duplicate_blackboard_tools(
+    client: AsyncClient,
+) -> None:
+    payload = {**_AGENT_PAYLOAD, "tools": ["crm", "cite"]}
+    response = await client.post("/api/agents", json=payload)
+    data = response.json()
+    assert data["tools"].count("cite") == 1
 
 
 async def test_list_agents(client: AsyncClient) -> None:

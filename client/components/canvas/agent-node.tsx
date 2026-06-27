@@ -1,10 +1,10 @@
 "use client";
 
 import { useCallback } from "react";
-import { Agent, Tweaks } from "@/lib/types";
-import { TOOL_ICON, LIcon } from "@/lib/icons";
+import { Agent, AgentSwarmRole, Tweaks } from "@/lib/types";
 import { BURG_LT, BURG_GLOW, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
+import { AgentTrustPanel } from "./blackboard/agent-trust-panel";
 
 import { useDraggable } from "@/hooks/useDraggable";
 
@@ -14,6 +14,9 @@ interface AgentNodeProps {
   active: boolean;
   simMode: boolean;
   swarmMode?: boolean;
+  swarmRole?: AgentSwarmRole | null;
+  citationCount?: number;
+  concedingTemperature?: number;
   zoom: number;
   onSelect: (id: string, e: React.MouseEvent) => void;
   onDragEnd: (id: string, position: { x: number; y: number }) => void;
@@ -27,6 +30,9 @@ export function AgentNode({
   active,
   simMode,
   swarmMode = false,
+  swarmRole = null,
+  citationCount = 0,
+  concedingTemperature,
   zoom,
   onSelect,
   onDragEnd,
@@ -74,6 +80,15 @@ export function AgentNode({
     ? "radial-gradient(circle at 35% 35%, rgba(60,50,90,0.55) 0%, rgba(18,14,32,0.88) 100%)"
     : "radial-gradient(circle at 35% 35%, rgba(255,255,255,0.95) 0%, rgba(235,232,248,0.85) 100%)";
 
+  // PRD §12.3: takers full opacity, observers 30%, non-participants 10%.
+  const swarmOpacity = !swarmMode
+    ? 1
+    : swarmRole === "observer"
+      ? 0.3
+      : swarmRole === "taker"
+        ? 1
+        : 0.1;
+
   return (
     <div
       data-node-id={agent.id}
@@ -86,6 +101,7 @@ export function AgentNode({
         cursor: simMode ? "default" : "grab",
         userSelect: "none",
         zIndex: selected ? 10 : 5,
+        opacity: swarmOpacity,
       }}
       onMouseDown={handleMouseDown}
     >
@@ -143,25 +159,6 @@ export function AgentNode({
         >
           {initial}
         </span>
-        {agent.tools.length > 0 && (
-          <div
-            style={{
-              display: "flex",
-              gap: 3,
-              marginTop: 3,
-              justifyContent: "center",
-            }}
-          >
-            {agent.tools.slice(0, 4).map((tool) => (
-              <LIcon
-                key={tool}
-                name={TOOL_ICON[tool] || "Wrench"}
-                size={9}
-                color={dark ? "rgba(255,255,255,0.3)" : "rgba(0,0,0,0.25)"}
-              />
-            ))}
-          </div>
-        )}
         {!simMode && !swarmMode && (
           <div
             className="connect-handle"
@@ -181,6 +178,42 @@ export function AgentNode({
               boxShadow: `0 0 10px ${BURG_GLOW}`,
             }}
             data-connect-handle="true"
+          />
+        )}
+        {swarmMode && (citationCount > 0 || swarmRole !== null) && (
+          <AgentTrustPanel
+            agentId={agent.id}
+            agentName={agent.name}
+            role={swarmRole}
+            citationCount={citationCount}
+            concedingTemperature={concedingTemperature}
+            trigger={
+              <button
+                onClick={(e) => e.stopPropagation()}
+                onMouseDown={(e) => e.stopPropagation()}
+                style={{
+                  position: "absolute",
+                  top: -6,
+                  right: -6,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 2,
+                  background: dark
+                    ? "rgba(8,6,16,0.92)"
+                    : "rgba(255,255,255,0.95)",
+                  border: `1px solid ${BURG_LT}55`,
+                  borderRadius: 100,
+                  padding: "2px 6px",
+                  fontSize: 9.5,
+                  fontWeight: 700,
+                  color: BURG_LT,
+                  cursor: "pointer",
+                  zIndex: 21,
+                }}
+              >
+                ♡ {citationCount}
+              </button>
+            }
           />
         )}
       </div>

@@ -18,6 +18,16 @@ interface AgentPanelProps {
   onSave: (agent: Agent) => void;
   onDelete: (id: string) => void;
   onClose: () => void;
+  /** Opens the source edit panel for an already-connected file/dataset. */
+  onEditSource?: (sourceId: string) => void;
+  /** Detaches a source from this agent (removes the edge, does not delete the source). */
+  onDetachSource?: (sourceId: string) => void;
+  /** Opens the "new text file" panel pre-linked to this agent. */
+  onAddFile?: () => void;
+  /** Opens the "new dataset" panel pre-linked to this agent. */
+  onAddDataset?: () => void;
+  /** Live width of a currently-open source overlay panel; 0/omitted when none is open. */
+  overlayWidth?: number;
 }
 
 interface AgentForm {
@@ -36,6 +46,11 @@ const defaultForm = (): AgentForm => ({
   systemPrompt: "",
 });
 
+function truncateContent(text: string, max = 70): string {
+  const clean = text.replace(/\s+/g, " ").trim();
+  return clean.length > max ? `${clean.slice(0, max).trimEnd()}…` : clean;
+}
+
 export function AgentPanel({
   agent,
   agents,
@@ -44,6 +59,11 @@ export function AgentPanel({
   onSave,
   onDelete,
   onClose,
+  onEditSource,
+  onDetachSource,
+  onAddFile,
+  onAddDataset,
+  overlayWidth,
 }: AgentPanelProps) {
   const [availableModels, setAvailableModels] = useState<ModelEntry[]>([]);
   const { keys } = useApiKeys();
@@ -128,13 +148,18 @@ export function AgentPanel({
       ...form,
       id: agent?.id ?? uuid(),
       position,
+      // Capability tools are now granted/revoked entirely at attachment time
+      // (see useCanvasState's saveSource/connectNodes/deleteEdge) — this
+      // panel no longer edits agent.tools directly, so it's passed through
+      // untouched.
       tools: agent?.tools ?? [],
       connections: agent?.connections ?? [],
     });
   };
 
-  const [toolsOpen, setToolsOpen] = useState(false);
   const [connsOpen, setConnsOpen] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(true);
+  const [detachConfirm, setDetachConfirm] = useState<string | null>(null);
 
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -195,6 +220,7 @@ export function AgentPanel({
       title={agent ? "Configure Agent" : "New Agent"}
       onClose={onClose}
       icon={agent ? "Bot" : "Plus"}
+      stackOffset={overlayWidth ?? 0}
     >
       <FLabel>Name</FLabel>
       <FInput
@@ -235,51 +261,303 @@ export function AgentPanel({
         rows={5}
       />
 
-      {connectedSources.length > 0 && (
-        <>
-          {dropdownHeader(
-            "Tools",
-            "Wrench",
-            connectedSources.length,
-            toolsOpen,
-            () => setToolsOpen((o) => !o),
-          )}
-          {toolsOpen && (
-            <div
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                gap: 4,
-                marginTop: 4,
-              }}
-            >
-              {connectedSources.map((src) => (
-                <div
-                  key={src.id}
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 10,
-                    padding: "7px 12px",
-                    borderRadius: 8,
-                    border: `1.5px solid ${t.border}`,
-                    background: t.inputBg,
-                  }}
-                >
-                  <LIcon
-                    name={src.type === "dataset" ? "Table2" : "FileText"}
-                    size={13}
-                    color={t.textSub}
-                  />
-                  <span style={{ fontSize: 12, color: t.text }}>
-                    {src.name}
-                  </span>
+      {/* ── Tools — connected files/datasets only; capability is implicit ── */}
+      <>
+        {dropdownHeader(
+          "Tools",
+          "Wrench",
+          connectedSources.length,
+          toolsOpen,
+          () => setToolsOpen((o) => !o),
+        )}
+        {toolsOpen && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 6,
+              marginTop: 6,
+              padding: "2px 0 4px",
+            }}
+          >
+            {connectedSources.length === 0 && (
+              <span
+                style={{
+                  fontSize: 11.5,
+                  color: t.textDim,
+                  padding: "4px 4px 2px",
+                }}
+              >
+                No tools assigned yet.
+              </span>
+            )}
+
+            {connectedSources.map((src) => (
+              <div
+                key={src.id}
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: 8,
+                  padding: "8px 10px 8px 12px",
+                  borderRadius: 8,
+                  border: `1.5px solid ${t.border}`,
+                  background: t.inputBg,
+                }}
+              >
+                <LIcon
+                  name={src.type === "dataset" ? "Table2" : "FileText"}
+                  size={13}
+                  color={t.textSub}
+                />
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 12,
+                        color: t.text,
+                        fontWeight: 600,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      {src.name}
+                    </span>
+                    <span
+                      style={{
+                        fontSize: 9.5,
+                        color: t.textDim,
+                        textTransform: "uppercase",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {src.type}
+                    </span>
+                  </div>
+                  {src.content && (
+                    <span style={{ fontSize: 10.5, color: t.textSub }}>
+                      {truncateContent(src.content)}
+                    </span>
+                  )}
                 </div>
-              ))}
-            </div>
-          )}
-        </>
-      )}
+                {/* Edit button */}
+                {onEditSource && (
+                  <button
+                    onClick={() => onEditSource(src.id)}
+                    title="Edit file"
+                    style={{
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      padding: "3px 5px",
+                      borderRadius: 6,
+                      display: "flex",
+                      alignItems: "center",
+                      color: t.textDim,
+                      flexShrink: 0,
+                      transition: "color 0.15s, background 0.15s",
+                    }}
+                    onMouseEnter={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.color =
+                        t.text;
+                      (e.currentTarget as HTMLButtonElement).style.background =
+                        t.hover;
+                    }}
+                    onMouseLeave={(e) => {
+                      (e.currentTarget as HTMLButtonElement).style.color =
+                        t.textDim;
+                      (e.currentTarget as HTMLButtonElement).style.background =
+                        "none";
+                    }}
+                  >
+                    <LIcon name="Pencil" size={12} color="currentColor" />
+                  </button>
+                )}
+                {/* Detach button — shows an inline confirm before removing */}
+                {onDetachSource &&
+                  (detachConfirm === src.id ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4,
+                        flexShrink: 0,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 9.5,
+                          color: "#e05555",
+                          fontWeight: 600,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        Detach?
+                      </span>
+                      <button
+                        onClick={() => {
+                          onDetachSource(src.id);
+                          setDetachConfirm(null);
+                        }}
+                        title="Confirm detach"
+                        style={{
+                          background: "rgba(224,85,85,0.15)",
+                          border: "1px solid rgba(224,85,85,0.35)",
+                          borderRadius: 5,
+                          cursor: "pointer",
+                          padding: "2px 6px",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          color: "#e05555",
+                        }}
+                      >
+                        Yes
+                      </button>
+                      <button
+                        onClick={() => setDetachConfirm(null)}
+                        title="Cancel"
+                        style={{
+                          background: t.hover,
+                          border: `1px solid ${t.border}`,
+                          borderRadius: 5,
+                          cursor: "pointer",
+                          padding: "2px 6px",
+                          fontSize: 10,
+                          fontWeight: 600,
+                          color: t.textSub,
+                        }}
+                      >
+                        No
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setDetachConfirm(src.id)}
+                      title="Detach from agent"
+                      style={{
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        padding: "3px 5px",
+                        borderRadius: 6,
+                        display: "flex",
+                        alignItems: "center",
+                        color: t.textDim,
+                        flexShrink: 0,
+                        transition: "color 0.15s, background 0.15s",
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLButtonElement).style.color =
+                          "#e05555";
+                        (
+                          e.currentTarget as HTMLButtonElement
+                        ).style.background = "rgba(224,85,85,0.1)";
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLButtonElement).style.color =
+                          t.textDim;
+                        (
+                          e.currentTarget as HTMLButtonElement
+                        ).style.background = "none";
+                      }}
+                    >
+                      <LIcon name="Unlink" size={12} color="currentColor" />
+                    </button>
+                  ))}
+              </div>
+            ))}
+
+            {/* Add row: each button creates the source and grants its matching capability in one action (see useCanvasState's saveSource) */}
+            {(onAddFile || onAddDataset) && (
+              <div
+                style={{
+                  display: "flex",
+                  flexWrap: "wrap",
+                  gap: 6,
+                  marginTop: connectedSources.length > 0 ? 4 : 0,
+                  paddingTop: connectedSources.length > 0 ? 8 : 0,
+                  borderTop:
+                    connectedSources.length > 0
+                      ? `1px dashed ${t.border}`
+                      : undefined,
+                }}
+              >
+                {onAddFile && (
+                  <button
+                    onClick={onAddFile}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 5,
+                      padding: "4px 10px",
+                      borderRadius: 20,
+                      border: `1.5px dashed ${t.border}`,
+                      background: "transparent",
+                      color: t.textSub,
+                      fontSize: 11.5,
+                      fontFamily: "'Space Grotesk', sans-serif",
+                      cursor: "pointer",
+                      transition: "all 0.15s",
+                    }}
+                    onMouseEnter={(e) => {
+                      const el = e.currentTarget as HTMLButtonElement;
+                      el.style.borderColor = t.borderHi;
+                      el.style.color = t.text;
+                      el.style.background = t.hover;
+                    }}
+                    onMouseLeave={(e) => {
+                      const el = e.currentTarget as HTMLButtonElement;
+                      el.style.borderColor = t.border;
+                      el.style.color = t.textSub;
+                      el.style.background = "transparent";
+                    }}
+                  >
+                    <LIcon name="Plus" size={11} color="currentColor" />
+                    Add file
+                  </button>
+                )}
+                {onAddDataset && (
+                  <button
+                    onClick={onAddDataset}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 5,
+                      padding: "4px 10px",
+                      borderRadius: 20,
+                      border: `1.5px dashed ${t.border}`,
+                      background: "transparent",
+                      color: t.textSub,
+                      fontSize: 11.5,
+                      fontFamily: "'Space Grotesk', sans-serif",
+                      cursor: "pointer",
+                      transition: "all 0.15s",
+                    }}
+                    onMouseEnter={(e) => {
+                      const el = e.currentTarget as HTMLButtonElement;
+                      el.style.borderColor = t.borderHi;
+                      el.style.color = t.text;
+                      el.style.background = t.hover;
+                    }}
+                    onMouseLeave={(e) => {
+                      const el = e.currentTarget as HTMLButtonElement;
+                      el.style.borderColor = t.border;
+                      el.style.color = t.textSub;
+                      el.style.background = "transparent";
+                    }}
+                  >
+                    <LIcon name="Plus" size={11} color="currentColor" />
+                    Add table
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        )}
+      </>
 
       {agent && agent.connections.length > 0 && (
         <>

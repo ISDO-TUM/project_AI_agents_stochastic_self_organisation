@@ -16,9 +16,9 @@ import { useTheme } from "@/lib/theme-context";
 import { AgentNode } from "./agent-node";
 import { SourceNode } from "./source-node";
 import { EdgeLayer } from "./edge-layer";
-import { Minimap } from "./minimap";
-import { BlackboardCanvas } from "./blackboard-canvas";
-import { SwarmNodes } from "./swarm-nodes";
+import { DraftBoard } from "./draft-board";
+import { ConfirmedBoard } from "./confirmed-board";
+import { AgentDock } from "./agent-dock";
 import { PhonebookPanel } from "../phonebook-panel";
 import { BiddingBoardPanel } from "../bidding-board-panel";
 
@@ -47,8 +47,12 @@ interface CanvasProps {
   appMode?: "topology" | "swarm" | null;
   /** Swarm: current run id — controls whether world nodes are visible */
   swarmRunId?: string | null;
-  onSeed?: () => void;
-  seeding?: boolean;
+  topbarWidth?: number | null;
+  topbarHeight?: number | null;
+  /** Height of the PromptBar — used to keep the AgentDock equidistant
+   *  between the board bottom and the chat box top. */
+  promptBarHeight?: number | null;
+  onSelectAgentChip?: (id: string) => void;
   /** When provided, renders the PhonebookPanel inside the world transform so
    *  it pans/zooms with the canvas like any other element. */
   phonebook?: {
@@ -64,6 +68,13 @@ interface CanvasProps {
     steps: SimStep[];
     onClose: () => void;
   } | null;
+  /** True once the dummy / real swarm run has fully completed. */
+  swarmDone?: boolean;
+  /** Trust vectors keyed by agent ID — shown on hover in the AgentDock chips. */
+  swarmTrustVectors?: Record<
+    string,
+    { domain: string; trust_score: number; runs_participated: number }[]
+  >;
 }
 
 interface ConnectingState {
@@ -102,10 +113,14 @@ export function Canvas({
   blackboardState,
   appMode,
   swarmRunId,
-  onSeed,
-  seeding,
+  topbarWidth,
+  topbarHeight,
+  promptBarHeight,
+  onSelectAgentChip,
   phonebook = null,
   biddingBoard = null,
+  swarmDone = false,
+  swarmTrustVectors = {},
 }: CanvasProps) {
   const { dark } = useTheme();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -118,26 +133,71 @@ export function Canvas({
   const spaceDown = useRef(false);
 
   // ── Swarm widget positions (viewport-relative px) ──
-  const MM_SIZE = 88;
-  const BB_DEFAULT_W = 315;
-  const [bbPos, setBbPos] = useState<{ x: number; y: number } | null>(null);
-  const [mmPos, setMmPos] = useState<{ x: number; y: number } | null>(null);
-  const [bbWidth, setBbWidth] = useState(BB_DEFAULT_W);
-  const BB_DEFAULT_H = 300;
-  const [bbHeight, setBbHeight] = useState(BB_DEFAULT_H);
+  // Boards are fixed forever — geometry is derived from the measured topbar
+  // and agent-dock dimensions, never independently moved or resized.
+  const BOARD_DEFAULT_W = 315;
+  const BOARD_MIN_HEIGHT = 180;
+  const BOARD_GAP = 24;
+  const TOPBAR_TOP = 16;
+  const SWARM_GAP = 28;
+  // Prompt bar sits `bottom: 24` in the canvas; DOCK_BOTTOM is computed so
+  // the gap below the dock (dock bottom → prompt bar top) equals the gap
+  // above it (board bottom → dock top = SWARM_GAP). Falls back to 48px pill
+  // height when not yet measured.
+  const PROMPT_MARGIN = 24;
+  const DOCK_BOTTOM = PROMPT_MARGIN + (promptBarHeight ?? 48) + SWARM_GAP;
+  const BOARD_HEADER_HEIGHT = 32;
+  const [activeThreadId, setActiveThreadId] = useState<string | null>(null);
+  const [dockHeight, setDockHeight] = useState<number | null>(null);
+  const [boardLayout, setBoardLayout] = useState<{
+    draftPos: { x: number; y: number };
+    confirmedPos: { x: number; y: number };
+    boardWidth: number;
+    boardHeight: number;
+  } | null>(null);
 
-  // Initialise positions from canvas dimensions once mounted
+  // Recompute whenever the canvas resizes or the measured topbar/dock
+  // dimensions change — this is the only thing that ever updates board geometry.
   useEffect(() => {
     if (appMode !== "swarm") return;
     const el = canvasRef.current;
     if (!el) return;
-    const { width, height } = el.getBoundingClientRect();
-    const cx = width / 2;
-    const cy = height / 2;
-    const gap = 32;
-    setBbPos({ x: cx - BB_DEFAULT_W / 2, y: cy - 120 });
-    setMmPos({ x: cx - BB_DEFAULT_W / 2 - MM_SIZE - gap, y: cy - MM_SIZE / 2 });
-  }, [appMode]);
+
+    const recompute = () => {
+      const { width, height } = el.getBoundingClientRect();
+      const cx = width / 2;
+      const totalWidth = topbarWidth ?? BOARD_DEFAULT_W * 2 + BOARD_GAP;
+      const boardWidth = (totalWidth - BOARD_GAP) / 2;
+      const boardsY = TOPBAR_TOP + (topbarHeight ?? 60) + SWARM_GAP;
+      const dockTopY = height - DOCK_BOTTOM - (dockHeight ?? 80);
+      const boardHeight = Math.max(
+        BOARD_MIN_HEIGHT,
+        dockTopY - boardsY - SWARM_GAP - BOARD_HEADER_HEIGHT,
+      );
+      setBoardLayout({
+        draftPos: { x: cx - boardWidth - BOARD_GAP / 2, y: boardsY },
+        confirmedPos: { x: cx + BOARD_GAP / 2, y: boardsY },
+        boardWidth,
+        boardHeight,
+      });
+    };
+
+    recompute();
+    window.addEventListener("resize", recompute);
+    return () => window.removeEventListener("resize", recompute);
+  }, [
+    appMode,
+    topbarWidth,
+    topbarHeight,
+    dockHeight,
+    promptBarHeight,
+    DOCK_BOTTOM,
+  ]);
+
+  const draftPos = boardLayout?.draftPos ?? null;
+  const confirmedPos = boardLayout?.confirmedPos ?? null;
+  const boardWidth = boardLayout?.boardWidth ?? BOARD_DEFAULT_W;
+  const boardHeight = boardLayout?.boardHeight ?? BOARD_MIN_HEIGHT;
 
   // Apply external pan delta (e.g. from sidebar resize) to keep nodes stable.
   // panAdjust is a new object reference on every resize tick (seq increments),
@@ -149,6 +209,7 @@ export function Canvas({
   }, [panAdjust]);
   const handleWheel = useCallback(
     (e: WheelEvent) => {
+      if (appMode === "swarm") return;
       e.preventDefault();
       const el = canvasRef.current;
       if (!el) return;
@@ -168,7 +229,7 @@ export function Canvas({
       });
       setZoom(newZoom);
     },
-    [pan, zoom],
+    [pan, zoom, appMode],
   );
 
   useEffect(() => {
@@ -205,11 +266,13 @@ export function Canvas({
       const isCanvas =
         target === canvasRef.current || target.classList.contains("ctf");
       if (!isCanvas && !spaceDown.current) return;
-      panning.current = true;
-      panStart.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+      if (appMode !== "swarm") {
+        panning.current = true;
+        panStart.current = { x: e.clientX - pan.x, y: e.clientY - pan.y };
+      }
       onCanvasClick();
     },
-    [pan, onCanvasClick],
+    [pan, onCanvasClick, appMode],
   );
 
   const canvasMouseMove = useCallback(
@@ -332,7 +395,6 @@ export function Canvas({
           <rect width="100%" height="100%" fill="url(#grid)" />
         </svg>
       )}
-
       {/* Ambient orbs */}
       {tweaks.showOrbs && dark && (
         <>
@@ -367,7 +429,6 @@ export function Canvas({
           />
         </>
       )}
-
       {/* Nodes + Edges (panned/zoomed) */}
       <div
         className="ctf"
@@ -421,36 +482,38 @@ export function Canvas({
             />
           </svg>
         )}
-        {agents.map((agent) => (
-          <AgentNode
-            key={agent.id}
-            agent={agent}
-            selected={selectedNode === agent.id}
-            active={activeNodeId === agent.id}
-            simMode={simMode}
-            swarmMode={appMode === "swarm"}
-            zoom={zoom}
-            onSelect={onSelectNode}
-            onDragEnd={onMoveNode}
-            onConnectStart={handleConnectStart}
-            tweaks={tweaks}
-          />
-        ))}
-        {sources.map((source) => (
-          <SourceNode
-            key={source.id}
-            source={source}
-            selected={selectedNode === source.id}
-            active={activeNodeId === source.id}
-            simMode={simMode}
-            swarmMode={appMode === "swarm"}
-            zoom={zoom}
-            onSelect={onSelectNode}
-            onDragEnd={onMoveNode}
-            onConnectStart={handleConnectStart}
-            tweaks={tweaks}
-          />
-        ))}
+        {appMode !== "swarm" &&
+          agents.map((agent) => (
+            <AgentNode
+              key={agent.id}
+              agent={agent}
+              selected={selectedNode === agent.id}
+              active={activeNodeId === agent.id}
+              simMode={simMode}
+              swarmMode={false}
+              zoom={zoom}
+              onSelect={onSelectNode}
+              onDragEnd={onMoveNode}
+              onConnectStart={handleConnectStart}
+              tweaks={tweaks}
+            />
+          ))}
+        {appMode !== "swarm" &&
+          sources.map((source) => (
+            <SourceNode
+              key={source.id}
+              source={source}
+              selected={selectedNode === source.id}
+              active={activeNodeId === source.id}
+              simMode={simMode}
+              swarmMode={false}
+              zoom={zoom}
+              onSelect={onSelectNode}
+              onDragEnd={onMoveNode}
+              onConnectStart={handleConnectStart}
+              tweaks={tweaks}
+            />
+          ))}
         {/* PhonebookPanel lives in world space — pans & zooms with the canvas */}
         {phonebook && (
           <PhonebookPanel
@@ -470,68 +533,39 @@ export function Canvas({
           />
         )}
       </div>
-
       {/* ── Swarm-mode viewport overlays (not in world transform) ── */}
       {appMode === "swarm" && (
         <>
-          {/* Dashed connector between MM and Blackboard */}
-          {bbPos && mmPos && (
-            <svg
-              style={{
-                position: "absolute",
-                inset: 0,
-                width: "100%",
-                height: "100%",
-                pointerEvents: "none",
-                zIndex: 18,
-                overflow: "visible",
-              }}
-            >
-              {/* MM → BB connector */}
-              <line
-                x1={mmPos.x + MM_SIZE * zoom}
-                y1={mmPos.y + (MM_SIZE / 2) * zoom}
-                x2={bbPos.x}
-                y2={bbPos.y + 19 * zoom}
-                stroke="rgba(139,26,47,0.4)"
-                strokeWidth="1.5"
-                strokeDasharray="6,4"
-              />
-              <circle
-                cx={mmPos.x + MM_SIZE * zoom}
-                cy={mmPos.y + (MM_SIZE / 2) * zoom}
-                r="3"
-                fill="rgba(139,26,47,0.5)"
-              />
-              <circle
-                cx={bbPos.x}
-                cy={bbPos.y + 19 * zoom}
-                r="3"
-                fill="rgba(139,26,47,0.5)"
-              />
-              {/* Agent → BB connectors */}
-              {agents.map((agent) => {
-                const ax = agent.position.x * zoom + pan.x;
-                const ay = agent.position.y * zoom + pan.y;
-                const bx = bbPos.x + (bbWidth * zoom) / 2;
-                const by = bbPos.y;
-                return (
-                  <line
-                    key={agent.id}
-                    x1={ax}
-                    y1={ay}
-                    x2={bx}
-                    y2={by}
-                    stroke="rgba(139,26,47,0.25)"
-                    strokeWidth="1"
-                    strokeDasharray="4,5"
-                  />
-                );
-              })}
-            </svg>
+          <AgentDock
+            agents={agents}
+            onSelectAgent={onSelectAgentChip ?? (() => {})}
+            bottom={DOCK_BOTTOM}
+            onHeightChange={setDockHeight}
+            trustVectors={swarmTrustVectors}
+          />
+          {draftPos && (
+            <DraftBoard
+              state={
+                blackboardState ?? {
+                  confirmed: [],
+                  draft: [],
+                  threads: [],
+                  loading: false,
+                  error: null,
+                }
+              }
+              runId={swarmRunId ?? null}
+              pos={draftPos}
+              width={boardWidth}
+              height={boardHeight}
+              zoom={zoom}
+              activeThreadId={activeThreadId}
+              onThreadSelect={setActiveThreadId}
+              agents={agents}
+              done={swarmDone}
+            />
           )}
-          <SwarmNodes pos={mmPos} onPosChange={setMmPos} zoom={zoom} />
-          <BlackboardCanvas
+          <ConfirmedBoard
             state={
               blackboardState ?? {
                 confirmed: [],
@@ -541,20 +575,15 @@ export function Canvas({
                 error: null,
               }
             }
-            runId={swarmRunId ?? null}
-            onSeed={onSeed}
-            seeding={seeding}
-            pos={bbPos}
-            onPosChange={setBbPos}
-            width={bbWidth}
-            onWidthChange={setBbWidth}
-            height={bbHeight}
-            onHeightChange={setBbHeight}
+            pos={confirmedPos}
+            width={boardWidth}
+            height={boardHeight}
             zoom={zoom}
+            activeThreadId={activeThreadId}
+            done={swarmDone}
           />
         </>
       )}
-
       {/* Empty state — hidden during swarm mode or when a panel occupies the space */}
       {!hasNodes && appMode !== "swarm" && !phonebook && (
         <div
@@ -575,7 +604,7 @@ export function Canvas({
             {/* eslint-disable-next-line @next/next/no-img-element */}
             <img
               src={dark ? "/logo_dark.png" : "/logo_light.png"}
-              alt="Stochastic Agents"
+              alt="Mycellium"
               style={{ height: 160, width: "auto" }}
             />
           </div>
@@ -597,7 +626,7 @@ export function Canvas({
                 textTransform: "uppercase",
               }}
             >
-              Stochastic Agents
+              Mycellium
             </div>
             <div
               style={{
@@ -612,8 +641,7 @@ export function Canvas({
           </div>
         </div>
       )}
-
-      {/* Zoom indicator */}
+      {/* Zoom indicator */}{" "}
       {zoom !== 1 && (
         <div
           style={{
@@ -636,9 +664,7 @@ export function Canvas({
           {Math.round(zoom * 100)}%
         </div>
       )}
-
-      {/* Minimap */}
-      {hasNodes && <Minimap agents={agents} sources={sources} edges={edges} />}
+      {/* Minimap removed */}
     </div>
   );
 }

@@ -3,6 +3,7 @@
 import { useState, useRef, useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ConsensusMode, Rule, TopologyMode } from "@/lib/types";
+import { AppMode } from "@/components/mode-gate";
 import { BURG, BURG_DIM, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { LIcon } from "@/lib/icons";
@@ -305,6 +306,7 @@ interface TweaksPanelProps {
   onFanoutChange: (fanout: number) => void;
   simRunning: boolean;
   onClose: () => void;
+  appMode: AppMode | null;
 }
 
 export function TweaksPanel({
@@ -320,10 +322,13 @@ export function TweaksPanel({
   onFanoutChange,
   simRunning,
   onClose,
+  appMode,
 }: TweaksPanelProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
-  const [activeTab, setActiveTab] = useState<"sim" | "keys" | "rules">("sim");
+  const [activeTab, setActiveTab] = useState<"sim" | "keys" | "rules">(
+    appMode === "swarm" ? "keys" : "sim",
+  );
 
   const { keys, setKeys, clearKeys } = useApiKeys();
   const [draft, setDraft] = useState<ApiKeys>(keys);
@@ -438,12 +443,16 @@ export function TweaksPanel({
           marginTop: 10,
         }}
       >
-        {(
-          [
-            { id: "sim", label: "Simulation", icon: "Settings2" },
-            { id: "keys", label: "API Keys", icon: "KeyRound" },
-            { id: "rules", label: "Rulesets", icon: "ScrollText" },
-          ] as const
+        {(appMode === "swarm"
+          ? ([
+              { id: "keys", label: "API Keys", icon: "KeyRound" },
+              { id: "rules", label: "Rulesets", icon: "ScrollText" },
+            ] as const)
+          : ([
+              { id: "sim", label: "Simulation", icon: "Settings2" },
+              { id: "keys", label: "API Keys", icon: "KeyRound" },
+              { id: "rules", label: "Rulesets", icon: "ScrollText" },
+            ] as const)
         ).map((tab) => (
           <button
             key={tab.id}

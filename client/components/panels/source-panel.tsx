@@ -1,20 +1,36 @@
 "use client";
 
 import { useRef, useState } from "react";
-import { Source, SourceType } from "@/lib/types";
+import { Agent, Source, SourceType } from "@/lib/types";
 import { uuid } from "@/lib/utils";
 import { getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 
-import { FLabel, FInput, FSelect, FBtn, PanelShell } from "./panel-primitives";
+import {
+  FLabel,
+  FInput,
+  FSelect,
+  FBtn,
+  PanelShell,
+  Toast,
+} from "./panel-primitives";
+import { BURG_LT } from "@/lib/theme";
 
 interface SourcePanelProps {
   source: Source | null;
   /** Pre-selected type when creating a new source (source === null). */
   initialType?: SourceType;
+  /** Available agents for assignment. */
+  agents?: Agent[];
   onSave: (source: Source) => void;
   onDelete: (id: string) => void;
   onClose: () => void;
+  /** Reports this panel's live width — passed straight through to PanelShell
+   *  so a layered AgentPanel can stay in sync via its own stackOffset. */
+  onWidthChange?: (w: number) => void;
+  /** Pre-checks this agent in "Assign to agents" for a brand-new source
+   *  opened from within that agent's own panel. */
+  presetAgentId?: string;
 }
 
 const PREVIEW_MAX_HEIGHT = 420;
@@ -92,25 +108,43 @@ function CsvPreview({ text, dark }: { text: string; dark: boolean }) {
 export function SourcePanel({
   source,
   initialType,
+  agents = [],
   onSave,
   onDelete,
   onClose,
+  onWidthChange,
+  presetAgentId,
 }: SourcePanelProps) {
   const [name, setName] = useState(source?.name ?? "");
   const [content, setContent] = useState(source?.content ?? "");
   const [type, setType] = useState<SourceType>(
     source?.type ?? initialType ?? "text",
   );
+  const [agentIds, setAgentIds] = useState<string[]>(
+    source?.agentIds ?? (presetAgentId ? [presetAgentId] : []),
+  );
+  const [toast, setToast] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const isDataset = type === "dataset";
 
   const handleSave = () => {
+    if (agentIds.length === 0) {
+      setToast("Attach this tool to at least one agent.");
+      return;
+    }
     const position = source?.position ?? {
       x: 300 + Math.random() * 380,
       y: 260 + Math.random() * 200,
     };
-    onSave({ id: source?.id ?? uuid(), name, type, content, position });
+    onSave({
+      id: source?.id ?? uuid(),
+      name,
+      type,
+      content,
+      position,
+      agentIds,
+    });
   };
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -132,6 +166,7 @@ export function SourcePanel({
       title={source ? `Configure ${noun}` : `New ${noun}`}
       onClose={onClose}
       icon={isDataset ? "Table2" : source ? "FileText" : "Plus"}
+      onWidthChange={onWidthChange}
     >
       <FLabel>Type</FLabel>
       <FSelect
@@ -149,6 +184,53 @@ export function SourcePanel({
         onChange={setName}
         placeholder={isDataset ? "data.csv" : "filename.txt"}
       />
+
+      {agents.length > 0 && (
+        <>
+          <FLabel>Assign to agents</FLabel>
+          <div
+            style={{
+              display: "flex",
+              flexWrap: "wrap",
+              gap: 6,
+              marginBottom: 14,
+            }}
+          >
+            {agents.map((agent) => {
+              const selected = agentIds.includes(agent.id);
+              return (
+                <button
+                  key={agent.id}
+                  onClick={() =>
+                    setAgentIds((prev) =>
+                      selected
+                        ? prev.filter((id) => id !== agent.id)
+                        : [...prev, agent.id],
+                    )
+                  }
+                  style={{
+                    padding: "3px 10px",
+                    borderRadius: 20,
+                    border: selected
+                      ? `1.5px solid ${BURG_LT}`
+                      : `1.5px solid ${t.border}`,
+                    background: selected ? `${BURG_LT}22` : t.inputBg,
+                    color: selected ? BURG_LT : t.textSub,
+                    fontSize: 12,
+                    fontFamily: "'Space Grotesk', sans-serif",
+                    fontWeight: selected ? 600 : 400,
+                    cursor: "pointer",
+                    transition: "all 0.15s ease",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {agent.name}
+                </button>
+              );
+            })}
+          </div>
+        </>
+      )}
 
       {isDataset && (
         <>
@@ -215,6 +297,7 @@ export function SourcePanel({
           {source ? `Save ${noun}` : `Create ${noun}`}
         </FBtn>
       </div>
+      {toast && <Toast message={toast} onDone={() => setToast(null)} />}
     </PanelShell>
   );
 }

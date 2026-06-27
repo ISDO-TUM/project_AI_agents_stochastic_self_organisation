@@ -8,6 +8,7 @@
 import type {
   Agent,
   AgentStat,
+  AgentTrustEntry,
   ConsensusMode,
   ConsistencyReport,
   EdgeStat,
@@ -163,6 +164,12 @@ export async function patchAgentTools(
   tools: string[],
 ): Promise<void> {
   await request<AgentOut>("PATCH", `/api/agents/${id}`, { tools });
+}
+
+export async function fetchAgentTrust(
+  agentId: string,
+): Promise<AgentTrustEntry[]> {
+  return request<AgentTrustEntry[]>("GET", `/api/agents/${agentId}/trust`);
 }
 
 // ─── Knowledge File endpoints ─────────────────────────────────────────────────

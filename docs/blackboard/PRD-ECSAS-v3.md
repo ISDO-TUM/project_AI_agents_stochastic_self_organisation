@@ -1526,11 +1526,11 @@ Presentation: modal over blurred canvas background.
 
 ## 12.3 Canvas Nodes — Swarm Mode
 
-| Node                   | Component                      | Visual                                                                                                                                                   | Status  | Notes                                                                                                         |
-| ---------------------- | ------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------- |
-| **Market Maker badge** | `canvas/swarm-nodes.tsx`       | Draggable burgundy badge, receipt icon, "MM" label                                                                                                       | ✅ DONE | Repositionable in world space; dashed SVG connector drawn to BlackboardCanvas                                 |
-| **BlackboardCanvas**   | `canvas/blackboard-canvas.tsx` | Draggable + resizable panel in world space; tabs for Confirmed / Draft entries; entry type badges (📌 ANCHOR, ✅ FINDING, ⚙ SYSTEM, P/R proposal-reply) | ✅ DONE | Full in-world blackboard widget — **not** a simple icon node. See §12.7 for distinction from BlackboardPanel. |
-| **Thread node**        | `canvas/thread-node.tsx`       | Rounded pill, one per thread, color-coded, appears after MM creates threads                                                                              | ❌ TODO | Required for multi-thread task decomposition visibility                                                       |
+| Node                   | Component                           | Visual                                                                                                                                                   | Status  | Notes                                                                                                         |
+| ---------------------- | ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- | ------- | ------------------------------------------------------------------------------------------------------------- |
+| **Market Maker badge** | `canvas/swarm-nodes.tsx`            | Draggable burgundy badge, receipt icon, "MM" label                                                                                                       | ✅ DONE | Repositionable in world space; dashed SVG connector drawn to BlackboardCanvas                                 |
+| **BlackboardCanvas**   | `canvas/blackboard-canvas.tsx`      | Draggable + resizable panel in world space; tabs for Confirmed / Draft entries; entry type badges (📌 ANCHOR, ✅ FINDING, ⚙ SYSTEM, P/R proposal-reply) | ✅ DONE | Full in-world blackboard widget — **not** a simple icon node. See §12.7 for distinction from BlackboardPanel. |
+| **Thread node**        | `canvas/blackboard/thread-node.tsx` | Rounded pill, one per thread, color-coded, appears after threads exist; click filters BlackboardCanvas                                                   | ✅ DONE | Lives as a viewport overlay sibling of BlackboardCanvas, not inside its world-transform group                 |
 
 Existing agent nodes in swarm mode:
 
@@ -1576,29 +1576,41 @@ client/
 │   ├── swarm-activity-log.tsx       ✅ DONE — collapsible log: system events, tool calls,
 │   │                                           bid scores, round markers, promotion notices
 │   │
-│   ├── swarm-config-modal.tsx       ❌ TODO — pre-run config modal (takers, rounds, budget,
-│   │                                           invite floor, decay rounds, attention K)
+│   ├── swarm-config-modal.tsx       ✅ DONE — pre-run config modal (takers, rounds, budget,
+│   │                                           invite floor, decay rounds, attention K);
+│   │                                           confirm branches on the literal prompt
+│   │                                           "test_mohamed" → dummy pipeline, else → seed
 │   │
 │   └── canvas/
 │       ├── swarm-nodes.tsx          ✅ DONE — draggable Market Maker badge in world space
 │       │                                       SVG dashed connector drawn to BlackboardCanvas
 │       │
-│       ├── blackboard-canvas.tsx    ✅ DONE — draggable + resizable in-world blackboard widget
-│       │                                       compact confirmed + draft preview (live polling)
-│       │                                       DISTINCT from blackboard-panel.tsx — see §12.7
+│       ├── blackboard-canvas.tsx    ✅ DONE — always-pinned (no longer seed-gated) in-world
+│       │                                       widget; renders proposal/reply/vote/system cards
+│       │                                       via canvas/blackboard/*; BlackboardPanel retired
+│       │                                       (see §12.7 update below)
 │       │
-│       └── thread-node.tsx          ❌ TODO — thread pill per contract thread; appears after
-│                                               Market Maker creates threads; color-coded
+│       ├── blackboard/
+│       │   ├── proposal-card.tsx    ✅ DONE — Twitter/X-style top-level post
+│       │   ├── reply-thread.tsx     ✅ DONE — Reddit-style recursive ThreadedEntry dispatcher
+│       │   ├── vote-chip.tsx        ✅ DONE — compact endorsement row
+│       │   ├── system-row.tsx       ✅ DONE — collapsible infra-event row
+│       │   ├── citation-ring.tsx    ✅ DONE — animated progress ring + citer hover-card
+│       │   ├── confirmed-card.tsx   ✅ DONE — gold-accented Confirmed-layer card
+│       │   ├── agent-trust-panel.tsx ✅ DONE — citations-this-run + trust vector flyout
+│       │   └── thread-node.tsx      ✅ DONE — color-coded pill per thread; click filters
+│       │                                       BlackboardCanvas to that thread
 │
 └── hooks/
     ├── useBlackboard.ts             ✅ DONE — polls GET /api/simulation/{run_id}/blackboard;
     │                                           manages BlackboardState (threads, confirmed, draft)
-    └── trust-panel.tsx              ❌ TODO — per-agent cross-run trust scores (opt-in overlay)
+    └── useDummySwarm.ts             ✅ DONE — scripted client-side dummy pipeline, triggered by
+                                                the literal prompt "test_mohamed" in swarm mode
 ```
 
 ## 12.7 The Three Distinct Blackboard UI Elements
 
-The ECSAS frontend has three separate components that all display blackboard data but serve different purposes. They must not be conflated.
+The ECSAS frontend originally split this across three components. **Update:** `blackboard-panel.tsx`, `confirmed-section.tsx`, and `draft-section.tsx` were retired (deleted) once `BlackboardCanvas` became always-pinned and gained the full social-feed entry-card redesign — there was no remaining reason to duplicate the same data in a second, less detailed view. `BlackboardCanvas` (below) plus its fullscreen expand modal are now the **sole** in-canvas home for both layers. The comparison table is kept for historical context.
 
 ### `canvas/blackboard-canvas.tsx` — In-World Blackboard Widget ✅ DONE
 
@@ -1706,7 +1718,7 @@ Full visual weight. This is the unit of intellectual work that gets cited and pr
 | Soft-deleted state | `is_visible = false`                | card dimmed; label "evaporated (R{n})"                                                 |
 | Promoted state     | `confirmed_entries.source_draft_id` | ♡ bar → `✅ Confirmed (R{n})` chip                                                     |
 
-**Status:** ❌ TODO — current `draft-entry.tsx` has single template with P badge; no progress bar, no provider badge, no mention pills, no deletion state, no promoted state
+**Status:** ✅ DONE — `canvas/blackboard/proposal-card.tsx`
 
 ---
 
@@ -1732,7 +1744,7 @@ Visually lighter than a proposal. Indented with a thread-line gutter. Connected 
 | Content                | `content`                           | markdown; smaller font weight than proposal                            |
 | ♡ count                | `citation_count`                    | compact label only — no progress bar (replies rarely promote directly) |
 
-**Status:** ❌ TODO — current implementation uses same card with depth-only indent; no reply-to breadcrumb; no visual distinction from proposals
+**Status:** ✅ DONE — `canvas/blackboard/reply-thread.tsx`
 
 ---
 
@@ -1753,7 +1765,7 @@ A declared vote from the initial confidence-calibration round. Not a prose contr
 | Voted-entry reference | `votes.voted_entry_id` → `draft_entries.content[0:60]` | truncated content preview   |
 | Round                 | `round`                                                |                             |
 
-**Status:** ❌ TODO — currently rendered as full-height card with "V" badge; should be a compact single-line chip
+**Status:** ✅ DONE — `canvas/blackboard/vote-chip.tsx`
 
 ---
 
@@ -1772,7 +1784,7 @@ Promotion notifications, soft-delete events, round boundary markers. Should not 
 | Content         | `content`               | muted text, smaller size              |
 | Collapse toggle | —                       | collapsed by default; user can expand |
 
-**Status:** ❌ TODO — currently full card with "⚙" badge; should be a collapsible dim row
+**Status:** ✅ DONE — `canvas/blackboard/system-row.tsx`
 
 ---
 
@@ -1800,7 +1812,7 @@ Behavior:
 - **Promoted state:** bar replaced by `✅ Confirmed (R{n})` chip linking to `confirmed_entries` record
 - **Data source:** `citation_count` (already in SQL JOIN query in `simulation.py`); hover detail either included in entry payload or fetched on-demand
 
-**Status:** ❌ TODO — current implementation is plain `♡ {count}` text; no bar, no pulse, no hover detail, no promoted state chip
+**Status:** ✅ DONE — `canvas/blackboard/citation-ring.tsx`
 
 ---
 
@@ -1829,11 +1841,11 @@ In blackboard mode each agent node on the canvas (and in `BlackboardPanel`) shou
 | `[taker]` / `[observer]` badge | from auction result (in-memory during run)                                                                              |                                                  |
 | ♡ N citations this run         | `SELECT COUNT(*) FROM citations WHERE run_id=? AND citing_entry_id IN (SELECT id FROM draft_entries WHERE author_id=?)` | counts citations received on agent's own entries |
 | Conceding temperature          | convergence engine `t_i` per agent per round                                                                            | `∈ [0.0, 1.0]`; displayed as progress bar        |
-| Trust vector rows              | `agent_trust` table (❌ not yet in `tables.py`)                                                                         | domain → score + run_count                       |
+| Trust vector rows              | `agent_trust` table (✅ now in `tables.py`, landed via `feat/143-blackboard-core`)                                      | domain → score + run_count                       |
 
 ### DB addition required
 
-The `agent_trust` table is referenced throughout the PRD (§6.7, §13 Phase 2) but not yet in `server/db/tables.py`:
+**Update:** this table has since landed in `server/db/tables.py` via `feat/143-blackboard-core` (not this plan). Original requirement kept below for historical reference:
 
 ```python
 agent_trust = Table(
@@ -1855,12 +1867,12 @@ agent_trust = Table(
 
 ### Frontend components affected
 
-| Component                      | Change needed                                         | Status  |
-| ------------------------------ | ----------------------------------------------------- | ------- |
-| `canvas/swarm-nodes.tsx`       | add ♡ N badge on agent node in swarm mode             | ❌ TODO |
-| `blackboard-panel.tsx` header  | show citation summary row per taker                   | ❌ TODO |
-| `trust-panel.tsx` (see §12.5)  | expandable per-domain trust scores with progress bars | ❌ TODO |
-| `canvas/blackboard-canvas.tsx` | show agent citation ranks in compact agent list       | ❌ TODO |
+| Component                      | Change needed                                         | Status                                                                                                                                       |
+| ------------------------------ | ----------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `canvas/agent-node.tsx`        | add ♡ N badge on agent node in swarm mode             | ✅ DONE                                                                                                                                      |
+| `blackboard-panel.tsx` header  | show citation summary row per taker                   | ✅ DONE — superseded: `blackboard-panel.tsx` itself was retired (§12.7); the per-node ♡ badge + `agent-trust-panel.tsx` now cover this       |
+| `trust-panel.tsx` (see §12.5)  | expandable per-domain trust scores with progress bars | ✅ DONE — `canvas/blackboard/agent-trust-panel.tsx`                                                                                          |
+| `canvas/blackboard-canvas.tsx` | show agent citation ranks in compact agent list       | ❌ TODO — not built this plan; the per-agent ♡ badge (canvas) and the trust panel give equivalent visibility without a dedicated ranked list |
 
 ---
 

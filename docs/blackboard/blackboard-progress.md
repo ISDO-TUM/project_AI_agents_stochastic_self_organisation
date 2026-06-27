@@ -410,3 +410,61 @@ client/
     ├── blackboard-panel.tsx    ← Created: BlackboardPanel with thread tabs (Task 13)
     └── app.tsx                 ← Modified: runId state + 30/70 layout split (Task 14)
 ```
+
+---
+
+## Phase 2.5 — Frontend Redesign + `test_mohamed` Dummy Pipeline
+
+Closes out the remaining PRD §12 frontend TODOs (`swarm-config-modal.tsx`,
+`thread-node.tsx`, `trust-panel.tsx`) and redesigns the blackboard into a
+social-feed style. Branch isolation note: this work deliberately avoids
+`server/market_hive/tools.py`, `blackboard.py`, `routes.py`, and `schemas.py`
+since `feat/143-blackboard-core` and `feat/150-contract-amendment` are both
+actively modifying those files on separate branches.
+
+### What was built
+
+- **Deleted** (orphaned, superseded): `blackboard-panel.tsx`,
+  `confirmed-section.tsx`, `draft-section.tsx`, `draft-entry.tsx`.
+- **New `client/components/canvas/blackboard/` family**: `proposal-card.tsx`
+  (Twitter/X-style post), `reply-thread.tsx` (Reddit-style recursive
+  `ThreadedEntry` dispatcher covering reply/vote/system children at any depth),
+  `vote-chip.tsx`, `system-row.tsx`, `citation-ring.tsx` (animated progress
+  ring + citer hover-card via `framer-motion` + the new `HoverCard` primitive),
+  `confirmed-card.tsx`, `agent-trust-panel.tsx` (citations-this-run +
+  conceding-temperature + expandable cross-run trust vector via the new
+  `Popover` primitive and the already-existing `GET /api/agents/{id}/trust`),
+  `thread-node.tsx` (color-coded filter pills).
+- **`blackboard-canvas.tsx` redesigned**: no longer seed-gated — always visible
+  and positioned once swarm mode is active; renders the new entry-card family;
+  accepts `activeThreadId` for thread filtering.
+- **`agent-node.tsx` extended**: `swarmRole` (taker full opacity / observer 30%
+  / non-participant 10%, per PRD §12.3), `citationCount` badge that opens
+  `AgentTrustPanel`, `concedingTemperature` passthrough.
+- **`swarm-config-modal.tsx`** (new): the real swarm-mode Run trigger. Confirm
+  branches on the literal prompt `test_mohamed` (case-insensitive, trimmed) →
+  dummy pipeline; any other prompt → the existing `POST /api/simulation/seed`.
+- **`lib/dummy-swarm.ts` + `hooks/useDummySwarm.ts`** (new): pure fixture
+  generator + scripted-dispatch reducer hook. Produces a full multi-round run
+  (proposals, a vote sub-round, replies, accumulating citations, one promotion,
+  one soft-delete, synthetic per-agent trust vectors) and dispatches it as
+  timed events over ~15-20s through the same shape `useBlackboard` consumes, so
+  every animation plays out live.
+- **Backend**: `server/routes/agents.py::create_agent` now auto-appends the 7
+  Market Hive tool names to any newly created agent's `tools` list (hardcoded
+  locally in `agents.py`, deliberately not imported from `tools.py` — see
+  branch-isolation note above).
+- **New dependencies**: `framer-motion`, `@radix-ui/react-hover-card`,
+  `@radix-ui/react-popover`.
+
+### How to try it
+
+```bash
+cd client && pnpm dev
+```
+
+Select **Swarm** mode → type `test_mohamed` → Run → confirm the config modal.
+Watch `BlackboardCanvas` populate live over ~15-20s: proposals, a vote
+sub-round, replies with citation pulses, one promotion to Confirmed, one
+soft-delete. Click a taker's ♡ badge for the trust panel; click a thread pill
+to filter.

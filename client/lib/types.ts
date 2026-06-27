@@ -37,6 +37,8 @@ export interface Source {
   type: SourceType;
   content: string;
   position: Position;
+  /** Agent ids that should receive this file when the swarm starts. */
+  agentIds?: string[];
 }
 
 export interface KnowledgeFile {
@@ -376,6 +378,13 @@ export interface ConfirmedEntry {
   created_at: string;
 }
 
+export interface Citer {
+  agentName: string;
+  round: number;
+}
+
+export type AgentSwarmRole = "taker" | "observer";
+
 export interface DraftEntry {
   id: string;
   run_id: string;
@@ -393,6 +402,9 @@ export interface DraftEntry {
   citation_count: number;
   created_at: string;
   children: DraftEntry[];
+  /** Only populated by the dummy pipeline today — the real backend doesn't
+   *  enrich citer identities yet (see plan Task 13 note). Always optional. */
+  citers?: Citer[];
 }
 
 export interface BlackboardState {
@@ -401,4 +413,11 @@ export interface BlackboardState {
   draft: DraftEntry[];
   loading: boolean;
   error: string | null;
+}
+
+export interface AgentTrustEntry {
+  domain: string;
+  trust_score: number;
+  runs_participated: number;
+  updated_at: string;
 }

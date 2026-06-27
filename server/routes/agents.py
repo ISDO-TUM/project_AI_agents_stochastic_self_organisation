@@ -44,6 +44,20 @@ router = APIRouter(prefix="/api/agents", tags=["Agents"])
 DBDep = Annotated[AsyncConnection, Depends(get_db)]
 _PATCHABLE_COLUMNS: frozenset[str] = frozenset(AgentUpdate.model_fields.keys())
 
+# Every newly created agent gets these so it can participate in swarm mode
+# without the user having to know the tool names exist. Hardcoded here (not
+# imported from server.market_hive.tools) — that module is under active
+# development on another branch and this list must not collide with it.
+_MARKET_HIVE_AUTO_TOOLS: tuple[str, ...] = (
+    "read_blackboard",
+    "post_to_blackboard",
+    "cite",
+    "vote",
+    "get_confirmed",
+    "submit_bid",
+    "abstain",
+)
+
 
 @router.post(
     "",
@@ -72,6 +86,11 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
             status_code=status.HTTP_409_CONFLICT,
             detail="Agent with this id already exists.",
         )
+    tools = list(body.tools)
+    for tool_name in _MARKET_HIVE_AUTO_TOOLS:
+        if tool_name not in tools:
+            tools.append(tool_name)
+
     await db.execute(
         insert(agents).values(
             id=agent_id,
@@ -80,7 +99,7 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
             system_prompt=body.system_prompt,
             provider=body.provider,
             model=body.model,
-            tools=json.dumps(body.tools),
+            tools=json.dumps(tools),
             connections=json.dumps(body.connections),
         )
     )

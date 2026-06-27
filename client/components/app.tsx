@@ -6,6 +6,7 @@ import {
   CanvasState,
   ConsensusMode,
   Rule,
+  SourceType,
   TopologyMode,
   Tweaks,
 } from "@/lib/types";
@@ -37,6 +38,12 @@ import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
 import { useBlackboard } from "@/hooks/useBlackboard";
 import { ModeGate, AppMode } from "@/components/mode-gate";
+import {
+  SwarmConfigModal,
+  SwarmRunConfig,
+} from "@/components/swarm-config-modal";
+import { useDummySwarm } from "@/hooks/useDummySwarm";
+import { generateDummyRun } from "@/lib/dummy-swarm";
 import { getTheme } from "@/lib/theme";
 
 const defaultTweaks: Tweaks = {
@@ -50,7 +57,11 @@ const defaultTweaks: Tweaks = {
   accentColor: BURG,
 };
 
-export function App() {
+interface AppProps {
+  onModeSelected?: () => void;
+}
+
+export function App({ onModeSelected }: AppProps = {}) {
   const { dark, toggle: toggleTheme } = useTheme();
 
   const [tweaks] = useState<Tweaks>(defaultTweaks);
@@ -113,25 +124,38 @@ export function App() {
     showTweaks,
     setShowTweaks,
   } = useUIState();
+  const [sourceOverlay, setSourceOverlay] = useState<{
+    id: string | null;
+    sourceType?: SourceType;
+    presetAgentId?: string;
+  } | null>(null);
+  const [overlayWidth, setOverlayWidth] = useState(360);
 
   const [rules, setRules] = useState<Rule[]>([]);
   const [selectedRules, setSelectedRules] = useState<Set<string>>(new Set());
   const [importError, setImportError] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
   const [appMode, setAppMode] = useState<AppMode | null>(null);
-  const [seeding, setSeeding] = useState(false);
-  const { state: blackboardState } = useBlackboard(
-    appMode === "swarm" ? runId : null,
+  const [swarmConfigOpen, setSwarmConfigOpen] = useState(false);
+  const [pendingSwarmPrompt, setPendingSwarmPrompt] = useState("");
+  const [topbarWidth, setTopbarWidth] = useState<number | null>(null);
+  const [topbarHeight, setTopbarHeight] = useState<number | null>(null);
+  const [promptBarHeight, setPromptBarHeight] = useState<number | null>(null);
+  const dummy = useDummySwarm();
+  const { state: realBlackboardState } = useBlackboard(
+    appMode === "swarm" && !dummy.state.active ? runId : null,
   );
+  const blackboardState = dummy.state.active
+    ? dummy.state.blackboard
+    : realBlackboardState;
 
-  const handleSeed = useCallback(async () => {
-    setSeeding(true);
+  const handleSeed = useCallback(async (promptOverride?: string) => {
     try {
       const res = await fetch("/api/simulation/seed", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          prompt: "Test blackboard seeding",
+          prompt: promptOverride?.trim() || "Test blackboard seeding",
           agent_ids: [],
         }),
       });
@@ -140,8 +164,6 @@ export function App() {
       setRunId(data.run_id);
     } catch (err) {
       console.error("Seed failed:", err);
-    } finally {
-      setSeeding(false);
     }
   }, []);
 
@@ -176,6 +198,11 @@ export function App() {
 
   const handleRun = useCallback(
     (prompt: string) => {
+      if (appMode === "swarm") {
+        setPendingSwarmPrompt(prompt);
+        setSwarmConfigOpen(true);
+        return;
+      }
       const active = rules.filter((r) => selectedRules.has(r.id));
       const ruleset = active.length
         ? active.map((r) => `- ${r.instruction}`).join("\n")
@@ -183,7 +210,34 @@ export function App() {
       if (consensusMode === "bidding") setBiddingBoardOpen(true);
       runSim(prompt, consensusMode, ruleset, topology, fanout, iterations);
     },
-    [rules, selectedRules, runSim, consensusMode, topology, fanout, iterations],
+    [
+      appMode,
+      rules,
+      selectedRules,
+      runSim,
+      consensusMode,
+      topology,
+      fanout,
+      iterations,
+    ],
+  );
+
+  const handleSwarmConfigConfirm = useCallback(
+    (config: SwarmRunConfig) => {
+      setSwarmConfigOpen(false);
+      if (pendingSwarmPrompt.trim().toLowerCase() === "test_mohamed") {
+        const fixture = generateDummyRun(
+          { takers: config.takersMax, rounds: config.roundsMax },
+          agents,
+        );
+        dummy.start(fixture);
+        setRunId(fixture.runId);
+        return;
+      }
+      dummy.reset();
+      handleSeed(pendingSwarmPrompt);
+    },
+    [pendingSwarmPrompt, agents, dummy, handleSeed],
   );
   const importErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -286,6 +340,25 @@ export function App() {
           return;
         }
         data = parsed as CanvasState;
+        // Auto-assign positions for any agents/sources that omit them
+        // (e.g. configs generated for Market Hive mode without layout info).
+        data = {
+          ...data,
+          agents: data.agents.map((a, i) => ({
+            ...a,
+            position: a.position ?? {
+              x: 160 + (i % 4) * 220,
+              y: 180 + Math.floor(i / 4) * 180,
+            },
+          })),
+          sources: data.sources.map((s, i) => ({
+            ...s,
+            position: s.position ?? {
+              x: 180 + (i % 4) * 220,
+              y: 480 + Math.floor(i / 4) * 180,
+            },
+          })),
+        };
       } catch {
         showImportError("Invalid JSON file");
         return;
@@ -433,7 +506,11 @@ export function App() {
   const onClear = useCallback(async () => {
     await clearAll().catch(() => {});
     dispatch({ type: "CLEAR" });
-  }, [dispatch]);
+    // Also wipe the swarm run state and boards so the canvas starts fresh.
+    dummy.reset();
+    setRunId(null);
+    stopSim();
+  }, [dispatch, dummy, stopSim]);
   const onAutoLayout = useCallback(
     () => dispatch({ type: "AUTO_LAYOUT" }),
     [dispatch],
@@ -443,27 +520,53 @@ export function App() {
     [setShowTweaks],
   );
 
+  // Source.agentIds is never populated from real data (load() never sets it,
+  // and saveSource/createFile don't persist it) — the real truth is `edges`,
+  // same lookup `connectedSources` in agent-panel.tsx already uses. Override
+  // agentIds with that derived value whenever handing an existing source to
+  // SourcePanel, so "Assign to agents" reflects reality instead of always
+  // showing every chip unchecked.
+  const withRealAgentIds = (sourceId: string) => {
+    const found = sources.find((s) => s.id === sourceId);
+    if (!found) return null;
+    return {
+      ...found,
+      agentIds: edges
+        .filter((e) => e.from === sourceId || e.to === sourceId)
+        .map((e) => (e.from === sourceId ? e.to : e.from))
+        .filter((id) => agents.some((a) => a.id === id)),
+    };
+  };
+
   const panelAgent =
     panel?.type === "agent" && panel.id
       ? agents.find((a) => a.id === panel.id) ?? null
       : null;
   const panelSource =
-    panel?.type === "source" && panel.id
-      ? sources.find((s) => s.id === panel.id) ?? null
-      : null;
+    panel?.type === "source" && panel.id ? withRealAgentIds(panel.id) : null;
+  const overlaySource = sourceOverlay?.id
+    ? withRealAgentIds(sourceOverlay.id)
+    : null;
   const t = getTheme(dark);
   const hasNodes = agents.length > 0 || sources.length > 0;
 
   if (!appMode) {
-    return <ModeGate onSelect={setAppMode} />;
+    return (
+      <ModeGate
+        onSelect={(mode) => {
+          setAppMode(mode);
+          onModeSelected?.();
+        }}
+      />
+    );
   }
 
   return (
     <div
       style={{
         display: "flex",
-        height: "100vh",
-        width: "100vw",
+        height: "100%",
+        width: "100%",
         background: t.bg,
         overflow: "hidden",
         position: "relative",
@@ -530,8 +633,12 @@ export function App() {
           blackboardState={blackboardState}
           appMode={appMode}
           swarmRunId={appMode === "swarm" ? runId : null}
-          onSeed={handleSeed}
-          seeding={seeding}
+          topbarWidth={topbarWidth}
+          topbarHeight={topbarHeight}
+          promptBarHeight={promptBarHeight}
+          onSelectAgentChip={openPanel}
+          swarmDone={appMode === "swarm" && dummy.state.done}
+          swarmTrustVectors={dummy.state.trustVectors}
           phonebook={
             topology === "dynamic"
               ? {
@@ -570,6 +677,8 @@ export function App() {
           showBiddingBoardToggle={consensusMode === "bidding"}
           biddingBoardOpen={biddingBoardOpen}
           onToggleBiddingBoard={() => setBiddingBoardOpen((x) => !x)}
+          onWidthChange={setTopbarWidth}
+          onHeightChange={setTopbarHeight}
         />
 
         <PromptBar
@@ -581,6 +690,7 @@ export function App() {
           iterations={iterations}
           onIterationsChange={setIterations}
           batchProgress={batchProgress}
+          onHeightChange={setPromptBarHeight}
         />
       </div>
 
@@ -613,6 +723,14 @@ export function App() {
           onFanoutChange={setFanout}
           simRunning={simMode}
           onClose={() => setShowTweaks(false)}
+          appMode={appMode}
+        />
+      )}
+
+      {swarmConfigOpen && (
+        <SwarmConfigModal
+          onCancel={() => setSwarmConfigOpen(false)}
+          onConfirm={handleSwarmConfigConfirm}
         />
       )}
 
@@ -623,17 +741,66 @@ export function App() {
           agents={agents}
           sources={sources}
           edges={edges}
+          overlayWidth={sourceOverlay ? overlayWidth : 0}
           onSave={async (data) => {
             await saveAgent(data);
             setPanel(null);
+            setSourceOverlay(null);
           }}
           onDelete={async (id) => {
             await deleteAgent(id);
             setPanel(null);
+            setSourceOverlay(null);
             setSelNode(null);
             setCtx(null);
           }}
-          onClose={() => setPanel(null)}
+          onClose={() => {
+            setPanel(null);
+            setSourceOverlay(null);
+          }}
+          onEditSource={(sourceId) => setSourceOverlay({ id: sourceId })}
+          onDetachSource={(sourceId) => {
+            if (!panelAgent) return;
+            const edge = edges.find(
+              (e) =>
+                (e.from === panelAgent.id && e.to === sourceId) ||
+                (e.to === panelAgent.id && e.from === sourceId),
+            );
+            if (edge) deleteEdge(edge.id);
+          }}
+          onAddFile={() =>
+            setSourceOverlay({
+              id: null,
+              sourceType: "text",
+              presetAgentId: panelAgent?.id,
+            })
+          }
+          onAddDataset={() =>
+            setSourceOverlay({
+              id: null,
+              sourceType: "dataset",
+              presetAgentId: panelAgent?.id,
+            })
+          }
+        />
+      )}
+      {sourceOverlay && (
+        <SourcePanel
+          key={sourceOverlay.id ?? "new-source-overlay"}
+          source={overlaySource}
+          initialType={sourceOverlay.sourceType}
+          agents={agents}
+          presetAgentId={sourceOverlay.presetAgentId}
+          onSave={(data) => {
+            saveSource(data);
+            setSourceOverlay(null);
+          }}
+          onDelete={(id) => {
+            deleteSource(id);
+            setSourceOverlay(null);
+          }}
+          onClose={() => setSourceOverlay(null)}
+          onWidthChange={setOverlayWidth}
         />
       )}
       {panel?.type === "source" && (
@@ -641,6 +808,7 @@ export function App() {
           key={panel.id ?? "new-source"}
           source={panelSource}
           initialType={panel.sourceType}
+          agents={agents}
           onSave={(data) => {
             saveSource(data);
             setPanel(null);
