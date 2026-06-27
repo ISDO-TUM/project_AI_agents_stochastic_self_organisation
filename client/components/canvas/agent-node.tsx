@@ -2,7 +2,6 @@
 
 import { useCallback } from "react";
 import { Agent, AgentSwarmRole, Tweaks } from "@/lib/types";
-import { LIcon } from "@/lib/icons";
 import { BURG_LT, BURG_GLOW, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { AgentTrustPanel } from "./blackboard/agent-trust-panel";
