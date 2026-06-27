@@ -202,6 +202,7 @@ Commit: `feat(blackboard): implement Blackboard.post and Blackboard.read`
 
 - ✅ **Auction Engine** (`server/market_hive/auction.py`) — invitation, bid recording, taker selection, thread coverage (see below)
 - ✅ **Convergence Engine** (`server/market_hive/convergence.py`) — confidence, conceding temperature, per-run reputation (see below)
+- ✅ **Contract Amendment Engine** (`server/market_hive/amendment.py`) — `request_expertise`, majority vote, new thread + real mini-auction (see below)
 - ⬜ **Market Maker** (`server/market_hive/market_maker.py`) — LLM-powered contract decomposition _(owned by another team member)_
 - ⬜ **Orchestrator** (`server/market_hive/orchestrator.py`) — round loop, SSE streaming
 - ⬜ **Real embeddings** — replace `_ZERO_EMBEDDING` with `text-embedding-3-small` calls
@@ -281,6 +282,67 @@ reward/penalty/clamp).
 
 ---
 
+## What Was Built — Contract Amendment Engine (PRD §6.5)
+
+**`server/market_hive/amendment.py`** — `AmendmentEngine` class. Lets a taker who
+finds a capability gap call `request_expertise`, then resolves it by a democratic
+majority vote (all takers + the Market Maker as one equal voter) and, on approval,
+creates a new thread and recruits agents for it via a real mini-auction. The pure
+DB operations live here and are fully unit-testable; the two LLM boundaries (taker/MM
+votes, mini-auction self-selection) are injected callables so the engine never hard-
+depends on the still-pending orchestrator.
+
+- `propose(...)` — enforces the per-run `max_amendments` cap (counts **all**
+  proposals, anti-gaming per OP-08), inserts the `amendments` row (`status='pending'`),
+  and posts a SYSTEM entry to the Confirmed layer
+  (`"[Agent X] requests '[domain]' expertise for [Thread Y]: [reason]"`). Returns
+  `{amendment_id, status}` where status is `"pending"` / `"rejected_limit_reached"`.
+- `resolve(...)` — pure tally: `approved = approve_votes > total_voters/2` (strict
+  majority; ties and all-abstain fail). On approval creates the new thread (requested
+  domain → `required_expertise`), posts the approval SYSTEM entry, bumps
+  `swarm_runs.amendment_count`, and runs the (optional) recruiter. On rejection posts
+  a rejection SYSTEM entry; the run continues unchanged.
+- `process_pending(...)` — the end-of-round orchestrator hook (PRD §11.2). For each
+  pending amendment it collects one vote per taker plus the MM's equal vote, applies
+  `resolve`, and yields `amendment` / `amendment-approved` / `amendment-rejected` SSE
+  steps. `vote_collector` / `mm_vote` / `recruiter` are injected.
+- `list_pending` / `list_all` / `get` — amendment reads (→ `AmendmentSchema`).
+- `make_auction_recruiter(...)` — the real mini-auction. Drives `AuctionEngine`:
+  `invite()` → exclude current takers → **re-score candidates against the new
+  thread's embedding** (`_rescore_against_thread`, §6.5 step 3a) → each invited agent
+  self-selects → `select_takers(thread_id=…)` which writes `is_taker`/`is_observer`
+  on the bid rows. Recruited agents persist exactly like any other taker.
+- `make_llm_vote_collector(...)` — production taker-vote path (one LLM call per taker
+  with its own provider/model/system prompt). `make_llm_mm_vote_collector(...)` — the
+  MM's single equal vote (stand-in until `MarketMaker.cast_amendment_vote` exists).
+
+**`server/market_hive/tools.py`** — `RequestExpertiseTool` (`request_expertise`):
+inputs `{domain, reason, thread_id}`; reads `db`/`run_id`/`agent_id`/`round`/`max_amendments`
+from the tool `context`; delegates to `AmendmentEngine.propose`. Registered in `_register()`.
+
+**`server/tests/test_amendment.py`** — 14 tests (propose + SYSTEM entry, cap,
+approve/reject/tie resolution, thread creation + `amendment_count`, recruiter
+invocation, `process_pending` approve/reject, the `request_expertise` tool, and the
+mini-auction recruiter: non-taker assignment, `max_new_takers` cap, `self_select`
+abstention, and **thread-embedding scoring** — an orthogonal agent is excluded).
+
+**`server/scripts/amendment_smoke.py`** — manual smoke that drives propose → vote →
+approve → recruit against an in-memory DB and prints each step. Adaptive embeddings:
+uses **real OpenAI embeddings** when `OPENAI_API_KEY` is set (a finance agent is
+recruited over a gardening agent by real cosine match), else deterministic fakes so
+it still runs offline. Votes are injected fakes.
+
+**`server/pyproject.toml`** — `S608` per-file ignore for `amendment.py` (the dynamic
+`WHERE` clause is a hardcoded constant, same pattern as `blackboard.py` / `auction.py`).
+
+**Seams still open (owned elsewhere):** `process_pending` is not yet _called_ — the
+orchestrator round loop is still a stub. The mini-auction's per-agent self-selection
+(bid vs. abstain) auto-bids by default until the orchestrator's LLM bidding loop lands
+(injectable via `self_select`). The MM vote uses the stand-in until `market_maker.py`
+ships `cast_amendment_vote`.
+
+---
+
 ## Key Decisions (for context)
 
 - **Option B scope**: Phase 1 (DB + schema) + Phase 3 (Blackboard + frontend). Market Maker, Auction Engine, Orchestrator were **out of scope** for Option B (Phase 2). _(Phase 2 now under way — Auction Engine and Convergence Engine both landed.)_
@@ -291,6 +353,10 @@ reward/penalty/clamp).
 - **Convergence — participant definition**: confidence is the citation share of an agent's _own posts_, so "thread participants" = distinct authors who have posted in the thread (not the bid/taker set). A taker who never posts has no confidence entry; the orchestrator can default it to 0.0 (→ max conceding temperature). This keeps the engine decoupled from the auction/bids tables and well-defined for both single- and multi-step runs.
 - **Convergence — self-vote/self-cite exclusion**: cold-start votes exclude self-votes (the `votes` table doesn't filter them, unlike `cite()`), matching the `(N−1)` denominator; per-round citation queries also defensively exclude self-citations.
 - **Convergence — deletions passed in**: `update_reputation` auto-detects promotions from `confirmed_entries.round_confirmed`, but takes `deleted_draft_ids` from the caller because the blackboard's soft-delete records `deleted_at` (a timestamp), not a round. The orchestrator supplies the IDs it just soft-deleted.
+- **Amendment — vote tally vs. `vote()` tool**: PRD §6.5 prose says voters "call `vote(amendment_entry_id)`", but the §7 schema labels the `votes` table "cold start only". Reusing it for amendments would contradict the schema, so the engine tallies directly into the `amendments` table's dedicated `approve_votes`/`total_voters` columns instead. More schema-consistent; same outcome (calling = approve, silence = abstain).
+- **Amendment — cap counts all proposals**: `max_amendments` is enforced by counting **every** `amendments` row for the run (pending + approved + rejected), not just approved ones. Each proposal triggers an N-taker vote (LLM calls), so bounding _proposals_ is what prevents the OP-08 token-DoS. `swarm_runs.amendment_count` separately tracks _approved_ amendments (bumped in `resolve`).
+- **Amendment — LLM boundaries injected**: taker votes, the MM vote, and mini-auction self-selection are all injected callables (`vote_collector`, `mm_vote`, `self_select`). This keeps the engine's pure logic testable with deterministic fakes and lets the orchestrator wire the real LLM paths without touching amendment code.
+- **Amendment — mini-auction reuses `AuctionEngine`**: recruitment calls the real auction primitives (`invite` → `record_bid` → `select_takers`) rather than reimplementing scoring/selection. **Thread-scoped matching (§6.5 step 3a):** `invite()` scores against the _contract_ embedding, so the recruiter takes invite()'s candidate set (names, trust, inclusive fallback) and **re-scores each agent's `capability_embedding` against the new thread's embedding** via `cosine`, dropping anyone below `invite_floor` (`_rescore_against_thread`). The thread embedding is computed via an injected `embedder` (default `embed_texts`) and persisted to `threads.thread_embedding` on first use. When an embedding is missing on either side, the inclusive invite() decision is kept — so it works before embeddings are populated and sharpens once they are.
 - **Frontend state model (Option C hybrid)**: REST-initialized on mount, `dispatch()` pre-wired for SSE events in Phase 2.
 - **Zero-vector embeddings**: `content_embedding` stored as 1536 zeros. When all embeddings are zero, cosine similarity is undefined — ranking falls back to `citation_count DESC, created_at ASC`. Phase 2 replaces with real `text-embedding-3-small` calls.
 - **In-memory SQLite for tests**: `conftest.py` builds the engine against an in-memory SQLite DB (StaticPool) so the suite runs with no external Postgres.
@@ -313,8 +379,11 @@ server/
 │   ├── blackboard.py           ← Created: Blackboard class (Tasks 4-6)
 │   ├── auction.py              ← Created: AuctionEngine (Phase 2)
 │   ├── convergence.py          ← Created: ConvergenceEngine (Phase 2)
-│   └── tools.py                ← Blackboard + auction tools (auction tools now functional)
-├── pyproject.toml              ← Modified: S608 per-file ignore for auction.py
+│   ├── amendment.py            ← Created: AmendmentEngine + mini-auction recruiter (Phase 2)
+│   └── tools.py                ← Blackboard + auction + request_expertise tools
+├── pyproject.toml              ← Modified: S608 per-file ignore for auction.py, amendment.py
+├── scripts/
+│   └── amendment_smoke.py      ← Created: manual amendment lifecycle smoke
 ├── tools/
 │   └── registry.py             ← Modified: blackboard/auction tools registered
 ├── routes/
@@ -327,6 +396,7 @@ server/
     ├── test_blackboard.py      ← Created: 12 Blackboard tests (Tasks 4-6)
     ├── test_auction.py         ← Created: 9 AuctionEngine tests (Phase 2)
     ├── test_convergence.py     ← Created: 10 ConvergenceEngine tests (Phase 2)
+    ├── test_amendment.py       ← Created: 14 AmendmentEngine tests (Phase 2)
     └── test_simulation.py      ← Created: 5 endpoint tests (Task 8)
 
 client/
