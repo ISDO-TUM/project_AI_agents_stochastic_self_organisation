@@ -485,21 +485,23 @@ export function Canvas({
               tweaks={tweaks}
             />
           ))}
-        {sources.map((source) => (
-          <SourceNode
-            key={source.id}
-            source={source}
-            selected={selectedNode === source.id}
-            active={activeNodeId === source.id}
-            simMode={simMode}
-            swarmMode={appMode === "swarm"}
-            zoom={zoom}
-            onSelect={onSelectNode}
-            onDragEnd={onMoveNode}
-            onConnectStart={handleConnectStart}
-            tweaks={tweaks}
-          />
-        ))}
+        {appMode !== "swarm" &&
+          sources.map((source) => (
+            <SourceNode
+              key={source.id}
+              source={source}
+              selected={selectedNode === source.id}
+              active={activeNodeId === source.id}
+              simMode={simMode}
+              // @ts-expect-error - swarmMode is always false but prop contract requires it
+              swarmMode={appMode === "swarm"}
+              zoom={zoom}
+              onSelect={onSelectNode}
+              onDragEnd={onMoveNode}
+              onConnectStart={handleConnectStart}
+              tweaks={tweaks}
+            />
+          ))}
         {/* PhonebookPanel lives in world space — pans & zooms with the canvas */}
         {phonebook && (
           <PhonebookPanel
