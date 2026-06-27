@@ -6,7 +6,7 @@ import { uuid } from "@/lib/utils";
 import { getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 
-import { FLabel, FInput, FSelect, FBtn, PanelShell } from "./panel-primitives";
+import { FLabel, FInput, FSelect, FBtn, PanelShell, Toast } from "./panel-primitives";
 import { BURG_LT } from "@/lib/theme";
 
 interface SourcePanelProps {
@@ -21,6 +21,9 @@ interface SourcePanelProps {
   /** Reports this panel's live width — passed straight through to PanelShell
    *  so a layered AgentPanel can stay in sync via its own stackOffset. */
   onWidthChange?: (w: number) => void;
+  /** Pre-checks this agent in "Assign to agents" for a brand-new source
+   *  opened from within that agent's own panel. */
+  presetAgentId?: string;
 }
 
 const PREVIEW_MAX_HEIGHT = 420;
@@ -103,6 +106,7 @@ export function SourcePanel({
   onDelete,
   onClose,
   onWidthChange,
+  presetAgentId,
 }: SourcePanelProps) {
   const [name, setName] = useState(source?.name ?? "");
   const [content, setContent] = useState(source?.content ?? "");
@@ -110,13 +114,18 @@ export function SourcePanel({
     source?.type ?? initialType ?? "text",
   );
   const [agentIds, setAgentIds] = useState<string[]>(
-    source?.agentIds ?? [],
+    source?.agentIds ?? (presetAgentId ? [presetAgentId] : []),
   );
+  const [toast, setToast] = useState<string | null>(null);
   const fileInput = useRef<HTMLInputElement>(null);
 
   const isDataset = type === "dataset";
 
   const handleSave = () => {
+    if (agentIds.length === 0) {
+      setToast("Attach this tool to at least one agent.");
+      return;
+    }
     const position = source?.position ?? {
       x: 300 + Math.random() * 380,
       y: 260 + Math.random() * 200,
@@ -276,6 +285,7 @@ export function SourcePanel({
           {source ? `Save ${noun}` : `Create ${noun}`}
         </FBtn>
       </div>
+      {toast && <Toast message={toast} onDone={() => setToast(null)} />}
     </PanelShell>
   );
 }

@@ -127,6 +127,7 @@ export function App({ onModeSelected }: AppProps = {}) {
   const [sourceOverlay, setSourceOverlay] = useState<{
     id: string | null;
     sourceType?: SourceType;
+    presetAgentId?: string;
   } | null>(null);
   const [overlayWidth, setOverlayWidth] = useState(360);
 
@@ -496,16 +497,32 @@ export function App({ onModeSelected }: AppProps = {}) {
     [setShowTweaks],
   );
 
+  // Source.agentIds is never populated from real data (load() never sets it,
+  // and saveSource/createFile don't persist it) — the real truth is `edges`,
+  // same lookup `connectedSources` in agent-panel.tsx already uses. Override
+  // agentIds with that derived value whenever handing an existing source to
+  // SourcePanel, so "Assign to agents" reflects reality instead of always
+  // showing every chip unchecked.
+  const withRealAgentIds = (sourceId: string) => {
+    const found = sources.find((s) => s.id === sourceId);
+    if (!found) return null;
+    return {
+      ...found,
+      agentIds: edges
+        .filter((e) => e.from === sourceId || e.to === sourceId)
+        .map((e) => (e.from === sourceId ? e.to : e.from))
+        .filter((id) => agents.some((a) => a.id === id)),
+    };
+  };
+
   const panelAgent =
     panel?.type === "agent" && panel.id
       ? agents.find((a) => a.id === panel.id) ?? null
       : null;
   const panelSource =
-    panel?.type === "source" && panel.id
-      ? sources.find((s) => s.id === panel.id) ?? null
-      : null;
+    panel?.type === "source" && panel.id ? withRealAgentIds(panel.id) : null;
   const overlaySource = sourceOverlay?.id
-    ? sources.find((s) => s.id === sourceOverlay.id) ?? null
+    ? withRealAgentIds(sourceOverlay.id)
     : null;
   const t = getTheme(dark);
   const hasNodes = agents.length > 0 || sources.length > 0;
@@ -726,8 +743,20 @@ export function App({ onModeSelected }: AppProps = {}) {
             );
             if (edge) deleteEdge(edge.id);
           }}
-          onAddFile={() => setSourceOverlay({ id: null, sourceType: "text" })}
-          onAddDataset={() => setSourceOverlay({ id: null, sourceType: "dataset" })}
+          onAddFile={() =>
+            setSourceOverlay({
+              id: null,
+              sourceType: "text",
+              presetAgentId: panelAgent?.id,
+            })
+          }
+          onAddDataset={() =>
+            setSourceOverlay({
+              id: null,
+              sourceType: "dataset",
+              presetAgentId: panelAgent?.id,
+            })
+          }
         />
       )}
       {sourceOverlay && (
@@ -736,6 +765,7 @@ export function App({ onModeSelected }: AppProps = {}) {
           source={overlaySource}
           initialType={sourceOverlay.sourceType}
           agents={agents}
+          presetAgentId={sourceOverlay.presetAgentId}
           onSave={(data) => {
             saveSource(data);
             setSourceOverlay(null);

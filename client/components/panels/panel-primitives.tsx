@@ -1,9 +1,51 @@
 "use client";
 
 import React, { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { BURG, BURG_DIM, BURG_LT, getTheme } from "@/lib/theme";
 import { LIcon } from "@/lib/icons";
 import { useTheme } from "@/lib/theme-context";
+
+/** Centered, auto-dismissing toast — shared by anything that needs a brief,
+ *  non-blocking message (panel save-validation, import errors, etc.). */
+export function Toast({
+  message,
+  onDone,
+}: {
+  message: string;
+  onDone: () => void;
+}) {
+  useEffect(() => {
+    const id = setTimeout(onDone, 4000);
+    return () => clearTimeout(id);
+  }, [onDone]);
+
+  return createPortal(
+    <div
+      style={{
+        position: "fixed",
+        top: "50%",
+        left: "50%",
+        transform: "translate(-50%, -50%)",
+        zIndex: 9999,
+        background: BURG,
+        color: "#fff",
+        padding: "13px 22px",
+        borderRadius: 10,
+        fontSize: 13,
+        fontWeight: 600,
+        boxShadow: "0 8px 32px rgba(0,0,0,0.45)",
+        animation: "fadeIn 0.18s ease-out",
+        maxWidth: 420,
+        textAlign: "center",
+        pointerEvents: "none",
+      }}
+    >
+      {message}
+    </div>,
+    document.body,
+  );
+}
 
 export function Checkbox({
   checked,
