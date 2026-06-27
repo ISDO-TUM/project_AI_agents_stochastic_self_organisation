@@ -46,42 +46,6 @@ const defaultForm = (): AgentForm => ({
   systemPrompt: "",
 });
 
-/** Two UI-level tool categories shown in the panel.
- *  "table" expands to both backend tools (table_query + table_mutate). */
-const UI_TOOLS: { key: string; label: string; description: string; icon: string }[] = [
-  {
-    key: "files",
-    label: "Text File",
-    description: "Read content from attached text files.",
-    icon: "FileText",
-  },
-  {
-    key: "table",
-    label: "Table",
-    description: "Query and mutate rows in a connected dataset.",
-    icon: "Table2",
-  },
-];
-
-/** Expand a UI tool key to the actual backend tool name(s). */
-const UI_TO_BACKEND: Record<string, string[]> = {
-  files: ["files"],
-  table: ["table_query", "table_mutate"],
-};
-
-/** All backend tool names that are governed by the UI model. */
-const ALL_BACKEND_TOOLS = Object.values(UI_TO_BACKEND).flat();
-
-/** Collapse a list of backend tool names into deduped UI tool keys. */
-function backendToUiTools(backendTools: string[]): string[] {
-  const keys = new Set<string>();
-  for (const t of backendTools) {
-    if (t === "files") keys.add("files");
-    if (t === "table_query" || t === "table_mutate") keys.add("table");
-  }
-  return UI_TOOLS.map((u) => u.key).filter((k) => keys.has(k));
-}
-
 function truncateContent(text: string, max = 70): string {
   const clean = text.replace(/\s+/g, " ").trim();
   return clean.length > max ? `${clean.slice(0, max).trimEnd()}…` : clean;
@@ -175,20 +139,6 @@ export function AgentPanel({
     return sources.filter((s) => sourceIds.has(s.id));
   }, [agent, edges, sources]);
 
-  const generalTools = useMemo(
-    () => backendToUiTools(agent?.tools ?? []),
-    [agent],
-  );
-
-  const [localTools, setLocalTools] = useState<string[]>(generalTools);
-
-  const addTool = (key: string) =>
-    setLocalTools((prev) => (prev.includes(key) ? prev : [...prev, key]));
-  const removeTool = (key: string) =>
-    setLocalTools((prev) => prev.filter((k) => k !== key));
-
-  const availableToAdd = UI_TOOLS.filter((u) => !localTools.includes(u.key));
-
   const handleSave = () => {
     const position = agent?.position ?? {
       x: 220 + Math.random() * 480,
@@ -198,11 +148,11 @@ export function AgentPanel({
       ...form,
       id: agent?.id ?? uuid(),
       position,
-      // Preserve any non-governed backend tools, then expand UI keys to backend names
-      tools: [
-        ...(agent?.tools ?? []).filter((t) => !ALL_BACKEND_TOOLS.includes(t)),
-        ...localTools.flatMap((key) => UI_TO_BACKEND[key] ?? []),
-      ],
+      // Capability tools are now granted/revoked entirely at attachment time
+      // (see useCanvasState's saveSource/connectNodes/deleteEdge) — this
+      // panel no longer edits agent.tools directly, so it's passed through
+      // untouched.
+      tools: agent?.tools ?? [],
       connections: agent?.connections ?? [],
     });
   };
@@ -310,12 +260,12 @@ export function AgentPanel({
         rows={5}
       />
 
-      {/* ── Tools — connected files/datasets + capability toggles, merged ── */}
+      {/* ── Tools — connected files/datasets only; capability is implicit ── */}
       <>
         {dropdownHeader(
           "Tools",
           "Wrench",
-          connectedSources.length + localTools.length,
+          connectedSources.length,
           toolsOpen,
           () => setToolsOpen((o) => !o),
         )}
@@ -329,7 +279,7 @@ export function AgentPanel({
               padding: "2px 0 4px",
             }}
           >
-            {connectedSources.length === 0 && localTools.length === 0 && (
+            {connectedSources.length === 0 && (
               <span
                 style={{
                   fontSize: 11.5,
@@ -435,99 +385,17 @@ export function AgentPanel({
               </div>
             ))}
 
-            {localTools.map((key) => {
-              const uiTool = UI_TOOLS.find((u) => u.key === key);
-              if (!uiTool) return null;
-              return (
-              <div
-                key={key}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  padding: "9px 12px",
-                  borderRadius: 8,
-                  border: `1.5px solid ${t.border}`,
-                  background: t.inputBg,
-                  gap: 10,
-                }}
-              >
-                <div
-                  style={{ display: "flex", alignItems: "center", gap: 10 }}
-                >
-                  <LIcon
-                    name={uiTool.icon}
-                    size={13}
-                    color={t.textSub}
-                  />
-                  <div
-                    style={{
-                      display: "flex",
-                      flexDirection: "column",
-                      gap: 2,
-                    }}
-                  >
-                    <span
-                      style={{ fontSize: 12, color: t.text, fontWeight: 600 }}
-                    >
-                      {uiTool.label}
-                    </span>
-                    <span style={{ fontSize: 10.5, color: t.textSub }}>
-                      {uiTool.description}
-                    </span>
-                  </div>
-                </div>
-                <button
-                  onClick={() => removeTool(key)}
-                  title="Remove tool"
-                  style={{
-                    background: "none",
-                    border: "none",
-                    cursor: "pointer",
-                    padding: "3px 5px",
-                    borderRadius: 6,
-                    display: "flex",
-                    alignItems: "center",
-                    color: t.textDim,
-                    flexShrink: 0,
-                    transition: "color 0.15s, background 0.15s",
-                  }}
-                  onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLButtonElement).style.color =
-                      "#e05555";
-                    (e.currentTarget as HTMLButtonElement).style.background =
-                      "rgba(224,85,85,0.1)";
-                  }}
-                  onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLButtonElement).style.color =
-                      t.textDim;
-                    (e.currentTarget as HTMLButtonElement).style.background =
-                      "none";
-                  }}
-                >
-                  <LIcon name="X" size={13} color="currentColor" />
-                </button>
-              </div>
-              );
-            })}
-
-            {/* Combined add row: text file / dataset / remaining capability toggles */}
-            {(onAddFile || onAddDataset || availableToAdd.length > 0) && (
+            {/* Add row: each button creates the source and grants its matching capability in one action (see useCanvasState's saveSource) */}
+            {(onAddFile || onAddDataset) && (
               <div
                 style={{
                   display: "flex",
                   flexWrap: "wrap",
                   gap: 6,
-                  marginTop:
-                    connectedSources.length > 0 || localTools.length > 0
-                      ? 4
-                      : 0,
-                  paddingTop:
-                    connectedSources.length > 0 || localTools.length > 0
-                      ? 8
-                      : 0,
+                  marginTop: connectedSources.length > 0 ? 4 : 0,
+                  paddingTop: connectedSources.length > 0 ? 8 : 0,
                   borderTop:
-                    connectedSources.length > 0 || localTools.length > 0
+                    connectedSources.length > 0
                       ? `1px dashed ${t.border}`
                       : undefined,
                 }}
@@ -547,7 +415,7 @@ export function AgentPanel({
                     onMouseLeave={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = t.border; el.style.color = t.textSub; el.style.background = "transparent"; }}
                   >
                     <LIcon name="Plus" size={11} color="currentColor" />
-                    Add text file
+                    Add file
                   </button>
                 )}
                 {onAddDataset && (
@@ -565,45 +433,9 @@ export function AgentPanel({
                     onMouseLeave={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = t.border; el.style.color = t.textSub; el.style.background = "transparent"; }}
                   >
                     <LIcon name="Plus" size={11} color="currentColor" />
-                    Add dataset
+                    Add table
                   </button>
                 )}
-                {availableToAdd.map((uiTool) => (
-                  <button
-                    key={uiTool.key}
-                    onClick={() => addTool(uiTool.key)}
-                    title={`Add ${uiTool.label}`}
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 5,
-                      padding: "4px 10px",
-                      borderRadius: 20,
-                      border: `1.5px dashed ${t.border}`,
-                      background: "transparent",
-                      color: t.textSub,
-                      fontSize: 11.5,
-                      fontFamily: "'Space Grotesk', sans-serif",
-                      cursor: "pointer",
-                      transition: "all 0.15s",
-                    }}
-                    onMouseEnter={(e) => {
-                      const el = e.currentTarget as HTMLButtonElement;
-                      el.style.borderColor = t.borderHi;
-                      el.style.color = t.text;
-                      el.style.background = t.hover;
-                    }}
-                    onMouseLeave={(e) => {
-                      const el = e.currentTarget as HTMLButtonElement;
-                      el.style.borderColor = t.border;
-                      el.style.color = t.textSub;
-                      el.style.background = "transparent";
-                    }}
-                  >
-                    <LIcon name="Plus" size={11} color="currentColor" />
-                    {uiTool.label}
-                  </button>
-                ))}
               </div>
             )}
           </div>
