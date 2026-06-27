@@ -493,8 +493,7 @@ export function Canvas({
               selected={selectedNode === source.id}
               active={activeNodeId === source.id}
               simMode={simMode}
-              // @ts-expect-error - swarmMode is always false but prop contract requires it
-              swarmMode={appMode === "swarm"}
+              swarmMode={false}
               zoom={zoom}
               onSelect={onSelectNode}
               onDragEnd={onMoveNode}
