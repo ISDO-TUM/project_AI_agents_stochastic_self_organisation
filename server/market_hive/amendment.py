@@ -16,21 +16,30 @@ of the system that are still being built:
 * ``vote_collector`` — turns a (taker, amendment) into ``"approve" | "reject"``.
   The live path uses an LLM (:func:`make_llm_vote_collector`); tests inject a fake.
 * ``recruiter`` — runs the mini-auction for a newly created thread and returns the
-  new takers' agent IDs. **SEAM:** the real implementation lives in
-  ``server/market_hive/auction.py`` (Phase 2, not yet built). Until it lands the
-  default is a no-op that creates the thread but recruits nobody.
+  new takers' agent IDs. The live path (:func:`make_auction_recruiter`) drives the
+  real :class:`~server.market_hive.auction.AuctionEngine`; tests inject a fake.
+  ``resolve()`` leaves it optional so the pure logic stays testable without an auction.
+
+One inner seam remains inside :func:`make_auction_recruiter`: an invited agent's
+self-selection (bid vs. abstain) is one LLM call per agent, a loop the orchestrator
+owns and which is not built yet. The recruiter auto-bids every invited agent until
+that driver exists (or a ``self_select`` callback is supplied).
 """
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from dataclasses import replace
 from typing import Any, Literal
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.llm import call_agent
+from server.llm.embeddings import cosine, embed_texts
+from server.market_hive.auction import AuctionEngine, Invitation
 from server.market_hive.schemas import AmendmentSchema, SimulationStep, ThreadSchema
 
 # (taker_agent_id, amendment) -> "approve" | "reject"
@@ -39,10 +48,27 @@ VoteCollectorFn = Callable[[str, AmendmentSchema], Awaitable[Literal["approve", 
 RecruiterFn = Callable[[ThreadSchema, str], Awaitable[list[str]]]
 # casts the Market Maker's single equal vote
 MMVoteFn = Callable[[AmendmentSchema], Awaitable[Literal["approve", "reject"]]]
+# an invited agent's self-selection: True = bid, False = abstain
+SelfSelectFn = Callable[[Invitation], Awaitable[bool]]
+# embeds a batch of texts; returns one vector per text (None on failure)
+EmbedderFn = Callable[[list[str]], Awaitable[list[list[float]] | None]]
 
 
 def _row(mapping: Any) -> dict[str, Any]:
     return dict(mapping)
+
+
+def _parse_embedding(raw: Any) -> list[float] | None:
+    """Parse a JSON-encoded embedding column. None / empty / all-zero → None."""
+    if not raw:
+        return None
+    try:
+        vec = json.loads(raw) if isinstance(raw, str) else raw
+    except (json.JSONDecodeError, TypeError):
+        return None
+    if not vec or not any(vec):
+        return None
+    return [float(x) for x in vec]
 
 
 class AmendmentEngine:
@@ -190,7 +216,8 @@ class AmendmentEngine:
         )
         await self._db.commit()
 
-        # SEAM: mini-auction recruitment (auction.py, Phase 2). No-op until then.
+        # Mini-auction recruitment for the new thread (see make_auction_recruiter).
+        # Optional so resolve() can be unit-tested without driving an auction.
         new_takers: list[str] = []
         if recruiter is not None:
             new_takers = await recruiter(new_thread, run_id)
@@ -458,65 +485,149 @@ def make_llm_mm_vote_collector(provider: str = "openai", model: str = "gpt-4o") 
     return vote
 
 
-# ── interim crude recruiter (replace with the real mini-auction in Phase 2) ───
+# ── mini-auction recruiter (real AuctionEngine path) ─────────────────────────
 
 
-def make_crude_recruiter(
+def make_auction_recruiter(
     db: AsyncConnection,
     *,
+    config: Any = None,
     exclude_agent_ids: Iterable[str] = (),
-    max_new_takers: int = 3,
+    self_select: SelfSelectFn | None = None,
+    max_new_takers: int | None = None,
+    embedder: EmbedderFn = embed_texts,
 ) -> RecruiterFn:
-    """INTERIM recruiter that assigns existing non-taker agents to a new thread.
+    """Build a ``RecruiterFn`` that runs a real mini-auction for an approved thread.
 
-    Lets an approved amendment actually populate its thread before the Auction
-    Engine exists, so the flow is demoable end-to-end today.
+    Implements the PRD mini-auction (§6.5 step 3a) on top of :class:`AuctionEngine`:
+    invite agents whose embedding matches the **new thread**, exclude the current
+    takers, let each invited agent self-select (bid/abstain), then rank by
+    ``bid_score`` and assign the thread's takers. ``select_takers`` writes
+    ``is_taker``/``is_observer`` on the bid rows, so recruited agents persist exactly
+    like any other taker.
 
-    TODO(phase-2): replace with the real mini-auction. The PRD mini-auction
-    (§6.5 step 3a) invites non-taker agents whose ``capability_embedding`` matches
-    the new ``thread_embedding`` above an invite floor, then lets each *self-select*
-    via ``submit_bid``/``abstain`` with the bid-scoring formula (§6.2). This
-    stand-in skips BOTH the embedding match and the LLM self-selection: it just
-    assigns up to ``max_new_takers`` non-excluded agents (deterministic order) as
-    takers. When ``embeddings.py`` + ``auction.py`` land, swap this for a call to
-    ``auction.self_select(non_takers, thread, ...)`` — ``resolve()`` needs no change.
+    Thread-scoped matching: ``AuctionEngine.invite`` scores against the *contract*
+    embedding, but §6.5 wants the *new thread*. So we take invite()'s candidate set
+    (which also gives names, trust, and the inclusive fallback) and re-score each
+    agent's ``capability_embedding`` against the new ``thread_embedding`` via
+    ``cosine``, dropping anyone below ``invite_floor``. The thread embedding is
+    computed (and persisted) on first use when absent. When an embedding is missing
+    on either side, the inclusive invite() decision is kept — so this works before
+    embeddings are populated and sharpens automatically once they are.
+
+    Args:
+        config: a ``SwarmRunConfig`` (or anything with the auction fields) to size
+            ``invite_floor`` / ``max_takers`` etc. ``None`` uses engine defaults.
+        exclude_agent_ids: current takers — already on the run, never re-recruited.
+        self_select: an invited agent's decision (``True`` = bid). **SEAM:** the real
+            choice is one LLM call per agent (``submit_bid``/``abstain``, §6.2), a
+            loop the orchestrator owns and which does not exist yet. Until it does,
+            the default auto-bids every invited agent; pass a real callback (or a
+            test fake) to drive genuine self-selection.
+        max_new_takers: cap on recruited takers; overrides the config's ``max_takers``.
+        embedder: embeds the thread title+description when it has no stored embedding.
+            Defaults to :func:`server.llm.embeddings.embed_texts` (returns ``None`` on
+            failure → inclusive fallback). Tests inject a deterministic fake.
     """
     exclude = set(exclude_agent_ids)
 
     async def recruit(thread: ThreadSchema, run_id: str) -> list[str]:
+        auction = AuctionEngine.from_config(db, config) if config is not None else AuctionEngine(db)
+        if max_new_takers is not None:
+            auction.max_takers = max_new_takers
+
         contract_id = (
             await db.execute(text("SELECT id FROM contracts WHERE run_id = :r"), {"r": run_id})
         ).scalar_one()
 
-        rows = (
-            await db.execute(text("SELECT id FROM agents ORDER BY created_at ASC, id ASC"))
-        ).fetchall()
-        candidates = [r[0] for r in rows if r[0] not in exclude][:max_new_takers]
+        invitations = await auction.invite(run_id=run_id, contract_id=contract_id)
+        candidates = [inv for inv in invitations if inv.agent_id not in exclude]
+        if not candidates:
+            return []
 
-        for agent_id in candidates:
-            await db.execute(
-                text(
-                    """
-                    INSERT INTO bids
-                        (id, run_id, contract_id, thread_id, agent_id,
-                         justification, is_taker)
-                    VALUES (:id, :run_id, :contract_id, :thread_id, :agent_id,
-                            :justification, 1)
-                    """
-                ),
-                {
-                    "id": str(uuid.uuid4()),
-                    "run_id": run_id,
-                    "contract_id": contract_id,
-                    "thread_id": thread.id,
-                    "agent_id": agent_id,
-                    "justification": "auto-recruited (interim crude recruiter)",
-                },
-            )
-        await db.commit()
-        return candidates
+        candidates = await _rescore_against_thread(
+            db, thread, candidates, auction.invite_floor, embedder
+        )
+
+        bidders = 0
+        for inv in candidates:
+            wants_in = True if self_select is None else await self_select(inv)
+            if wants_in:
+                await auction.record_bid(
+                    run_id=run_id,
+                    agent_id=inv.agent_id,
+                    contract_id=contract_id,
+                    thread_id=thread.id,
+                    justification="mini-auction (contract amendment)",
+                    preliminary_score=inv.preliminary_score,
+                )
+                bidders += 1
+            else:
+                await auction.record_abstention(
+                    run_id=run_id,
+                    agent_id=inv.agent_id,
+                    contract_id=contract_id,
+                    thread_id=thread.id,
+                    reason="mini-auction abstain",
+                )
+
+        if bidders == 0:
+            return []  # no bidders → thread stays uncovered (caller may dissolve it)
+
+        selection = await auction.select_takers(
+            run_id=run_id, contract_id=contract_id, thread_id=thread.id
+        )
+        return [] if selection.aborted else selection.takers
 
     return recruit
+
+
+async def _rescore_against_thread(
+    db: AsyncConnection,
+    thread: ThreadSchema,
+    candidates: list[Invitation],
+    invite_floor: float,
+    embedder: EmbedderFn,
+) -> list[Invitation]:
+    """Re-score invited candidates against the new thread's embedding (PRD §6.5).
+
+    Returns candidates whose ``capability_embedding`` matches the thread at or above
+    ``invite_floor``, each with its ``preliminary_score`` replaced by the thread-
+    scoped cosine. Candidates with a missing embedding (theirs or the thread's) keep
+    the inclusive invite() decision unchanged.
+    """
+    thread_emb = thread.thread_embedding
+    if thread_emb is None:
+        vecs = await embedder([f"{thread.title}\n{thread.description}"])
+        thread_emb = vecs[0] if vecs else None
+        if thread_emb is not None:
+            await db.execute(
+                text("UPDATE threads SET thread_embedding = :e WHERE id = :id"),
+                {"e": json.dumps(thread_emb), "id": thread.id},
+            )
+            await db.commit()
+
+    if thread_emb is None:
+        return candidates  # no thread embedding → cannot discriminate; keep all
+
+    rows = (
+        (await db.execute(text("SELECT id, capability_embedding FROM agents")))
+        .mappings()
+        .fetchall()
+    )
+    emb_by_agent = {r["id"]: _parse_embedding(r["capability_embedding"]) for r in rows}
+
+    matched: list[Invitation] = []
+    for inv in candidates:
+        agent_emb = emb_by_agent.get(inv.agent_id)
+        if agent_emb is not None and len(agent_emb) == len(thread_emb):
+            score = cosine(agent_emb, thread_emb)
+            if score < invite_floor:
+                continue  # not a match for this thread
+            matched.append(replace(inv, preliminary_score=score))
+        else:
+            matched.append(inv)  # missing agent embedding → keep inclusive
+    return matched
 
 
 def make_llm_vote_collector(db: AsyncConnection) -> VoteCollectorFn:

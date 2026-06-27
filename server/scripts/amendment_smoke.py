@@ -1,13 +1,19 @@
 """Manual smoke test for the Contract Amendment engine.
 
 Drives a propose → vote → approve lifecycle against an in-memory DB and prints
-each step. No API keys needed — taker/MM votes are injected fakes.
+each step. No API keys needed — taker/MM votes and the thread embedding are
+injected fakes.
+
+The two idle agents are given capability embeddings: Delta aligns with the new
+thread's vector, Epsilon is orthogonal — so the thread-scoped mini-auction should
+recruit Delta and exclude Epsilon.
 
 Run from the repo root:
     server/.venv/bin/python -m server.scripts.amendment_smoke
 """
 
 import asyncio
+import json
 import uuid
 from typing import Literal
 
@@ -16,8 +22,13 @@ from sqlalchemy.ext.asyncio import create_async_engine
 from sqlalchemy.pool import StaticPool
 
 from server.db.tables import metadata
-from server.market_hive.amendment import AmendmentEngine, make_crude_recruiter
+from server.market_hive.amendment import AmendmentEngine, make_auction_recruiter
 from server.market_hive.schemas import AmendmentSchema
+
+# A made-up 3-dim "embedding space". The thread points along the first axis.
+_THREAD_VEC = [1.0, 0.0, 0.0]
+_DELTA_VEC = [1.0, 0.0, 0.0]  # on-topic   → cosine 1.0 (recruited)
+_EPSILON_VEC = [0.0, 1.0, 0.0]  # off-topic → cosine 0.0 (excluded)
 
 
 async def main() -> None:
@@ -58,14 +69,16 @@ async def main() -> None:
                 ),
                 {"id": aid, "n": name},
             )
-        # Two idle (non-taker) agents the crude recruiter can pull onto the new thread.
-        for name in ("Delta", "Epsilon"):
+        # Two idle (non-taker) agents the mini-auction can recruit onto the new
+        # thread. Delta's embedding aligns with the thread; Epsilon's is orthogonal.
+        for name, vec in (("Delta", _DELTA_VEC), ("Epsilon", _EPSILON_VEC)):
             await db.execute(
                 text(
-                    "INSERT INTO agents (id, name, description, system_prompt, provider, model) "
-                    "VALUES (:id, :n, 'd', 's', 'openai', 'gpt-4o')"
+                    "INSERT INTO agents "
+                    "(id, name, description, system_prompt, provider, model, capability_embedding) "
+                    "VALUES (:id, :n, 'd', 's', 'openai', 'gpt-4o', :emb)"
                 ),
-                {"id": str(uuid.uuid4()), "n": name},
+                {"id": str(uuid.uuid4()), "n": name, "emb": json.dumps(vec)},
             )
         await db.commit()
 
@@ -95,9 +108,15 @@ async def main() -> None:
             return "approve"
 
         print("\n2. End of round — vote opens (3 takers + Market Maker):")
-        # INTERIM crude recruiter — pulls idle non-taker agents onto an approved
-        # thread. Replaced by the real mini-auction in Phase 2 (see amendment.py).
-        recruiter = make_crude_recruiter(db, exclude_agent_ids=takers)
+
+        async def thread_embedder(texts: list[str]) -> list[list[float]]:
+            return [_THREAD_VEC for _ in texts]  # deterministic stand-in for embed_texts
+
+        # Real mini-auction recruiter — invites non-taker agents via AuctionEngine,
+        # re-scores each against the new thread's embedding (Delta in, Epsilon out),
+        # auto-bids the matches (LLM self-selection is the orchestrator's seam),
+        # and selects takers.
+        recruiter = make_auction_recruiter(db, exclude_agent_ids=takers, embedder=thread_embedder)
         async for step in eng.process_pending(
             run_id=run_id,
             current_round=2,
@@ -122,6 +141,19 @@ async def main() -> None:
         print("\n3. Threads now in the run:")
         for t in threads:
             print(f"   - {t['title']}  (expertise: {t['required_expertise']})")
+
+        recruited = (
+            await db.execute(
+                text(
+                    "SELECT a.name FROM bids b JOIN agents a ON a.id = b.agent_id "
+                    "WHERE b.run_id = :r AND b.is_taker = true AND b.thread_id IS NOT NULL "
+                    "ORDER BY a.name"
+                ),
+                {"r": run_id},
+            )
+        ).fetchall()
+        print("\n   Recruited onto the amendment thread (thread-scoped mini-auction):")
+        print(f"   - {[r[0] for r in recruited]}  (Epsilon excluded: off-topic embedding)")
 
         confirmed = (
             await db.execute(

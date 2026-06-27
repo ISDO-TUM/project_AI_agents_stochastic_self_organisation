@@ -7,6 +7,7 @@ mini-auction recruitment seams.
 
 from __future__ import annotations
 
+import json
 import uuid
 from collections.abc import AsyncGenerator
 from typing import Literal, NamedTuple
@@ -17,7 +18,8 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_en
 from sqlalchemy.pool import StaticPool
 
 from server.db.tables import metadata
-from server.market_hive.amendment import AmendmentEngine, make_crude_recruiter
+from server.market_hive.amendment import AmendmentEngine, make_auction_recruiter
+from server.market_hive.auction import Invitation
 from server.market_hive.schemas import AmendmentSchema, ThreadSchema
 from server.market_hive.tools import RequestExpertiseInput, RequestExpertiseTool
 
@@ -410,18 +412,33 @@ async def test_request_expertise_tool_respects_cap(db: AsyncConnection) -> None:
     assert '"status": "rejected_limit_reached"' in out
 
 
-# ── interim crude recruiter ──────────────────────────────────────────────────
+# ── mini-auction recruiter (real AuctionEngine) ──────────────────────────────
 
 
-async def test_crude_recruiter_assigns_non_taker_agents(db: AsyncConnection) -> None:
+async def _no_embed(texts: list[str]) -> list[list[float]] | None:
+    """Embedder fake that yields no vector → recruiter keeps the inclusive path."""
+    return None
+
+
+async def _set_capability_embedding(db: AsyncConnection, agent_id: str, vec: list[float]) -> None:
+    await db.execute(
+        text("UPDATE agents SET capability_embedding = :e WHERE id = :id"),
+        {"e": json.dumps(vec), "id": agent_id},
+    )
+    await db.commit()
+
+
+async def test_auction_recruiter_assigns_non_taker_agents(db: AsyncConnection) -> None:
     # 4 agents total: first 2 are current takers, last 2 are idle non-takers.
+    # No embeddings → invite() and the re-score both fall back to inclusive, so all
+    # idle agents are invited, auto-bid, and selected.
     s = await _seed(db, n_agents=4)
     takers = s.agent_ids[:2]
     idle = s.agent_ids[2:]
 
     amendment_id = await _make_pending(db, s)
     eng = AmendmentEngine(db)
-    recruiter = make_crude_recruiter(db, exclude_agent_ids=takers)
+    recruiter = make_auction_recruiter(db, exclude_agent_ids=takers, embedder=_no_embed)
 
     outcome = await eng.resolve(
         run_id=s.run_id,
@@ -435,21 +452,22 @@ async def test_crude_recruiter_assigns_non_taker_agents(db: AsyncConnection) -> 
     # Only the idle (non-taker) agents are recruited onto the new thread.
     assert set(outcome["new_takers"]) == set(idle)
 
+    # select_takers persists them as takers on the new thread.
     bid_takers = (
         await db.execute(
-            text("SELECT agent_id FROM bids WHERE thread_id = :t AND is_taker = 1"),
+            text("SELECT agent_id FROM bids WHERE thread_id = :t AND is_taker = true"),
             {"t": outcome["thread_id"]},
         )
     ).fetchall()
     assert {r[0] for r in bid_takers} == set(idle)
 
 
-async def test_crude_recruiter_respects_max_new_takers(db: AsyncConnection) -> None:
+async def test_auction_recruiter_respects_max_new_takers(db: AsyncConnection) -> None:
     s = await _seed(db, n_agents=5)
     amendment_id = await _make_pending(db, s)
     eng = AmendmentEngine(db)
-    # No exclusions, cap at 2 — should recruit exactly 2 of the 5 agents.
-    recruiter = make_crude_recruiter(db, max_new_takers=2)
+    # No exclusions, cap at 2 — invite all 5, but select only the top 2.
+    recruiter = make_auction_recruiter(db, max_new_takers=2, embedder=_no_embed)
 
     outcome = await eng.resolve(
         run_id=s.run_id,
@@ -461,3 +479,74 @@ async def test_crude_recruiter_respects_max_new_takers(db: AsyncConnection) -> N
     )
 
     assert len(outcome["new_takers"]) == 2
+
+
+async def test_auction_recruiter_honours_self_select_abstention(db: AsyncConnection) -> None:
+    # 3 idle non-takers; one of them abstains via the self_select seam.
+    s = await _seed(db, n_agents=4)
+    takers = s.agent_ids[:1]
+    idle = s.agent_ids[1:]
+    abstainer = idle[0]
+
+    amendment_id = await _make_pending(db, s)
+    eng = AmendmentEngine(db)
+
+    async def self_select(inv: Invitation) -> bool:
+        return bool(inv.agent_id != abstainer)
+
+    recruiter = make_auction_recruiter(
+        db, exclude_agent_ids=takers, self_select=self_select, embedder=_no_embed
+    )
+
+    outcome = await eng.resolve(
+        run_id=s.run_id,
+        amendment_id=amendment_id,
+        approve_votes=3,
+        total_voters=4,
+        current_round=2,
+        recruiter=recruiter,
+    )
+
+    # The abstainer bids nothing, so it is never selected; the others are.
+    assert abstainer not in outcome["new_takers"]
+    assert set(outcome["new_takers"]) == set(idle) - {abstainer}
+
+
+async def test_auction_recruiter_scores_against_thread_embedding(db: AsyncConnection) -> None:
+    # 1 taker (excluded) + 2 idle non-takers with embeddings: one aligned with the
+    # new thread's vector, one orthogonal. Only the aligned agent should be recruited.
+    s = await _seed(db, n_agents=3)
+    taker = s.agent_ids[0]
+    aligned = s.agent_ids[1]
+    orthogonal = s.agent_ids[2]
+    await _set_capability_embedding(db, aligned, [1.0, 0.0, 0.0])
+    await _set_capability_embedding(db, orthogonal, [0.0, 1.0, 0.0])
+
+    amendment_id = await _make_pending(db, s)
+    eng = AmendmentEngine(db)
+
+    async def thread_embedder(texts: list[str]) -> list[list[float]]:
+        return [[1.0, 0.0, 0.0] for _ in texts]  # thread vector aligns with `aligned`
+
+    recruiter = make_auction_recruiter(db, exclude_agent_ids=[taker], embedder=thread_embedder)
+
+    outcome = await eng.resolve(
+        run_id=s.run_id,
+        amendment_id=amendment_id,
+        approve_votes=3,
+        total_voters=4,
+        current_round=2,
+        recruiter=recruiter,
+    )
+
+    # cosine(aligned, thread)=1.0 ≥ floor; cosine(orthogonal, thread)=0.0 < floor.
+    assert outcome["new_takers"] == [aligned]
+
+    # The computed thread embedding is persisted back onto the new thread.
+    stored = (
+        await db.execute(
+            text("SELECT thread_embedding FROM threads WHERE id = :id"),
+            {"id": outcome["thread_id"]},
+        )
+    ).scalar_one()
+    assert stored is not None
