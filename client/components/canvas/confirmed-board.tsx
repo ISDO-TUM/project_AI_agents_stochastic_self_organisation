@@ -63,7 +63,7 @@ export function ConfirmedBoard({
         filter: "drop-shadow(0 8px 32px rgba(0,0,0,0.35))",
       }}
     >
-      {/* ── Header (fixed — no drag handle) ── */}
+      {/* ── Header ── */}
       <div
         style={{
           display: "flex",
@@ -75,6 +75,8 @@ export function ConfirmedBoard({
           borderBottom: "none",
           borderRadius: "12px 12px 0 0",
           backdropFilter: "blur(12px)",
+          position: "relative",
+          overflow: "hidden",
         }}
       >
         <CheckCircle2 size={13} strokeWidth={1.8} color={GOLD} />
@@ -155,8 +157,29 @@ export function ConfirmedBoard({
           >
             <Maximize2 size={11} strokeWidth={2} />
           </button>
+          {state.loading && (
+            <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 2, overflow: "hidden" }}>
+              <div
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  height: "100%",
+                  width: "45%",
+                  background: `linear-gradient(90deg, transparent, ${GOLD}cc, transparent)`,
+                  animation: "boardStripe 1.3s linear infinite",
+                }}
+              />
+            </div>
+          )}
         </div>
       </div>
+
+      <style>{`
+        @keyframes boardStripe {
+          0%   { left: -50%; }
+          100% { left: 120%; }
+        }
+      `}</style>
 
       {/* ── Body ── */}
       <div
@@ -206,14 +229,39 @@ export function ConfirmedBoard({
             {filteredConfirmed.length === 0 ? (
               <div
                 style={{
-                  textAlign: "center",
-                  padding: "36px 0",
-                  color: t.textDim,
-                  fontSize: 12,
-                  fontFamily: "'Space Grotesk', system-ui",
+                  display: "flex",
+                  flexDirection: "column",
+                  alignItems: "center",
+                  padding: "32px 0 20px",
+                  gap: 8,
                 }}
               >
-                {idleMessage}
+                <CheckCircle2
+                  size={32}
+                  strokeWidth={1.2}
+                  color={`rgba(181,134,13,${dark ? 0.2 : 0.15})`}
+                />
+                <span
+                  style={{
+                    fontSize: 12,
+                    fontWeight: 600,
+                    color: `rgba(181,134,13,${dark ? 0.5 : 0.45})`,
+                    fontFamily: "'Space Grotesk', system-ui",
+                  }}
+                >
+                  Waiting for consensus…
+                </span>
+                <span
+                  style={{
+                    fontSize: 10.5,
+                    color: `rgba(${dark ? "255,255,255" : "0,0,0"},0.2)`,
+                    textAlign: "center",
+                    maxWidth: 175,
+                    lineHeight: 1.5,
+                  }}
+                >
+                  Entries promoted here once cited enough times.
+                </span>
               </div>
             ) : (
               filteredConfirmed.map((entry) => (

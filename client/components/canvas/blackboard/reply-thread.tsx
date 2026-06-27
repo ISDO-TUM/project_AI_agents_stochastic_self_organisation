@@ -1,8 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { motion } from "framer-motion";
-import { CornerDownRight, MessageCircle, ChevronDown } from "lucide-react";
+import { motion, AnimatePresence } from "framer-motion";
+import { MessageCircle, ChevronDown } from "lucide-react";
 import { useTheme } from "@/lib/theme-context";
 import { getTheme } from "@/lib/theme";
 import { agentColor } from "@/lib/agent-color";
@@ -36,6 +36,7 @@ export function ThreadedEntry({
   const indent = Math.min(depth, MAX_DEPTH) * 16;
   const color = agentColor(entry.author_id);
   const promotedRound = promotedMap.get(entry.id);
+  const hasChildren = entry.children.length > 0;
 
   if (entry.entry_type === "vote") {
     return (
@@ -64,101 +65,116 @@ export function ThreadedEntry({
   }
 
   return (
-    <motion.div
-      layout
-      initial={{ opacity: 0, x: -6 }}
-      animate={{ opacity: entry.is_visible ? 1 : 0.35, x: 0 }}
-      transition={{ duration: 0.25 }}
-      style={{
-        marginLeft: indent,
-        marginBottom: 8,
-        paddingLeft: 10,
-        border: `1px solid ${t.border}`,
-        borderRadius: 8,
-        padding: "8px 10px",
-      }}
-    >
-      <div
+    <div style={{ marginLeft: indent, marginBottom: 5 }}>
+      {/* ── Card ── */}
+      <motion.div
+        layout
+        initial={{ opacity: 0, x: -4 }}
+        animate={{ opacity: entry.is_visible ? 1 : 0.3, x: 0 }}
+        transition={{ duration: 0.2 }}
         style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 6,
-          marginBottom: 3,
+          borderLeft: `3px solid ${color}66`,
+          borderRadius: "0 8px 8px 0",
+          background: dark ? "rgba(255,255,255,0.025)" : "rgba(0,0,0,0.02)",
+          padding: "6px 10px",
         }}
       >
-        <span
-          style={{
-            width: 16,
-            height: 16,
-            borderRadius: "50%",
-            background: `${color}26`,
-            color,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontSize: 9,
-            fontWeight: 800,
-            flexShrink: 0,
-          }}
-        >
-          {(entry.author_name || "?")[0]?.toUpperCase() ?? "?"}
-        </span>
-        <span style={{ fontSize: 11.5, fontWeight: 700, color: t.text }}>
-          {entry.author_name}
-        </span>
-        <span
-          style={{
-            fontSize: 9,
-            fontWeight: 700,
-            color: t.textDim,
-            textTransform: "uppercase",
-          }}
-        >
-          reply
-        </span>
-      </div>
-      {parentContent && (
+        {/* ── Header ── */}
         <div
-          style={{
-            display: "flex",
-            gap: 4,
-            fontSize: 10.5,
-            color: t.textDim,
-            marginBottom: 4,
-            fontStyle: "italic",
-          }}
+          style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}
         >
-          <CornerDownRight
-            size={11}
-            strokeWidth={2}
-            style={{ flexShrink: 0, marginTop: 1 }}
-          />
-          <span>{parentContent}</span>
+          <span
+            style={{
+              width: 14,
+              height: 14,
+              borderRadius: "50%",
+              background: `${color}33`,
+              color,
+              border: `1px solid ${color}55`,
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              fontSize: 8,
+              fontWeight: 800,
+              flexShrink: 0,
+            }}
+          >
+            {(entry.author_name || "?")[0]?.toUpperCase() ?? "?"}
+          </span>
+          <span style={{ fontSize: 11, fontWeight: 700, color: t.text }}>
+            {entry.author_name}
+          </span>
+          <span
+            style={{ fontSize: 9, color: `${color}99`, fontFamily: "'JetBrains Mono', monospace" }}
+          >
+            R{entry.round}
+          </span>
+          {hasChildren && (
+            <button
+              onClick={() => setExpanded((e) => !e)}
+              style={{
+                marginLeft: "auto",
+                display: "flex",
+                alignItems: "center",
+                gap: 3,
+                fontSize: 9.5,
+                color: t.textDim,
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: "1px 4px",
+                borderRadius: 4,
+              }}
+            >
+              <MessageCircle size={9} strokeWidth={2} />
+              <span>{entry.children.length}</span>
+              <ChevronDown
+                size={8}
+                style={{
+                  transform: expanded ? "rotate(180deg)" : "none",
+                  transition: "transform 0.15s",
+                }}
+              />
+            </button>
+          )}
         </div>
-      )}
-      {!entry.is_visible && (
+
+        {/* ── Parent quote ── */}
+        {parentContent && (
+          <div
+            style={{
+              borderLeft: `2px solid ${color}44`,
+              background: dark ? `${color}0e` : `${color}09`,
+              borderRadius: "0 4px 4px 0",
+              padding: "3px 8px",
+              marginBottom: 5,
+            }}
+          >
+            <span
+              style={{ fontSize: 10.5, color: t.textSub, lineHeight: 1.4, display: "block" }}
+            >
+              {parentContent}
+            </span>
+          </div>
+        )}
+
+        {/* ── Evaporated ── */}
+        {!entry.is_visible && (
+          <div
+            style={{ fontSize: 9.5, color: t.textDim, fontStyle: "italic", marginBottom: 3 }}
+          >
+            evaporated · R{entry.round}
+          </div>
+        )}
+
+        {/* ── Body ── */}
         <div
-          style={{
-            fontSize: 10,
-            color: t.textDim,
-            fontStyle: "italic",
-            marginBottom: 3,
-          }}
+          style={{ fontSize: 12, color: dark ? "#eceaf5" : "#18161f", lineHeight: 1.55, marginBottom: 5 }}
         >
-          evaporated (R{entry.round})
+          <MarkdownRenderer content={entry.content} />
         </div>
-      )}
-      <div
-        style={{
-          fontSize: 12.5,
-          color: t.textSub,
-          lineHeight: 1.55,
-          marginBottom: 6,
-        }}
-      >
-        <MarkdownRenderer content={entry.content} />
-      </div>
-      <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
+
+        {/* ── Footer ── */}
         <CitationRing
           count={entry.citation_count}
           threshold={threshold}
@@ -166,44 +182,43 @@ export function ThreadedEntry({
           citers={entry.citers}
           promotedRound={promotedRound}
         />
-        {entry.children.length > 0 && (
-          <button
-            onClick={() => setExpanded((e) => !e)}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 3,
-              fontSize: 10.5,
-              color: t.textDim,
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              padding: 0,
-            }}
+      </motion.div>
+
+      {/* ── Nested children with animated expand + connector line ── */}
+      <AnimatePresence>
+        {hasChildren && expanded && (
+          <motion.div
+            initial={{ opacity: 0, height: 0 }}
+            animate={{ opacity: 1, height: "auto" }}
+            exit={{ opacity: 0, height: 0 }}
+            transition={{ duration: 0.18, ease: "easeInOut" }}
+            style={{ overflow: "hidden", paddingLeft: 10, position: "relative", marginTop: 3 }}
           >
-            <MessageCircle size={10} strokeWidth={2} />
-            {entry.children.length}
-            <ChevronDown
-              size={9}
+            {/* Vertical connector */}
+            <div
               style={{
-                transform: expanded ? "rotate(180deg)" : "none",
-                transition: "transform 0.15s",
+                position: "absolute",
+                left: 5,
+                top: 2,
+                bottom: 6,
+                width: 1,
+                background: `${color}33`,
+                borderRadius: 1,
               }}
             />
-          </button>
+            {entry.children.map((child) => (
+              <ThreadedEntry
+                key={child.id}
+                entry={child}
+                parentContent={truncate(entry.content)}
+                depth={depth + 1}
+                threshold={threshold}
+                promotedMap={promotedMap}
+              />
+            ))}
+          </motion.div>
         )}
-      </div>
-      {expanded &&
-        entry.children.map((child) => (
-          <ThreadedEntry
-            key={child.id}
-            entry={child}
-            parentContent={truncate(entry.content)}
-            depth={depth + 1}
-            threshold={threshold}
-            promotedMap={promotedMap}
-          />
-        ))}
-    </motion.div>
+      </AnimatePresence>
+    </div>
   );
 }

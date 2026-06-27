@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useRef, useEffect } from "react";
 import { createPortal } from "react-dom";
 import { BlackboardState } from "@/lib/types";
 import { useTheme } from "@/lib/theme-context";
@@ -26,6 +26,83 @@ interface DraftBoardProps {
   onThreadSelect?: (id: string | null) => void;
 }
 
+function SkeletonCard({ dark, delay = 0 }: { dark: boolean; delay?: number }) {
+  const bg = dark
+    ? "linear-gradient(90deg,rgba(255,255,255,0.04) 25%,rgba(255,255,255,0.08) 50%,rgba(255,255,255,0.04) 75%)"
+    : "linear-gradient(90deg,rgba(0,0,0,0.04) 25%,rgba(0,0,0,0.08) 50%,rgba(0,0,0,0.04) 75%)";
+  const sh = (w: number | string, h = 9, r = 4): React.CSSProperties => ({
+    width: w,
+    height: h,
+    borderRadius: r,
+    background: bg,
+    backgroundSize: "400px 100%",
+    animation: `boardShimmer 1.4s ease-in-out ${delay}s infinite`,
+    flexShrink: 0,
+  });
+  return (
+    <div
+      style={{
+        background: dark ? "rgba(139,26,47,0.05)" : "rgba(139,26,47,0.03)",
+        border: "1px solid rgba(139,26,47,0.1)",
+        borderRadius: 10,
+        padding: "11px 14px",
+        marginBottom: 10,
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
+        <div style={sh(22, 22, 11)} />
+        <div style={sh(72)} />
+        <div style={{ ...sh(38, 8), marginLeft: "auto" }} />
+      </div>
+      <div style={sh("100%", 9)} />
+      <div style={{ ...sh("85%", 9), marginTop: 5 }} />
+      <div style={{ ...sh("60%", 9), marginTop: 5, marginBottom: 12 }} />
+      <div style={sh(48, 8)} />
+    </div>
+  );
+}
+
+function EmptyState({ runId, dark }: { runId: string | null; dark: boolean }) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        alignItems: "center",
+        padding: "32px 0 20px",
+        gap: 8,
+      }}
+    >
+      <Layers
+        size={32}
+        strokeWidth={1.2}
+        color={`rgba(196,55,79,${dark ? 0.18 : 0.12})`}
+      />
+      <span
+        style={{
+          fontSize: 12,
+          fontWeight: 600,
+          color: dark ? "rgba(196,55,79,0.5)" : "rgba(139,26,47,0.45)",
+          fontFamily: "'Space Grotesk', system-ui",
+        }}
+      >
+        {runId ? "Waiting for proposals…" : "No active run"}
+      </span>
+      <span
+        style={{
+          fontSize: 10.5,
+          color: `rgba(${dark ? "255,255,255" : "0,0,0"},0.2)`,
+          textAlign: "center",
+          maxWidth: 170,
+          lineHeight: 1.5,
+        }}
+      >
+        {runId ? "Agents are deliberating" : "Type a prompt below to start"}
+      </span>
+    </div>
+  );
+}
+
 export function DraftBoard({
   state,
   runId,
@@ -40,6 +117,9 @@ export function DraftBoard({
   const t = getTheme(dark);
 
   const [expanded, setExpanded] = useState(false);
+  const bodyRef = useRef<HTMLDivElement>(null);
+  const [newCount, setNewCount] = useState(0);
+  const prevLengthRef = useRef(0);
 
   const filteredDraft = activeThreadId
     ? state.draft.filter((e) => e.thread_id === activeThreadId)
@@ -56,9 +136,40 @@ export function DraftBoard({
       .filter((c) => c.source_draft_id)
       .map((c) => [c.source_draft_id as string, c.round_confirmed] as const),
   );
-  const idleMessage = runId
-    ? "No entries yet."
-    : "No active run — type a prompt.";
+
+  // Track new entries arriving while the user is scrolled up
+  useEffect(() => {
+    const diff = visibleDraft.length - prevLengthRef.current;
+    prevLengthRef.current = visibleDraft.length;
+    if (diff <= 0) return;
+    const el = bodyRef.current;
+    if (!el) return;
+    const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
+    if (!atBottom) setNewCount((n) => n + diff);
+  }, [visibleDraft.length]);
+
+  const handleScrollToNew = () => {
+    bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: "smooth" });
+    setNewCount(0);
+  };
+  const handleBodyScroll = () => {
+    const el = bodyRef.current;
+    if (!el) return;
+    if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40) setNewCount(0);
+  };
+
+  // Group visible entries by round for the timeline dividers
+  const roundGroups = visibleDraft.reduce<
+    { round: number; entries: typeof visibleDraft }[]
+  >((acc, entry) => {
+    const last = acc[acc.length - 1];
+    if (last && last.round === entry.round) {
+      last.entries.push(entry);
+    } else {
+      acc.push({ round: entry.round, entries: [entry] });
+    }
+    return acc;
+  }, []);
 
   const posStyle: React.CSSProperties = pos
     ? { left: pos.x, top: pos.y }
@@ -78,7 +189,22 @@ export function DraftBoard({
         filter: "drop-shadow(0 8px 32px rgba(0,0,0,0.35))",
       }}
     >
-      {/* ── Header (fixed — no drag handle) ── */}
+      <style>{`
+        @keyframes boardShimmer {
+          0%   { background-position: -400px 0; }
+          100% { background-position:  400px 0; }
+        }
+        @keyframes boardStripe {
+          0%   { left: -50%; }
+          100% { left: 120%; }
+        }
+        @keyframes badgePulse {
+          0%, 100% { opacity: 1; transform: scale(1); }
+          50%       { opacity: 0.82; transform: scale(0.97); }
+        }
+      `}</style>
+
+      {/* ── Header ── */}
       <div
         style={{
           display: "flex",
@@ -90,6 +216,8 @@ export function DraftBoard({
           borderBottom: "none",
           borderRadius: "12px 12px 0 0",
           backdropFilter: "blur(12px)",
+          position: "relative",
+          overflow: "hidden",
         }}
       >
         <Layers size={13} strokeWidth={1.8} color={BURG_LT} />
@@ -186,11 +314,37 @@ export function DraftBoard({
           >
             <Maximize2 size={11} strokeWidth={2} />
           </button>
+          {/* Animated loading stripe along the header bottom edge */}
+          {state.loading && (
+            <div
+              style={{
+                position: "absolute",
+                bottom: 0,
+                left: 0,
+                right: 0,
+                height: 2,
+                overflow: "hidden",
+              }}
+            >
+              <div
+                style={{
+                  position: "absolute",
+                  top: 0,
+                  height: "100%",
+                  width: "45%",
+                  background: `linear-gradient(90deg, transparent, ${BURG_LT}cc, transparent)`,
+                  animation: "boardStripe 1.3s linear infinite",
+                }}
+              />
+            </div>
+          )}
         </div>
       </div>
 
       {/* ── Body ── */}
       <div
+        ref={bodyRef}
+        onScroll={handleBodyScroll}
         style={{
           background: dark ? "rgba(6,5,12,0.88)" : "rgba(248,246,255,0.94)",
           border: `1px solid rgba(139,26,47,0.22)`,
@@ -202,72 +356,136 @@ export function DraftBoard({
           overflowY: "auto",
           overflowX: "hidden",
           userSelect: "text",
+          position: "relative",
         }}
         className="pscroll"
       >
-        {state.loading && (
-          <div
-            style={{
-              textAlign: "center",
-              padding: "36px 0",
-              color: t.textDim,
-              fontSize: 12,
-              fontFamily: "'Space Grotesk', system-ui",
-            }}
-          >
-            Loading draft board…
-          </div>
+        {/* Skeleton: run active but no entries yet */}
+        {state.loading && visibleDraft.length === 0 && (
+          <>
+            <SkeletonCard dark={dark} delay={0} />
+            <SkeletonCard dark={dark} delay={0.15} />
+            <SkeletonCard dark={dark} delay={0.3} />
+          </>
         )}
 
-        {!state.loading && state.error && (
-          <div
-            style={{
-              textAlign: "center",
-              padding: "16px 0",
-              color: "#c0392b",
-              fontSize: 12,
-            }}
-          >
+        {/* Error */}
+        {state.error && (
+          <div style={{ textAlign: "center", padding: "16px 0", color: "#c0392b", fontSize: 12 }}>
             {state.error}
           </div>
         )}
 
-        {!state.loading && !state.error && (
+        {/* Styled empty state */}
+        {!state.loading && !state.error && visibleDraft.length === 0 && (
+          <EmptyState runId={runId} dark={dark} />
+        )}
+
+        {/* Round-grouped content */}
+        {visibleDraft.length > 0 && !state.error && (
           <>
-            {visibleDraft.length === 0 ? (
-              <div
-                style={{
-                  textAlign: "center",
-                  padding: "36px 0",
-                  color: t.textDim,
-                  fontSize: 12,
-                  fontFamily: "'Space Grotesk', system-ui",
-                }}
-              >
-                {idleMessage}
+            {roundGroups.map((group, gi) => (
+              <div key={group.round}>
+                {gi > 0 && (
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 8,
+                      margin: "10px 0 8px",
+                    }}
+                  >
+                    <div
+                      style={{
+                        flex: 1,
+                        height: 1,
+                        background: dark
+                          ? "rgba(139,26,47,0.18)"
+                          : "rgba(139,26,47,0.1)",
+                      }}
+                    />
+                    <span
+                      style={{
+                        fontSize: 9.5,
+                        color: dark
+                          ? "rgba(196,55,79,0.5)"
+                          : "rgba(139,26,47,0.4)",
+                        fontFamily: "'JetBrains Mono', monospace",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
+                      Round {group.round}
+                    </span>
+                    <div
+                      style={{
+                        flex: 1,
+                        height: 1,
+                        background: dark
+                          ? "rgba(139,26,47,0.18)"
+                          : "rgba(139,26,47,0.1)",
+                      }}
+                    />
+                  </div>
+                )}
+                {group.entries.map((entry) =>
+                  entry.entry_type === "proposal" ? (
+                    <ProposalCard
+                      key={entry.id}
+                      entry={entry}
+                      threshold={threshold}
+                      promotedMap={promotedMap}
+                    />
+                  ) : (
+                    <ThreadedEntry
+                      key={entry.id}
+                      entry={entry}
+                      parentContent=""
+                      depth={0}
+                      threshold={threshold}
+                      promotedMap={promotedMap}
+                    />
+                  ),
+                )}
               </div>
-            ) : (
-              visibleDraft.map((entry) =>
-                entry.entry_type === "proposal" ? (
-                  <ProposalCard
-                    key={entry.id}
-                    entry={entry}
-                    threshold={threshold}
-                    promotedMap={promotedMap}
-                  />
-                ) : (
-                  <ThreadedEntry
-                    key={entry.id}
-                    entry={entry}
-                    parentContent=""
-                    depth={0}
-                    threshold={threshold}
-                    promotedMap={promotedMap}
-                  />
-                ),
-              )
-            )}
+            ))}
           </>
+        )}
+
+        {/* "New entries" scroll nudge */}
+        {newCount > 0 && (
+          <div
+            style={{
+              position: "sticky",
+              bottom: 8,
+              display: "flex",
+              justifyContent: "center",
+              pointerEvents: "none",
+            }}
+          >
+            <button
+              onClick={handleScrollToNew}
+              style={{
+                pointerEvents: "all",
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                padding: "5px 14px",
+                borderRadius: 100,
+                border: "1px solid rgba(196,55,79,0.4)",
+                background: dark ? "rgba(139,26,47,0.88)" : "rgba(139,26,47,0.92)",
+                color: "#fff",
+                fontSize: 11,
+                fontWeight: 700,
+                fontFamily: "'Space Grotesk', system-ui",
+                cursor: "pointer",
+                backdropFilter: "blur(8px)",
+                boxShadow: "0 2px 12px rgba(139,26,47,0.4)",
+                animation: "badgePulse 2s ease-in-out infinite",
+              }}
+            >
+              ↓ {newCount} new
+            </button>
+          </div>
         )}
       </div>
 
@@ -386,66 +604,43 @@ export function DraftBoard({
                 style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}
                 className="pscroll"
               >
-                {state.loading && (
-                  <div
-                    style={{
-                      textAlign: "center",
-                      padding: "60px 0",
-                      color: t.textDim,
-                      fontSize: 13,
-                      fontFamily: "'Space Grotesk', system-ui",
-                    }}
-                  >
-                    Loading draft board…
-                  </div>
+                {state.loading && visibleDraft.length === 0 && (
+                  <>
+                    <SkeletonCard dark={dark} delay={0} />
+                    <SkeletonCard dark={dark} delay={0.15} />
+                    <SkeletonCard dark={dark} delay={0.3} />
+                  </>
                 )}
-                {!state.loading && state.error && (
-                  <div
-                    style={{
-                      textAlign: "center",
-                      padding: "24px 0",
-                      color: "#c0392b",
-                      fontSize: 13,
-                    }}
-                  >
+                {state.error && (
+                  <div style={{ textAlign: "center", padding: "24px 0", color: "#c0392b", fontSize: 13 }}>
                     {state.error}
                   </div>
                 )}
-                {!state.loading && !state.error && (
+                {!state.loading && !state.error && visibleDraft.length === 0 && (
+                  <EmptyState runId={runId} dark={dark} />
+                )}
+                {visibleDraft.length > 0 && !state.error && (
                   <>
-                    {visibleDraft.length === 0 ? (
-                      <div
-                        style={{
-                          textAlign: "center",
-                          padding: "60px 0",
-                          color: t.textDim,
-                          fontSize: 13,
-                          fontFamily: "'Space Grotesk', system-ui",
-                        }}
-                      >
-                        {idleMessage}
+                    {roundGroups.map((group, gi) => (
+                      <div key={group.round}>
+                        {gi > 0 && (
+                          <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "10px 0 8px" }}>
+                            <div style={{ flex: 1, height: 1, background: dark ? "rgba(139,26,47,0.18)" : "rgba(139,26,47,0.1)" }} />
+                            <span style={{ fontSize: 9.5, color: dark ? "rgba(196,55,79,0.5)" : "rgba(139,26,47,0.4)", fontFamily: "'JetBrains Mono', monospace" }}>
+                              Round {group.round}
+                            </span>
+                            <div style={{ flex: 1, height: 1, background: dark ? "rgba(139,26,47,0.18)" : "rgba(139,26,47,0.1)" }} />
+                          </div>
+                        )}
+                        {group.entries.map((entry) =>
+                          entry.entry_type === "proposal" ? (
+                            <ProposalCard key={entry.id} entry={entry} threshold={threshold} promotedMap={promotedMap} />
+                          ) : (
+                            <ThreadedEntry key={entry.id} entry={entry} parentContent="" depth={0} threshold={threshold} promotedMap={promotedMap} />
+                          ),
+                        )}
                       </div>
-                    ) : (
-                      visibleDraft.map((entry) =>
-                        entry.entry_type === "proposal" ? (
-                          <ProposalCard
-                            key={entry.id}
-                            entry={entry}
-                            threshold={threshold}
-                            promotedMap={promotedMap}
-                          />
-                        ) : (
-                          <ThreadedEntry
-                            key={entry.id}
-                            entry={entry}
-                            parentContent=""
-                            depth={0}
-                            threshold={threshold}
-                            promotedMap={promotedMap}
-                          />
-                        ),
-                      )
-                    )}
+                    ))}
                   </>
                 )}
               </div>
