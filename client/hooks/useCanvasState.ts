@@ -33,6 +33,11 @@ function inferSourceType(name: string): SourceType {
   return /\.(csv|tsv)$/i.test(name) ? "dataset" : "text";
 }
 
+/** Backend tool name(s) a source of this type should grant its attached agents. */
+function capabilityToolsFor(type: SourceType): string[] {
+  return type === "dataset" ? ["table_query", "table_mutate"] : ["files"];
+}
+
 function reducer(state: CanvasState, action: CanvasAction): CanvasState {
   const { agents, sources, edges } = state;
   switch (action.type) {
@@ -232,23 +237,171 @@ export function useCanvasState() {
     dispatch({ type: "DELETE_AGENT", id });
   }, []);
 
+  const deleteEdge = useCallback(
+    (id: string) => {
+      const e = edges.find((edge) => edge.id === id);
+      if (e) {
+        const agFrom = agents.find((a) => a.id === e.from);
+        const agTo = agents.find((a) => a.id === e.to);
+        const srcFrom = sources.find((s) => s.id === e.from);
+        const srcTo = sources.find((s) => s.id === e.to);
+
+        // agent→agent: remove from both agents' connection lists
+        if (agFrom && agTo) {
+          const updatedFrom = {
+            ...agFrom,
+            connections: agFrom.connections.filter((c) => c !== agTo.id),
+          };
+          dispatch({ type: "UPDATE_AGENT", agent: updatedFrom });
+          updateAgent(updatedFrom).catch(() => {});
+          const updatedTo = {
+            ...agTo,
+            connections: agTo.connections.filter((c) => c !== agFrom.id),
+          };
+          dispatch({ type: "UPDATE_AGENT", agent: updatedTo });
+          updateAgent(updatedTo).catch(() => {});
+        }
+
+        // agent↔file (either direction): detach and revoke the matching
+        // capability only if no other source of that same type remains
+        // attached to this agent.
+        const agent = agFrom ?? agTo;
+        const src = srcTo ?? srcFrom;
+        if (agent && src) {
+          detachFile(agent.id, src.id).catch(() => {});
+          const remainingSameTypeEdges = edges.filter(
+            (edge) =>
+              edge.id !== id &&
+              (edge.from === agent.id || edge.to === agent.id) &&
+              sources.some(
+                (s) =>
+                  (s.id === edge.from || s.id === edge.to) &&
+                  s.type === src.type,
+              ),
+          );
+          if (remainingSameTypeEdges.length === 0) {
+            const revoked = capabilityToolsFor(src.type);
+            const updatedTools = agent.tools.filter(
+              (t) => !revoked.includes(t),
+            );
+            if (updatedTools.length !== agent.tools.length) {
+              dispatch({
+                type: "UPDATE_AGENT",
+                agent: { ...agent, tools: updatedTools },
+              });
+              patchAgentTools(agent.id, updatedTools).catch(() => {});
+            }
+          }
+        }
+      }
+      dispatch({ type: "DELETE_EDGE", id });
+    },
+    [edges, agents, sources],
+  );
+
   const saveSource = useCallback(
     async (data: Source) => {
-      if (sources.find((s) => s.id === data.id)) {
+      const previous = sources.find((s) => s.id === data.id);
+      if (previous) {
         dispatch({ type: "UPDATE_SOURCE", source: data });
         updateFileContent(data.id, data.name, data.content).catch(() => {});
       } else {
         dispatch({ type: "ADD_SOURCE", source: data });
         createFile(data.name, data.content, data.id).catch(() => {});
       }
+
+      const previousAgentIds = previous?.agentIds ?? [];
+      const newAgentIds = data.agentIds ?? [];
+      // A type change (text ↔ dataset) on a source that stays attached to
+      // the same agent must still re-derive that agent's capability — so it
+      // is treated as a full detach-then-reattach for every agent in either
+      // list, not just the ones whose membership actually changed.
+      const typeChanged =
+        previous !== undefined && previous.type !== data.type;
+
+      const toDetach = typeChanged
+        ? previousAgentIds
+        : previousAgentIds.filter((id) => !newAgentIds.includes(id));
+      const toAttach = typeChanged
+        ? newAgentIds
+        : newAgentIds.filter((id) => !previousAgentIds.includes(id));
+
+      // Tracks each touched agent's tools as this function's own detach/attach
+      // passes apply, so an agent present in both lists sees the detach's
+      // revocation before the attach's grant is computed — dispatch() does
+      // not apply synchronously, so re-reading `agents` between the two
+      // passes would still see the pre-call snapshot.
+      const toolsOverride = new Map<string, string[]>();
+      const toolsFor = (agentId: string): string[] =>
+        toolsOverride.get(agentId) ??
+        agents.find((a) => a.id === agentId)?.tools ??
+        [];
+
+      for (const agentId of toDetach) {
+        const edge = edges.find(
+          (e) =>
+            (e.from === agentId && e.to === data.id) ||
+            (e.to === agentId && e.from === data.id),
+        );
+        if (!edge) continue;
+        dispatch({ type: "DELETE_EDGE", id: edge.id });
+        detachFile(agentId, data.id).catch(() => {});
+
+        const remainingSameTypeEdges = edges.filter(
+          (e) =>
+            e.id !== edge.id &&
+            (e.from === agentId || e.to === agentId) &&
+            sources.some(
+              (s) =>
+                (s.id === e.from || s.id === e.to) &&
+                s.type === (previous as Source).type,
+            ),
+        );
+        if (remainingSameTypeEdges.length === 0) {
+          const revoked = capabilityToolsFor((previous as Source).type);
+          toolsOverride.set(
+            agentId,
+            toolsFor(agentId).filter((t) => !revoked.includes(t)),
+          );
+        }
+      }
+
+      for (const agentId of toAttach) {
+        if (!agents.some((a) => a.id === agentId)) continue;
+        dispatch({
+          type: "ADD_EDGE",
+          edge: { id: uuid(), from: agentId, to: data.id },
+        });
+        attachFile(agentId, data.id).catch(() => {});
+
+        const current = toolsFor(agentId);
+        const needed = capabilityToolsFor(data.type);
+        const missing = needed.filter((t) => !current.includes(t));
+        if (missing.length > 0) {
+          toolsOverride.set(agentId, [...current, ...missing]);
+        }
+      }
+
+      for (const [agentId, tools] of toolsOverride) {
+        const agent = agents.find((a) => a.id === agentId);
+        if (!agent) continue;
+        dispatch({ type: "UPDATE_AGENT", agent: { ...agent, tools } });
+        patchAgentTools(agentId, tools).catch(() => {});
+      }
     },
-    [sources],
+    [sources, edges, agents],
   );
 
-  const deleteSource = useCallback((id: string) => {
-    dispatch({ type: "DELETE_SOURCE", id });
-    deleteFileApi(id).catch(() => {});
-  }, []);
+  const deleteSource = useCallback(
+    (id: string) => {
+      edges
+        .filter((e) => e.from === id || e.to === id)
+        .forEach((e) => deleteEdge(e.id));
+      dispatch({ type: "DELETE_SOURCE", id });
+      deleteFileApi(id).catch(() => {});
+    },
+    [edges, deleteEdge],
+  );
 
   const connectNodes = useCallback(
     (from: string, to: string) => {
@@ -284,11 +437,13 @@ export function useCanvasState() {
         }
       }
 
-      // agent↔file (either direction): attach in DB and auto-enable the files tool
+      // agent↔file (either direction): attach in DB and grant the matching capability
       if (agent && src) {
         attachFile(agent.id, src.id).catch(() => {});
-        if (!agent.tools.includes("files")) {
-          const updatedTools = [...agent.tools, "files"];
+        const needed = capabilityToolsFor(src.type);
+        const missing = needed.filter((t) => !agent.tools.includes(t));
+        if (missing.length > 0) {
+          const updatedTools = [...agent.tools, ...missing];
           dispatch({
             type: "UPDATE_AGENT",
             agent: { ...agent, tools: updatedTools },
@@ -298,57 +453,6 @@ export function useCanvasState() {
       }
     },
     [agents, sources],
-  );
-
-  const deleteEdge = useCallback(
-    (id: string) => {
-      const e = edges.find((edge) => edge.id === id);
-      if (e) {
-        const agFrom = agents.find((a) => a.id === e.from);
-        const agTo = agents.find((a) => a.id === e.to);
-        const srcFrom = sources.find((s) => s.id === e.from);
-        const srcTo = sources.find((s) => s.id === e.to);
-
-        // agent→agent: remove from both agents' connection lists
-        if (agFrom && agTo) {
-          const updatedFrom = {
-            ...agFrom,
-            connections: agFrom.connections.filter((c) => c !== agTo.id),
-          };
-          dispatch({ type: "UPDATE_AGENT", agent: updatedFrom });
-          updateAgent(updatedFrom).catch(() => {});
-          const updatedTo = {
-            ...agTo,
-            connections: agTo.connections.filter((c) => c !== agFrom.id),
-          };
-          dispatch({ type: "UPDATE_AGENT", agent: updatedTo });
-          updateAgent(updatedTo).catch(() => {});
-        }
-
-        // agent↔file (either direction): detach and remove tool if no files remain
-        const agent = agFrom ?? agTo;
-        const src = srcTo ?? srcFrom;
-        if (agent && src) {
-          detachFile(agent.id, src.id).catch(() => {});
-          const remainingFileEdges = edges.filter(
-            (edge) =>
-              edge.id !== id &&
-              (edge.from === agent.id || edge.to === agent.id) &&
-              sources.some((s) => s.id === edge.from || s.id === edge.to),
-          );
-          if (remainingFileEdges.length === 0) {
-            const updatedTools = agent.tools.filter((t) => t !== "files");
-            dispatch({
-              type: "UPDATE_AGENT",
-              agent: { ...agent, tools: updatedTools },
-            });
-            patchAgentTools(agent.id, updatedTools).catch(() => {});
-          }
-        }
-      }
-      dispatch({ type: "DELETE_EDGE", id });
-    },
-    [edges, agents, sources],
   );
 
   return {
