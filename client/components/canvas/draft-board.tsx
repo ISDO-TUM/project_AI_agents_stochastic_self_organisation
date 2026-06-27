@@ -24,6 +24,10 @@ interface DraftBoardProps {
   activeThreadId?: string | null;
   /** When provided, renders the thread filter in the board header. */
   onThreadSelect?: (id: string | null) => void;
+  /** Canvas agents list — used to assign stable, unique accent colours. */
+  agents?: { id: string }[];
+  /** True once the dummy / real run has fully completed. */
+  done?: boolean;
 }
 
 function SkeletonCard({ dark, delay = 0 }: { dark: boolean; delay?: number }) {
@@ -112,6 +116,8 @@ export function DraftBoard({
   zoom = 1,
   activeThreadId = null,
   onThreadSelect,
+  agents = [],
+  done = false,
 }: DraftBoardProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -136,6 +142,13 @@ export function DraftBoard({
       .filter((c) => c.source_draft_id)
       .map((c) => [c.source_draft_id as string, c.round_confirmed] as const),
   );
+
+  // Convergence meter: threads that have at least one confirmed entry
+  const threadsWithConfirmed = new Set(state.confirmed.map((c) => c.thread_id));
+  const convergingCount = state.threads.filter((th) =>
+    threadsWithConfirmed.has(th.id),
+  ).length;
+  const totalThreads = state.threads.length;
 
   // Track new entries arriving while the user is scrolled up
   useEffect(() => {
@@ -262,12 +275,29 @@ export function DraftBoard({
             alignItems: "center",
           }}
         >
+          {/* Convergence meter — only shown when there are threads */}
+          {totalThreads > 0 && runId && (
+            <span
+              title={`${convergingCount} of ${totalThreads} thread${totalThreads === 1 ? "" : "s"} converging`}
+              style={{
+                fontSize: 9.5,
+                fontWeight: 700,
+                fontFamily: "'JetBrains Mono', monospace",
+                color: convergingCount === totalThreads ? "#3dba8c" : "#b5860d",
+                whiteSpace: "nowrap",
+                cursor: "default",
+              }}
+            >
+              {convergingCount}/{totalThreads} ↑
+            </span>
+          )}
           {/* Thread filter — only shown when there are threads to choose from */}
           {state.threads.length > 0 && onThreadSelect && (
             <ThreadFilterDropdown
               threads={state.threads}
               activeThreadId={activeThreadId}
               onSelect={onThreadSelect}
+              draftEntries={state.draft}
             />
           )}
           {runId && (
@@ -277,24 +307,31 @@ export function DraftBoard({
                   width: 6,
                   height: 6,
                   borderRadius: "50%",
-                  background: state.loading
-                    ? "#b5860d"
-                    : hasContent
-                      ? "#3dba8c"
-                      : t.textDim,
-                  boxShadow:
-                    hasContent && !state.loading ? "0 0 5px #3dba8c88" : "none",
+                  background: done
+                    ? "#3dba8c"
+                    : state.loading
+                      ? "#b5860d"
+                      : hasContent
+                        ? "#3dba8c"
+                        : t.textDim,
+                  boxShadow: done
+                    ? "0 0 6px #3dba8c"
+                    : hasContent && !state.loading
+                      ? "0 0 5px #3dba8c88"
+                      : "none",
+                  transition: "background 0.5s, box-shadow 0.5s",
                 }}
               />
               <span
                 style={{
                   fontSize: 9.5,
-                  color: t.textDim,
+                  color: done ? "#3dba8c" : t.textDim,
                   fontFamily: "'JetBrains Mono', monospace",
                   whiteSpace: "nowrap",
+                  fontWeight: done ? 700 : 400,
                 }}
               >
-                {state.loading ? "syncing…" : `${visibleDraft.length}D`}
+                {done ? "done" : state.loading ? "syncing…" : `${visibleDraft.length}D`}
               </span>
             </>
           )}
@@ -434,6 +471,7 @@ export function DraftBoard({
                       entry={entry}
                       threshold={threshold}
                       promotedMap={promotedMap}
+                      agents={agents}
                     />
                   ) : (
                     <ThreadedEntry
@@ -443,6 +481,7 @@ export function DraftBoard({
                       depth={0}
                       threshold={threshold}
                       promotedMap={promotedMap}
+                      agents={agents}
                     />
                   ),
                 )}
@@ -634,9 +673,9 @@ export function DraftBoard({
                         )}
                         {group.entries.map((entry) =>
                           entry.entry_type === "proposal" ? (
-                            <ProposalCard key={entry.id} entry={entry} threshold={threshold} promotedMap={promotedMap} />
+                            <ProposalCard key={entry.id} entry={entry} threshold={threshold} promotedMap={promotedMap} agents={agents} />
                           ) : (
-                            <ThreadedEntry key={entry.id} entry={entry} parentContent="" depth={0} threshold={threshold} promotedMap={promotedMap} />
+                            <ThreadedEntry key={entry.id} entry={entry} parentContent="" depth={0} threshold={threshold} promotedMap={promotedMap} agents={agents} />
                           ),
                         )}
                       </div>

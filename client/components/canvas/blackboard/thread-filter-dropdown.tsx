@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { ChevronDown, ListFilter } from "lucide-react";
-import { ThreadInfo } from "@/lib/types";
+import { DraftEntry, ThreadInfo } from "@/lib/types";
 import { useTheme } from "@/lib/theme-context";
 import { getTheme, BURG } from "@/lib/theme";
 import {
@@ -15,18 +15,31 @@ interface ThreadFilterDropdownProps {
   threads: ThreadInfo[];
   activeThreadId: string | null;
   onSelect: (id: string | null) => void;
+  /** When supplied, a mini activity bar is rendered next to each thread row. */
+  draftEntries?: DraftEntry[];
 }
 
 export function ThreadFilterDropdown({
   threads,
   activeThreadId,
   onSelect,
+  draftEntries = [],
 }: ThreadFilterDropdownProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
   const [open, setOpen] = useState(false);
   const activeTitle =
     threads.find((th) => th.id === activeThreadId)?.title ?? "All threads";
+
+  // Per-thread visible entry counts for the activity heatmap
+  const countByThread = draftEntries.reduce<Record<string, number>>(
+    (acc, e) => {
+      if (e.is_visible) acc[e.thread_id] = (acc[e.thread_id] ?? 0) + 1;
+      return acc;
+    },
+    {},
+  );
+  const maxCount = Math.max(1, ...Object.values(countByThread));
 
   return (
     <Popover open={open} onOpenChange={setOpen}>
@@ -93,35 +106,67 @@ export function ThreadFilterDropdown({
             >
               All threads
             </button>
-            {threads.map((th) => (
-              <button
-                key={th.id}
-                onClick={() => {
-                  onSelect(th.id);
-                  setOpen(false);
-                }}
-                style={{
-                  display: "block",
-                  width: "100%",
-                  textAlign: "left",
-                  padding: "7px 10px",
-                  borderRadius: 8,
-                  border: "none",
-                  background:
-                    activeThreadId === th.id
+            {threads.map((th) => {
+              const count = countByThread[th.id] ?? 0;
+              const pct = count / maxCount;
+              const isActive = activeThreadId === th.id;
+              return (
+                <button
+                  key={th.id}
+                  onClick={() => {
+                    onSelect(th.id);
+                    setOpen(false);
+                  }}
+                  style={{
+                    display: "block",
+                    width: "100%",
+                    textAlign: "left",
+                    padding: "7px 10px",
+                    borderRadius: 8,
+                    border: "none",
+                    background: isActive
                       ? dark
                         ? "rgba(139,26,47,0.18)"
                         : "rgba(139,26,47,0.08)"
                       : "none",
-                  color: activeThreadId === th.id ? BURG : t.text,
-                  fontSize: 12,
-                  fontWeight: activeThreadId === th.id ? 700 : 500,
-                  cursor: "pointer",
-                }}
-              >
-                {th.title}
-              </button>
-            ))}
+                    color: isActive ? BURG : t.text,
+                    fontSize: 12,
+                    fontWeight: isActive ? 700 : 500,
+                    cursor: "pointer",
+                  }}
+                >
+                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                    <span style={{ flex: 1 }}>{th.title}</span>
+                    {draftEntries.length > 0 && (
+                      <span style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
+                        <span style={{ fontSize: 10, color: t.textDim }}>{count}</span>
+                        <span
+                          style={{
+                            width: 40,
+                            height: 4,
+                            borderRadius: 2,
+                            background: dark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)",
+                            overflow: "hidden",
+                            display: "inline-block",
+                          }}
+                        >
+                          <span
+                            style={{
+                              display: "block",
+                              height: "100%",
+                              width: `${Math.round(pct * 100)}%`,
+                              background: isActive ? BURG : "#3dba8c",
+                              borderRadius: 2,
+                              transition: "width 0.4s ease",
+                            }}
+                          />
+                        </span>
+                      </span>
+                    )}
+                  </div>
+                </button>
+              );
+            })}
           </div>
         </PopoverContent>
       </Popover>

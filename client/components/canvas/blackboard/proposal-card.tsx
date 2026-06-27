@@ -16,17 +16,19 @@ interface ProposalCardProps {
   entry: DraftEntry;
   threshold: number;
   promotedMap: Map<string, number>;
+  agents?: { id: string }[];
 }
 
 export function ProposalCard({
   entry,
   threshold,
   promotedMap,
+  agents = [],
 }: ProposalCardProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
   const [expanded, setExpanded] = useState(true);
-  const color = agentColor(entry.author_id);
+  const color = agentColor(entry.author_id, agents);
   const initial = (entry.author_name || "?")[0]?.toUpperCase() ?? "?";
   const promotedRound = promotedMap.get(entry.id);
 
@@ -173,6 +175,7 @@ export function ProposalCard({
             depth={1}
             threshold={threshold}
             promotedMap={promotedMap}
+            agents={agents}
           />
         ))}
     </motion.div>

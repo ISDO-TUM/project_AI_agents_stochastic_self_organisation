@@ -7,12 +7,18 @@ import { Agent } from "@/lib/types";
 import { agentColor } from "@/lib/agent-color";
 import { useTheme } from "@/lib/theme-context";
 import { getTheme, BURG_LT, BURG_GLOW } from "@/lib/theme";
+import { AgentTrustPanel } from "./blackboard/agent-trust-panel";
 
 interface AgentDockProps {
   agents: Agent[];
   onSelectAgent: (id: string) => void;
   bottom: number;
   onHeightChange?: (h: number) => void;
+  /** Trust vectors keyed by agent ID — shown in a popover on each chip. */
+  trustVectors?: Record<
+    string,
+    { domain: string; trust_score: number; runs_participated: number }[]
+  >;
 }
 
 /** Fixed horizontal strip above the prompt bar — replaces individually
@@ -24,6 +30,7 @@ export function AgentDock({
   onSelectAgent,
   bottom,
   onHeightChange,
+  trustVectors = {},
 }: AgentDockProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -121,12 +128,32 @@ export function AgentDock({
 
         <AnimatePresence initial={false}>
           {agents.map((agent) => {
-            const color = agentColor(agent.id);
+            const color = agentColor(agent.id, agents);
             const initial = (agent.name || "A")[0]?.toUpperCase() ?? "A";
+            const tv = trustVectors[agent.id] ?? [];
+            const chipContent = (
+              <span
+                style={{
+                  width: 40,
+                  height: 40,
+                  borderRadius: "50%",
+                  background: `${color}26`,
+                  color,
+                  border: `1.5px solid ${color}55`,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 15,
+                  fontWeight: 800,
+                  cursor: "pointer",
+                }}
+              >
+                {initial}
+              </span>
+            );
             return (
-              <motion.button
+              <motion.div
                 key={agent.id}
-                onClick={() => onSelectAgent(agent.id)}
                 initial={{ opacity: 0, scale: 0.7 }}
                 animate={{ opacity: 1, scale: 1 }}
                 transition={{ duration: 0.25, ease: "easeOut" }}
@@ -136,29 +163,24 @@ export function AgentDock({
                   alignItems: "center",
                   gap: 4,
                   flexShrink: 0,
-                  background: "none",
-                  border: "none",
-                  cursor: "pointer",
-                  padding: 0,
                 }}
               >
-                <span
-                  style={{
-                    width: 40,
-                    height: 40,
-                    borderRadius: "50%",
-                    background: `${color}26`,
-                    color,
-                    border: `1.5px solid ${color}55`,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontSize: 15,
-                    fontWeight: 800,
-                  }}
-                >
-                  {initial}
-                </span>
+                {tv.length > 0 ? (
+                  <AgentTrustPanel
+                    agentId={agent.id}
+                    agentName={agent.name}
+                    role={null}
+                    citationCount={0}
+                    trigger={chipContent}
+                  />
+                ) : (
+                  <button
+                    onClick={() => onSelectAgent(agent.id)}
+                    style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
+                  >
+                    {chipContent}
+                  </button>
+                )}
                 <span
                   style={{
                     fontSize: 10,
@@ -172,7 +194,7 @@ export function AgentDock({
                 >
                   {agent.name}
                 </span>
-              </motion.button>
+              </motion.div>
             );
           })}
         </AnimatePresence>

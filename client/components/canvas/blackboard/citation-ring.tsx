@@ -7,10 +7,10 @@ import { useTheme } from "@/lib/theme-context";
 import { getTheme } from "@/lib/theme";
 import { Citer } from "@/lib/types";
 import {
-  HoverCard,
-  HoverCardContent,
-  HoverCardTrigger,
-} from "@/components/ui/hover-card";
+  Popover,
+  PopoverContent,
+  PopoverTrigger,
+} from "@/components/ui/popover";
 
 interface CitationRingProps {
   count: number;
@@ -143,9 +143,11 @@ export function CitationRing({
   if (citers.length === 0) return body;
 
   return (
-    <HoverCard openDelay={120}>
-      <HoverCardTrigger asChild>{body}</HoverCardTrigger>
-      <HoverCardContent>
+    <Popover>
+      <PopoverTrigger asChild>
+        <span style={{ cursor: "pointer" }}>{body}</span>
+      </PopoverTrigger>
+      <PopoverContent>
         <div
           style={{
             fontSize: 10,
@@ -156,7 +158,7 @@ export function CitationRing({
             letterSpacing: "0.05em",
           }}
         >
-          Cited by
+          Citation graph
         </div>
         {citers.map((c, i) => (
           <div
@@ -165,21 +167,24 @@ export function CitationRing({
               display: "flex",
               justifyContent: "space-between",
               fontSize: 12,
-              padding: "2px 0",
+              padding: "3px 0",
               color: t.text,
+              borderBottom: i < citers.length - 1 ? `1px solid ${t.border}` : "none",
             }}
           >
             <span>{c.agentName}</span>
-            <span style={{ color: t.textDim }}>R{c.round}</span>
+            <span style={{ color: t.textDim, fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>
+              Round {c.round}
+            </span>
           </div>
         ))}
         {pct < 1 && (
-          <div style={{ marginTop: 6, fontSize: 10.5, color: t.textDim }}>
+          <div style={{ marginTop: 8, fontSize: 10.5, color: t.textDim, fontStyle: "italic" }}>
             {threshold - count} more citation
-            {threshold - count === 1 ? "" : "s"} → Confirmed
+            {threshold - count === 1 ? "" : "s"} needed → Confirmed
           </div>
         )}
-      </HoverCardContent>
-    </HoverCard>
+      </PopoverContent>
+    </Popover>
   );
 }

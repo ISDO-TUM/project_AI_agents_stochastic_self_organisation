@@ -19,6 +19,8 @@ interface ConfirmedBoardProps {
   zoom?: number;
   /** Filters to one thread; null/undefined shows all threads. */
   activeThreadId?: string | null;
+  /** True once the run has fully completed — turns the header dot solid green. */
+  done?: boolean;
 }
 
 export function ConfirmedBoard({
@@ -28,6 +30,7 @@ export function ConfirmedBoard({
   height,
   zoom = 1,
   activeThreadId = null,
+  done = false,
 }: ConfirmedBoardProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -126,20 +129,25 @@ export function ConfirmedBoard({
               width: 6,
               height: 6,
               borderRadius: "50%",
-              background: state.loading ? GOLD : hasContent ? GOLD : t.textDim,
-              boxShadow:
-                hasContent && !state.loading ? `0 0 5px ${GOLD}88` : "none",
+              background: done ? "#3dba8c" : state.loading ? GOLD : hasContent ? GOLD : t.textDim,
+              boxShadow: done
+                ? "0 0 6px #3dba8c"
+                : hasContent && !state.loading
+                  ? `0 0 5px ${GOLD}88`
+                  : "none",
+              transition: "background 0.5s, box-shadow 0.5s",
             }}
           />
           <span
             style={{
               fontSize: 9.5,
-              color: t.textDim,
+              color: done ? "#3dba8c" : t.textDim,
               fontFamily: "'JetBrains Mono', monospace",
               whiteSpace: "nowrap",
+              fontWeight: done ? 700 : 400,
             }}
           >
-            {state.loading ? "syncing…" : `${filteredConfirmed.length}C`}
+            {done ? "done" : state.loading ? "syncing…" : `${filteredConfirmed.length}C`}
           </span>
           <button
             onClick={() => setExpanded(true)}
@@ -152,7 +160,7 @@ export function ConfirmedBoard({
               display: "flex",
               alignItems: "center",
               opacity: 0.6,
-              color: GOLD,
+              color: done ? "#3dba8c" : GOLD,
             }}
           >
             <Maximize2 size={11} strokeWidth={2} />
@@ -208,6 +216,43 @@ export function ConfirmedBoard({
             }}
           >
             Loading confirmed board…
+          </div>
+        )}
+
+        {/* Run complete banner */}
+        {done && !state.loading && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 7,
+              padding: "6px 12px",
+              borderRadius: 8,
+              background: dark ? "rgba(61,186,140,0.12)" : "rgba(61,186,140,0.08)",
+              border: "1px solid rgba(61,186,140,0.35)",
+              marginBottom: 10,
+            }}
+          >
+            <CheckCircle2 size={13} strokeWidth={2} color="#3dba8c" />
+            <span
+              style={{
+                fontSize: 11,
+                fontWeight: 700,
+                color: "#3dba8c",
+                fontFamily: "'Space Grotesk', system-ui, sans-serif",
+              }}
+            >
+              Run complete
+            </span>
+            <span
+              style={{
+                fontSize: 10,
+                color: dark ? "rgba(61,186,140,0.6)" : "rgba(30,120,90,0.6)",
+                marginLeft: 2,
+              }}
+            >
+              · {state.confirmed.length} entr{state.confirmed.length === 1 ? "y" : "ies"} confirmed
+            </span>
           </div>
         )}
 

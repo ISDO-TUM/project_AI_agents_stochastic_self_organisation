@@ -16,7 +16,6 @@ import { useTheme } from "@/lib/theme-context";
 import { AgentNode } from "./agent-node";
 import { SourceNode } from "./source-node";
 import { EdgeLayer } from "./edge-layer";
-import { Minimap } from "./minimap";
 import { DraftBoard } from "./draft-board";
 import { ConfirmedBoard } from "./confirmed-board";
 import { AgentDock } from "./agent-dock";
@@ -69,6 +68,13 @@ interface CanvasProps {
     steps: SimStep[];
     onClose: () => void;
   } | null;
+  /** True once the dummy / real swarm run has fully completed. */
+  swarmDone?: boolean;
+  /** Trust vectors keyed by agent ID — shown on hover in the AgentDock chips. */
+  swarmTrustVectors?: Record<
+    string,
+    { domain: string; trust_score: number; runs_participated: number }[]
+  >;
 }
 
 interface ConnectingState {
@@ -113,6 +119,8 @@ export function Canvas({
   onSelectAgentChip,
   phonebook = null,
   biddingBoard = null,
+  swarmDone = false,
+  swarmTrustVectors = {},
 }: CanvasProps) {
   const { dark } = useTheme();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -529,6 +537,7 @@ export function Canvas({
             onSelectAgent={onSelectAgentChip ?? (() => {})}
             bottom={DOCK_BOTTOM}
             onHeightChange={setDockHeight}
+            trustVectors={swarmTrustVectors}
           />
           {draftPos && (
             <DraftBoard
@@ -548,6 +557,8 @@ export function Canvas({
               zoom={zoom}
               activeThreadId={activeThreadId}
               onThreadSelect={setActiveThreadId}
+              agents={agents}
+              done={swarmDone}
             />
           )}
           <ConfirmedBoard
@@ -565,6 +576,7 @@ export function Canvas({
             height={boardHeight}
             zoom={zoom}
             activeThreadId={activeThreadId}
+            done={swarmDone}
           />
         </>
       )}
@@ -627,8 +639,7 @@ export function Canvas({
         </div>
       )}
 
-      {/* Zoom indicator */}
-      {zoom !== 1 && (
+      {/* Zoom indicator */}      {zoom !== 1 && (
         <div
           style={{
             position: "absolute",
@@ -651,8 +662,7 @@ export function Canvas({
         </div>
       )}
 
-      {/* Minimap */}
-      {hasNodes && <Minimap agents={agents} sources={sources} edges={edges} />}
+      {/* Minimap removed */}
     </div>
   );
 }

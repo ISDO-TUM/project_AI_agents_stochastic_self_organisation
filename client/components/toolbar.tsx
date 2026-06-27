@@ -292,8 +292,9 @@ function validateCanvas(parsed: unknown): string | null {
       return `agents[${i}] "${a.name}": 'tools' must be an array.`;
     if (!Array.isArray(a.connections))
       return `agents[${i}] "${a.name}": 'connections' must be an array.`;
-    const pos = a.position as Record<string, unknown>;
-    if (!pos || typeof pos.x !== "number" || typeof pos.y !== "number")
+    // position is optional — missing/invalid positions are auto-assigned on load
+    const pos = a.position as Record<string, unknown> | undefined;
+    if (pos !== undefined && (typeof pos.x !== "number" || typeof pos.y !== "number"))
       return `agents[${i}] "${a.name}": 'position' must have numeric x and y.`;
   }
 

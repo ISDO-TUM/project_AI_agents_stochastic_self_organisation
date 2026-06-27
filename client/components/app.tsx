@@ -340,6 +340,25 @@ export function App({ onModeSelected }: AppProps = {}) {
           return;
         }
         data = parsed as CanvasState;
+        // Auto-assign positions for any agents/sources that omit them
+        // (e.g. configs generated for Market Hive mode without layout info).
+        data = {
+          ...data,
+          agents: data.agents.map((a, i) => ({
+            ...a,
+            position: a.position ?? {
+              x: 160 + (i % 4) * 220,
+              y: 180 + Math.floor(i / 4) * 180,
+            },
+          })),
+          sources: data.sources.map((s, i) => ({
+            ...s,
+            position: s.position ?? {
+              x: 180 + (i % 4) * 220,
+              y: 480 + Math.floor(i / 4) * 180,
+            },
+          })),
+        };
       } catch {
         showImportError("Invalid JSON file");
         return;
@@ -614,6 +633,8 @@ export function App({ onModeSelected }: AppProps = {}) {
           topbarHeight={topbarHeight}
           promptBarHeight={promptBarHeight}
           onSelectAgentChip={openPanel}
+          swarmDone={appMode === "swarm" && dummy.state.done}
+          swarmTrustVectors={dummy.state.trustVectors}
           phonebook={
             topology === "dynamic"
               ? {

@@ -14,6 +14,7 @@ const EMPTY_STATE: BlackboardState = {
 
 export interface DummySwarmState {
   active: boolean;
+  done: boolean;
   blackboard: BlackboardState;
   agents: DummyAgentInfo[];
   trustVectors: DummyRunFixture["trustVectors"];
@@ -25,6 +26,7 @@ type Action =
   | { type: "CITE"; entryId: string; citerName: string; round: number }
   | { type: "PROMOTE"; confirmed: ConfirmedEntry }
   | { type: "DELETE"; entryId: string }
+  | { type: "DONE" }
   | { type: "RESET" };
 
 function insertEntry(tree: DraftEntry[], entry: DraftEntry): DraftEntry[] {
@@ -72,6 +74,7 @@ function updateEntry(
 
 const INITIAL: DummySwarmState = {
   active: false,
+  done: false,
   blackboard: EMPTY_STATE,
   agents: [],
   trustVectors: {},
@@ -82,6 +85,7 @@ function reducer(state: DummySwarmState, action: Action): DummySwarmState {
     case "BEGIN":
       return {
         active: true,
+        done: false,
         agents: action.fixture.agents,
         trustVectors: action.fixture.trustVectors,
         blackboard: {
@@ -134,6 +138,8 @@ function reducer(state: DummySwarmState, action: Action): DummySwarmState {
           })),
         },
       };
+    case "DONE":
+      return { ...state, done: true };
     case "RESET":
       return INITIAL;
     default:
@@ -158,6 +164,10 @@ export function useDummySwarm(): {
     (fixture: DummyRunFixture) => {
       clearTimers();
       dispatch({ type: "BEGIN", fixture });
+      const lastDelay =
+        fixture.events.length > 0
+          ? Math.max(...fixture.events.map((e) => e.delay))
+          : 0;
       fixture.events.forEach((event: DummyEvent) => {
         const timer = setTimeout(() => {
           if (event.kind === "post")
@@ -176,6 +186,12 @@ export function useDummySwarm(): {
         }, event.delay);
         timers.current.push(timer);
       });
+      // Signal completion 800 ms after the last event fires
+      const doneTimer = setTimeout(
+        () => dispatch({ type: "DONE" }),
+        lastDelay + 800,
+      );
+      timers.current.push(doneTimer);
     },
     [clearTimers],
   );

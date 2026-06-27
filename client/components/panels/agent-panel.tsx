@@ -159,6 +159,7 @@ export function AgentPanel({
 
   const [connsOpen, setConnsOpen] = useState(false);
   const [toolsOpen, setToolsOpen] = useState(true);
+  const [detachConfirm, setDetachConfirm] = useState<string | null>(null);
 
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -353,34 +354,74 @@ export function AgentPanel({
                     <LIcon name="Pencil" size={12} color="currentColor" />
                   </button>
                 )}
-                {/* Detach button */}
+                {/* Detach button — shows an inline confirm before removing */}
                 {onDetachSource && (
-                  <button
-                    onClick={() => onDetachSource(src.id)}
-                    title="Detach from agent"
-                    style={{
-                      background: "none",
-                      border: "none",
-                      cursor: "pointer",
-                      padding: "3px 5px",
-                      borderRadius: 6,
-                      display: "flex",
-                      alignItems: "center",
-                      color: t.textDim,
-                      flexShrink: 0,
-                      transition: "color 0.15s, background 0.15s",
-                    }}
-                    onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLButtonElement).style.color = "#e05555";
-                      (e.currentTarget as HTMLButtonElement).style.background = "rgba(224,85,85,0.1)";
-                    }}
-                    onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLButtonElement).style.color = t.textDim;
-                      (e.currentTarget as HTMLButtonElement).style.background = "none";
-                    }}
-                  >
-                    <LIcon name="Unlink" size={12} color="currentColor" />
-                  </button>
+                  detachConfirm === src.id ? (
+                    <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+                      <span style={{ fontSize: 9.5, color: "#e05555", fontWeight: 600, whiteSpace: "nowrap" }}>
+                        Detach?
+                      </span>
+                      <button
+                        onClick={() => { onDetachSource(src.id); setDetachConfirm(null); }}
+                        title="Confirm detach"
+                        style={{
+                          background: "rgba(224,85,85,0.15)",
+                          border: "1px solid rgba(224,85,85,0.35)",
+                          borderRadius: 5,
+                          cursor: "pointer",
+                          padding: "2px 6px",
+                          fontSize: 10,
+                          fontWeight: 700,
+                          color: "#e05555",
+                        }}
+                      >
+                        Yes
+                      </button>
+                      <button
+                        onClick={() => setDetachConfirm(null)}
+                        title="Cancel"
+                        style={{
+                          background: t.hover,
+                          border: `1px solid ${t.border}`,
+                          borderRadius: 5,
+                          cursor: "pointer",
+                          padding: "2px 6px",
+                          fontSize: 10,
+                          fontWeight: 600,
+                          color: t.textSub,
+                        }}
+                      >
+                        No
+                      </button>
+                    </div>
+                  ) : (
+                    <button
+                      onClick={() => setDetachConfirm(src.id)}
+                      title="Detach from agent"
+                      style={{
+                        background: "none",
+                        border: "none",
+                        cursor: "pointer",
+                        padding: "3px 5px",
+                        borderRadius: 6,
+                        display: "flex",
+                        alignItems: "center",
+                        color: t.textDim,
+                        flexShrink: 0,
+                        transition: "color 0.15s, background 0.15s",
+                      }}
+                      onMouseEnter={(e) => {
+                        (e.currentTarget as HTMLButtonElement).style.color = "#e05555";
+                        (e.currentTarget as HTMLButtonElement).style.background = "rgba(224,85,85,0.1)";
+                      }}
+                      onMouseLeave={(e) => {
+                        (e.currentTarget as HTMLButtonElement).style.color = t.textDim;
+                        (e.currentTarget as HTMLButtonElement).style.background = "none";
+                      }}
+                    >
+                      <LIcon name="Unlink" size={12} color="currentColor" />
+                    </button>
+                  )
                 )}
               </div>
             ))}
