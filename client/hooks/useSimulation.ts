@@ -112,6 +112,49 @@ function historyMessageToStep(
   };
 }
 
+// ── Swarm (ECSAS) SSE stream ────────────────────────────────────────────────
+// One Server-Sent Event from `POST /api/simulation/run` (engine="swarm").
+type SwarmStreamStep = {
+  type: string;
+  msg: string;
+  node_id?: string | null;
+  thread_id?: string | null;
+  entry_id?: string | null;
+  data?: Record<string, unknown> | null;
+};
+
+// Step types after which the persisted blackboard has changed → re-fetch it.
+const BOARD_CHANGING_STEPS = new Set<string>([
+  "bb-post",
+  "bb-cite",
+  "bb-vote",
+  "bb-promote",
+  "bb-delete",
+  "amendment-approved",
+  "convergence",
+]);
+
+function swarmStepToSimStep(step: SwarmStreamStep): SimStep {
+  // Swarm types aren't part of SimStepType, so they ride along in messageType
+  // (the log themes off it); the base type stays "system".
+  return {
+    id: uuid(),
+    ts: new Date().toLocaleTimeString("en-GB", { hour12: false }),
+    label: "Swarm",
+    msg: step.msg,
+    type: "system",
+    messageType: step.type,
+    ...(step.node_id ? { nodeId: step.node_id } : {}),
+  };
+}
+
+export interface SwarmRunHandlers {
+  /** Called once, with the run_id from the first system step (drives polling). */
+  onRunId?: (runId: string) => void;
+  /** Called after each step that mutated the persisted blackboard. */
+  onBoardChange?: () => void;
+}
+
 export function useSimulation(agents: Agent[], edges: Edge[]) {
   const [steps, setSteps] = useState<SimStep[]>([]);
   const [cur, setCur] = useState(0);
@@ -322,6 +365,95 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     [agents, edges],
   );
 
+  // Swarm (ECSAS) run: stream SimulationStep events over SSE and feed the
+  // activity log. The blackboard board itself is re-fetched via onBoardChange
+  // (GET /blackboard is authoritative); SSE drives the log + run lifecycle.
+  const runSwarm = useCallback(
+    async (prompt: string, handlers?: SwarmRunHandlers) => {
+      if (agents.length === 0) return;
+
+      setSim(true);
+      setRunning(true);
+      setLogExp(false);
+      setSteps([]);
+      setCur(0);
+      setOutcome(null);
+      setBatchProgress(null);
+      const runSeq = runSeqRef.current + 1;
+      runSeqRef.current = runSeq;
+
+      try {
+        const res = await fetch("/api/simulation/run", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ engine: "swarm", prompt }),
+        });
+        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+        const reader = res.body.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let runIdAnnounced = false;
+
+        while (runSeqRef.current === runSeq) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+
+          // SSE frames are separated by a blank line; each frame is "data: <json>".
+          const frames = buffer.split("\n\n");
+          buffer = frames.pop() ?? "";
+          for (const frame of frames) {
+            const dataLine = frame
+              .split("\n")
+              .find((l) => l.startsWith("data: "));
+            if (!dataLine) continue;
+            let step: SwarmStreamStep;
+            try {
+              step = JSON.parse(dataLine.slice(6)) as SwarmStreamStep;
+            } catch {
+              continue;
+            }
+
+            if (
+              !runIdAnnounced &&
+              step.data &&
+              typeof step.data.run_id === "string"
+            ) {
+              runIdAnnounced = true;
+              handlers?.onRunId?.(step.data.run_id);
+            }
+
+            setSteps((prev) => {
+              const next = [...prev, swarmStepToSimStep(step)];
+              setCur(Math.max(0, next.length - 1));
+              return next;
+            });
+
+            if (BOARD_CHANGING_STEPS.has(step.type))
+              handlers?.onBoardChange?.();
+          }
+        }
+      } catch (err) {
+        setSteps((prev) => [
+          ...prev,
+          {
+            id: uuid(),
+            ts: new Date().toLocaleTimeString("en-GB", { hour12: false }),
+            label: "SYSTEM",
+            msg: `Swarm run failed: ${
+              err instanceof Error ? err.message : String(err)
+            }`,
+            type: "system",
+          },
+        ]);
+      } finally {
+        if (runSeqRef.current === runSeq) setRunning(false);
+      }
+    },
+    [agents],
+  );
+
   const stopSim = useCallback(() => {
     runSeqRef.current += 1;
     if (particleTimerRef.current) clearTimeout(particleTimerRef.current);
@@ -358,6 +490,7 @@ export function useSimulation(agents: Agent[], edges: Edge[]) {
     activeEdgeReversed,
     particles,
     runSim,
+    runSwarm,
     stopSim,
     resetContext,
     outcome,

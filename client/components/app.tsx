@@ -93,6 +93,7 @@ export function App({ onModeSelected }: AppProps = {}) {
     activeEdgeReversed,
     particles,
     runSim,
+    runSwarm,
     stopSim,
     dynamicEdges,
     resetContext,
@@ -142,30 +143,31 @@ export function App({ onModeSelected }: AppProps = {}) {
   const [topbarHeight, setTopbarHeight] = useState<number | null>(null);
   const [promptBarHeight, setPromptBarHeight] = useState<number | null>(null);
   const dummy = useDummySwarm();
+  // Bumped on each SSE step that changed the board, so useBlackboard re-fetches
+  // the authoritative GET /blackboard view as the swarm run progresses.
+  const [boardTick, setBoardTick] = useState(0);
   const { state: realBlackboardState } = useBlackboard(
     appMode === "swarm" && !dummy.state.active ? runId : null,
+    boardTick,
   );
   const blackboardState = dummy.state.active
     ? dummy.state.blackboard
     : realBlackboardState;
 
-  const handleSeed = useCallback(async (promptOverride?: string) => {
-    try {
-      const res = await fetch("/api/simulation/seed", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: promptOverride?.trim() || "Test blackboard seeding",
-          agent_ids: [],
-        }),
+  // Kick off a real swarm run: stream its events into the activity log and let
+  // the blackboard panel re-fetch as the board changes. runId comes from the
+  // first system step so the panel knows which run to read.
+  const startSwarmRun = useCallback(
+    (prompt: string) => {
+      setRunId(null);
+      setBoardTick(0);
+      void runSwarm(prompt, {
+        onRunId: (id) => setRunId(id),
+        onBoardChange: () => setBoardTick((t) => t + 1),
       });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { run_id: string; thread_id: string };
-      setRunId(data.run_id);
-    } catch (err) {
-      console.error("Seed failed:", err);
-    }
-  }, []);
+    },
+    [runSwarm],
+  );
 
   // Run configuration — edited in the Settings panel, read at run start.
   const [consensusMode, setConsensusMode] =
@@ -235,9 +237,9 @@ export function App({ onModeSelected }: AppProps = {}) {
         return;
       }
       dummy.reset();
-      handleSeed(pendingSwarmPrompt);
+      startSwarmRun(pendingSwarmPrompt);
     },
-    [pendingSwarmPrompt, agents, dummy, handleSeed],
+    [pendingSwarmPrompt, agents, dummy, startSwarmRun],
   );
   const importErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,

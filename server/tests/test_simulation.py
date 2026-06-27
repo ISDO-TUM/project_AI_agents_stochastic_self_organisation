@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -12,6 +14,7 @@ from sqlalchemy import insert
 import server.topology as sim
 from server.db import create_connection, create_round, create_trial, get_engine, resolve_experiment
 from server.db.tables import agents
+from server.market_hive.schemas import SimulationStep
 from server.topology import (
     Reputation,
     TopologyController,
@@ -1528,3 +1531,41 @@ async def test_run_route_accepts_topology_and_rejects_no_agents(client: AsyncCli
     )
     assert resp.status_code == 422
     assert "No agents" in resp.json()["detail"]
+
+
+# ── M5: swarm engine streams SSE ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_swarm_run_with_no_agents_returns_422(client: AsyncClient) -> None:
+    resp = await client.post("/api/simulation/run", json={"engine": "swarm", "prompt": "hi"})
+    assert resp.status_code == 422
+    assert "No agents" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_swarm_run_streams_simulation_steps_as_sse(client: AsyncClient) -> None:
+    # Avoid the embedding network call during agent creation.
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    async def fake_run_swarm(config: Any, db: Any, **kwargs: Any) -> AsyncIterator[SimulationStep]:
+        yield SimulationStep(type="system", msg="Contract created: analysis, single")
+        yield SimulationStep(
+            type="convergence", msg="Run complete.", data={"termination_reason": "max_rounds"}
+        )
+
+    with patch("server.routes.simulation.run_swarm", new=fake_run_swarm):
+        resp = await client.post(
+            "/api/simulation/run", json={"engine": "swarm", "prompt": "Analyze this contract"}
+        )
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    body = resp.text
+    assert "data: " in body
+    assert "Contract created" in body
+    assert "convergence" in body

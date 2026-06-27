@@ -9,15 +9,19 @@ blackboard/audit/status views live in ``server.market_hive``.
 from __future__ import annotations
 
 import logging
+from collections.abc import AsyncGenerator
 from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi.responses import StreamingResponse
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.db import create_trial, get_db, get_engine, resolve_experiment, update_trial_status
 from server.db.tables import agents
 from server.llm.credentials import RequestCredentials, current_credentials, use_credentials
+from server.market_hive.orchestrator import run_swarm
+from server.market_hive.schemas import SwarmRunConfig
 from server.schemas import SimulationRunRequest, SimulationStartResponse
 from server.topology import ConsensusMode, run_topology
 
@@ -73,6 +77,26 @@ async def _run_batch_background(
         _creds_var.reset(token)
 
 
+async def _swarm_event_stream(
+    config: SwarmRunConfig, credentials: RequestCredentials
+) -> AsyncGenerator[str, None]:
+    """Stream a swarm run's ``SimulationStep`` events as SSE ``data:`` frames.
+
+    Runs on a fresh connection (the request-scoped one closes once streaming
+    starts) and republishes the request credentials onto the ContextVar so LLM
+    and embedding calls inside ``run_swarm`` can resolve API keys.
+    """
+    from server.llm.credentials import _current as _creds_var
+
+    token = _creds_var.set(credentials)
+    try:
+        async with get_engine().connect() as db:
+            async for step in run_swarm(config, db):
+                yield f"data: {step.model_dump_json()}\n\n"
+    finally:
+        _creds_var.reset(token)
+
+
 @router.post(
     "/run",
     response_model=SimulationStartResponse,
@@ -88,12 +112,20 @@ async def run_simulation(
     body: SimulationRunRequest,
     db: DBDep,
     background_tasks: BackgroundTasks,
-) -> SimulationStartResponse:
+) -> SimulationStartResponse | StreamingResponse:
     result = await db.execute(select(func.count()).select_from(agents))
     if result.scalar_one() == 0:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
             detail="No agents found. Add at least one agent before running a simulation.",
+        )
+
+    # ── Swarm (ECSAS) engine: stream the run's events as SSE ──────────────────
+    if body.engine == "swarm":
+        config = SwarmRunConfig(prompt=body.prompt)
+        return StreamingResponse(
+            _swarm_event_stream(config, current_credentials()),
+            media_type="text/event-stream",
         )
 
     experiment_id = await resolve_experiment(

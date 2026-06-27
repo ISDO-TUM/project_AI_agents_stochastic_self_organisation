@@ -28,6 +28,7 @@ from server.guardrails.input_sanitizer import PromptInjectionError
 from server.guardrails.output_validator import InjectionEchoError, LLMRefusalError
 from server.llm import call_agent
 from server.llm.credentials import MissingCredentialsError, use_credentials
+from server.market_hive.agent_embeddings import compute_capability_embedding
 from server.schemas import (
     AgentCreate,
     AgentResponse,
@@ -91,6 +92,10 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
         if tool_name not in tools:
             tools.append(tool_name)
 
+    capability_embedding = await compute_capability_embedding(
+        body.name, body.description, body.system_prompt
+    )
+
     await db.execute(
         insert(agents).values(
             id=agent_id,
@@ -101,6 +106,7 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
             model=body.model,
             tools=json.dumps(tools),
             connections=json.dumps(body.connections),
+            capability_embedding=capability_embedding,
         )
     )
     await db.commit()
@@ -178,19 +184,22 @@ async def replace_agent(agent_id: str, body: AgentCreate, db: DBDep) -> AgentRes
     existing = await db.execute(select(agents.c.id).where(agents.c.id == agent_id))
     if existing.first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
-    await db.execute(
-        update(agents)
-        .where(agents.c.id == agent_id)
-        .values(
-            name=body.name,
-            description=body.description,
-            system_prompt=body.system_prompt,
-            provider=body.provider,
-            model=body.model,
-            tools=json.dumps(body.tools),
-            connections=json.dumps(body.connections),
-        )
+    values: dict[str, str] = {
+        "name": body.name,
+        "description": body.description,
+        "system_prompt": body.system_prompt,
+        "provider": body.provider,
+        "model": body.model,
+        "tools": json.dumps(body.tools),
+        "connections": json.dumps(body.connections),
+    }
+    # Recompute capability embedding; skip on transient failure rather than wipe.
+    capability_embedding = await compute_capability_embedding(
+        body.name, body.description, body.system_prompt
     )
+    if capability_embedding is not None:
+        values["capability_embedding"] = capability_embedding
+    await db.execute(update(agents).where(agents.c.id == agent_id).values(**values))
     await db.commit()
     result = await db.execute(select(agents).where(agents.c.id == agent_id))
     row = result.mappings().first()
@@ -229,6 +238,17 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: DBDep) -> AgentResp
         for field, value in body.model_dump(exclude_none=True).items()
         if field in _PATCHABLE_COLUMNS
     }
+
+    # If any field the capability embedding is derived from changed, recompute it
+    # from the merged (existing + patched) values. Skip on transient failure.
+    if updates.keys() & {"name", "description", "system_prompt"}:
+        embedding = await compute_capability_embedding(
+            updates.get("name", row["name"]),
+            updates.get("description", row["description"]),
+            updates.get("system_prompt", row["system_prompt"]),
+        )
+        if embedding is not None:
+            updates["capability_embedding"] = embedding
 
     if updates:
         await db.execute(update(agents).where(agents.c.id == agent_id).values(**updates))
