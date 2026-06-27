@@ -24,12 +24,12 @@ function entryStyle(type: ConfirmedEntry["entry_type"]) {
     };
   if (type === "finding")
     return {
-      icon: <CheckCircle2 size={11} strokeWidth={2} color="#3dba8c" />,
+      icon: <CheckCircle2 size={11} strokeWidth={2} color="#b5860d" />,
       label: "FINDING",
-      color: "#3dba8c",
-      accentColor: "#3dba8c",
-      bg: "rgba(61,186,140,0.06)",
-      border: "rgba(61,186,140,0.18)",
+      color: "#b5860d",
+      accentColor: "#c49a1a",
+      bg: "rgba(181,134,13,0.07)",
+      border: "rgba(181,134,13,0.22)",
     };
   return {
     icon: <FileText size={11} strokeWidth={2} color="#7b9ec0" />,
