@@ -25,7 +25,10 @@ export function AppShell() {
 
   const handleModeSelected = useCallback(() => {
     // Snap to app section first, then lock overflow so hero is unreachable
-    scrollRef.current?.scrollTo({ top: window.innerHeight, behavior: "instant" });
+    scrollRef.current?.scrollTo({
+      top: window.innerHeight,
+      behavior: "instant",
+    });
     setLocked(true);
   }, []);
 

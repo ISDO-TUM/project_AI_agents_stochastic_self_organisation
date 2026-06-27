@@ -42,7 +42,8 @@ export function AgentDock({
     const observer = new ResizeObserver((entries) => {
       const entry = entries[0];
       if (!entry) return;
-      const height = entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
+      const height =
+        entry.borderBoxSize?.[0]?.blockSize ?? entry.contentRect.height;
       if (height) onHeightChange(height);
     });
     observer.observe(el);
@@ -176,7 +177,12 @@ export function AgentDock({
                 ) : (
                   <button
                     onClick={() => onSelectAgent(agent.id)}
-                    style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      padding: 0,
+                      cursor: "pointer",
+                    }}
                   >
                     {chipContent}
                   </button>

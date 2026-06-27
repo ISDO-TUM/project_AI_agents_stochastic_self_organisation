@@ -224,8 +224,7 @@ export function generateDummyRun(
     replyIdsByRound[r] = [];
     takerAgents.forEach((agent, i) => {
       const prevReplies = replyIdsByRound[r - 1] ?? [];
-      const isReplyToReply =
-        r >= 3 && i % 2 === 1 && prevReplies.length > 0;
+      const isReplyToReply = r >= 3 && i % 2 === 1 && prevReplies.length > 0;
 
       const targetId = isReplyToReply
         ? prevReplies[(i - 1) % prevReplies.length]

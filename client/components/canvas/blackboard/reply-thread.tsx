@@ -84,7 +84,12 @@ export function ThreadedEntry({
       >
         {/* ── Header ── */}
         <div
-          style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 4 }}
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+            marginBottom: 4,
+          }}
         >
           <span
             style={{
@@ -108,7 +113,11 @@ export function ThreadedEntry({
             {entry.author_name}
           </span>
           <span
-            style={{ fontSize: 9, color: `${color}99`, fontFamily: "'JetBrains Mono', monospace" }}
+            style={{
+              fontSize: 9,
+              color: `${color}99`,
+              fontFamily: "'JetBrains Mono', monospace",
+            }}
           >
             R{entry.round}
           </span>
@@ -154,7 +163,12 @@ export function ThreadedEntry({
             }}
           >
             <span
-              style={{ fontSize: 10.5, color: t.textSub, lineHeight: 1.4, display: "block" }}
+              style={{
+                fontSize: 10.5,
+                color: t.textSub,
+                lineHeight: 1.4,
+                display: "block",
+              }}
             >
               {parentContent}
             </span>
@@ -164,7 +178,12 @@ export function ThreadedEntry({
         {/* ── Evaporated ── */}
         {!entry.is_visible && (
           <div
-            style={{ fontSize: 9.5, color: t.textDim, fontStyle: "italic", marginBottom: 3 }}
+            style={{
+              fontSize: 9.5,
+              color: t.textDim,
+              fontStyle: "italic",
+              marginBottom: 3,
+            }}
           >
             evaporated · R{entry.round}
           </div>
@@ -172,7 +191,12 @@ export function ThreadedEntry({
 
         {/* ── Body ── */}
         <div
-          style={{ fontSize: 12, color: dark ? "#eceaf5" : "#18161f", lineHeight: 1.55, marginBottom: 5 }}
+          style={{
+            fontSize: 12,
+            color: dark ? "#eceaf5" : "#18161f",
+            lineHeight: 1.55,
+            marginBottom: 5,
+          }}
         >
           <MarkdownRenderer content={entry.content} />
         </div>
@@ -195,7 +219,12 @@ export function ThreadedEntry({
             animate={{ opacity: 1, height: "auto" }}
             exit={{ opacity: 0, height: 0 }}
             transition={{ duration: 0.18, ease: "easeInOut" }}
-            style={{ overflow: "hidden", paddingLeft: 10, position: "relative", marginTop: 3 }}
+            style={{
+              overflow: "hidden",
+              paddingLeft: 10,
+              position: "relative",
+              marginTop: 3,
+            }}
           >
             {/* Vertical connector */}
             <div

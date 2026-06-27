@@ -73,102 +73,113 @@ export function ThreadFilterDropdown({
         </button>
       </PopoverTrigger>
       <PopoverContent>
-          {/* PopoverContent spreads incoming props after its own `style={{}}`
+        {/* PopoverContent spreads incoming props after its own `style={{}}`
               (see client/components/ui/popover.tsx), so a `style` prop here
               would replace its background/border/shadow entirely rather than
               merge — use an inner wrapper for layout instead of overriding
               PopoverContent's own style. Its default padding(14)/minWidth(240)
               are left as-is. */}
-          <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
-            <button
-              onClick={() => {
-                onSelect(null);
-                setOpen(false);
-              }}
-              style={{
-                display: "block",
-                width: "100%",
-                textAlign: "left",
-                padding: "7px 10px",
-                borderRadius: 8,
-                border: "none",
-                background:
-                  activeThreadId === null
+        <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+          <button
+            onClick={() => {
+              onSelect(null);
+              setOpen(false);
+            }}
+            style={{
+              display: "block",
+              width: "100%",
+              textAlign: "left",
+              padding: "7px 10px",
+              borderRadius: 8,
+              border: "none",
+              background:
+                activeThreadId === null
+                  ? dark
+                    ? "rgba(139,26,47,0.18)"
+                    : "rgba(139,26,47,0.08)"
+                  : "none",
+              color: activeThreadId === null ? BURG : t.text,
+              fontSize: 12,
+              fontWeight: activeThreadId === null ? 700 : 500,
+              cursor: "pointer",
+            }}
+          >
+            All threads
+          </button>
+          {threads.map((th) => {
+            const count = countByThread[th.id] ?? 0;
+            const pct = count / maxCount;
+            const isActive = activeThreadId === th.id;
+            return (
+              <button
+                key={th.id}
+                onClick={() => {
+                  onSelect(th.id);
+                  setOpen(false);
+                }}
+                style={{
+                  display: "block",
+                  width: "100%",
+                  textAlign: "left",
+                  padding: "7px 10px",
+                  borderRadius: 8,
+                  border: "none",
+                  background: isActive
                     ? dark
                       ? "rgba(139,26,47,0.18)"
                       : "rgba(139,26,47,0.08)"
                     : "none",
-                color: activeThreadId === null ? BURG : t.text,
-                fontSize: 12,
-                fontWeight: activeThreadId === null ? 700 : 500,
-                cursor: "pointer",
-              }}
-            >
-              All threads
-            </button>
-            {threads.map((th) => {
-              const count = countByThread[th.id] ?? 0;
-              const pct = count / maxCount;
-              const isActive = activeThreadId === th.id;
-              return (
-                <button
-                  key={th.id}
-                  onClick={() => {
-                    onSelect(th.id);
-                    setOpen(false);
-                  }}
-                  style={{
-                    display: "block",
-                    width: "100%",
-                    textAlign: "left",
-                    padding: "7px 10px",
-                    borderRadius: 8,
-                    border: "none",
-                    background: isActive
-                      ? dark
-                        ? "rgba(139,26,47,0.18)"
-                        : "rgba(139,26,47,0.08)"
-                      : "none",
-                    color: isActive ? BURG : t.text,
-                    fontSize: 12,
-                    fontWeight: isActive ? 700 : 500,
-                    cursor: "pointer",
-                  }}
-                >
-                  <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                    <span style={{ flex: 1 }}>{th.title}</span>
-                    {draftEntries.length > 0 && (
-                      <span style={{ display: "flex", alignItems: "center", gap: 5, flexShrink: 0 }}>
-                        <span style={{ fontSize: 10, color: t.textDim }}>{count}</span>
+                  color: isActive ? BURG : t.text,
+                  fontSize: 12,
+                  fontWeight: isActive ? 700 : 500,
+                  cursor: "pointer",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ flex: 1 }}>{th.title}</span>
+                  {draftEntries.length > 0 && (
+                    <span
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 5,
+                        flexShrink: 0,
+                      }}
+                    >
+                      <span style={{ fontSize: 10, color: t.textDim }}>
+                        {count}
+                      </span>
+                      <span
+                        style={{
+                          width: 40,
+                          height: 4,
+                          borderRadius: 2,
+                          background: dark
+                            ? "rgba(255,255,255,0.08)"
+                            : "rgba(0,0,0,0.08)",
+                          overflow: "hidden",
+                          display: "inline-block",
+                        }}
+                      >
                         <span
                           style={{
-                            width: 40,
-                            height: 4,
+                            display: "block",
+                            height: "100%",
+                            width: `${Math.round(pct * 100)}%`,
+                            background: isActive ? BURG : "#3dba8c",
                             borderRadius: 2,
-                            background: dark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.08)",
-                            overflow: "hidden",
-                            display: "inline-block",
+                            transition: "width 0.4s ease",
                           }}
-                        >
-                          <span
-                            style={{
-                              display: "block",
-                              height: "100%",
-                              width: `${Math.round(pct * 100)}%`,
-                              background: isActive ? BURG : "#3dba8c",
-                              borderRadius: 2,
-                              transition: "width 0.4s ease",
-                            }}
-                          />
-                        </span>
+                        />
                       </span>
-                    )}
-                  </div>
-                </button>
-              );
-            })}
-          </div>
-        </PopoverContent>
-      </Popover>
+                    </span>
+                  )}
+                </div>
+              </button>
+            );
+          })}
+        </div>
+      </PopoverContent>
+    </Popover>
   );
 }

@@ -73,7 +73,12 @@ export function ConfirmedCard({ entry }: ConfirmedCardProps) {
     >
       {/* ── Header ── */}
       <div
-        style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 6 }}
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 6,
+        }}
       >
         {s.icon}
         <span
@@ -94,7 +99,12 @@ export function ConfirmedCard({ entry }: ConfirmedCardProps) {
           </span>
         )}
         <div
-          style={{ marginLeft: "auto", display: "flex", alignItems: "center", gap: 6 }}
+          style={{
+            marginLeft: "auto",
+            display: "flex",
+            alignItems: "center",
+            gap: 6,
+          }}
         >
           {entry.citation_count > 0 && (
             <span
@@ -127,9 +137,11 @@ export function ConfirmedCard({ entry }: ConfirmedCardProps) {
               borderRadius: 4,
             }}
           >
-            {copied
-              ? <Check size={11} strokeWidth={2.5} />
-              : <Copy size={11} strokeWidth={1.8} />}
+            {copied ? (
+              <Check size={11} strokeWidth={2.5} />
+            ) : (
+              <Copy size={11} strokeWidth={1.8} />
+            )}
           </button>
         </div>
       </div>

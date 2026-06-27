@@ -443,17 +443,16 @@ export function TweaksPanel({
           marginTop: 10,
         }}
       >
-        {(
-          appMode === "swarm"
-            ? ([
-                { id: "keys", label: "API Keys", icon: "KeyRound" },
-                { id: "rules", label: "Rulesets", icon: "ScrollText" },
-              ] as const)
-            : ([
-                { id: "sim", label: "Simulation", icon: "Settings2" },
-                { id: "keys", label: "API Keys", icon: "KeyRound" },
-                { id: "rules", label: "Rulesets", icon: "ScrollText" },
-              ] as const)
+        {(appMode === "swarm"
+          ? ([
+              { id: "keys", label: "API Keys", icon: "KeyRound" },
+              { id: "rules", label: "Rulesets", icon: "ScrollText" },
+            ] as const)
+          : ([
+              { id: "sim", label: "Simulation", icon: "Settings2" },
+              { id: "keys", label: "API Keys", icon: "KeyRound" },
+              { id: "rules", label: "Rulesets", icon: "ScrollText" },
+            ] as const)
         ).map((tab) => (
           <button
             key={tab.id}

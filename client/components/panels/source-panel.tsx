@@ -6,7 +6,14 @@ import { uuid } from "@/lib/utils";
 import { getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 
-import { FLabel, FInput, FSelect, FBtn, PanelShell, Toast } from "./panel-primitives";
+import {
+  FLabel,
+  FInput,
+  FSelect,
+  FBtn,
+  PanelShell,
+  Toast,
+} from "./panel-primitives";
 import { BURG_LT } from "@/lib/theme";
 
 interface SourcePanelProps {
@@ -130,7 +137,14 @@ export function SourcePanel({
       x: 300 + Math.random() * 380,
       y: 260 + Math.random() * 200,
     };
-    onSave({ id: source?.id ?? uuid(), name, type, content, position, agentIds });
+    onSave({
+      id: source?.id ?? uuid(),
+      name,
+      type,
+      content,
+      position,
+      agentIds,
+    });
   };
 
   const handleFile = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -200,9 +214,7 @@ export function SourcePanel({
                     border: selected
                       ? `1.5px solid ${BURG_LT}`
                       : `1.5px solid ${t.border}`,
-                    background: selected
-                      ? `${BURG_LT}22`
-                      : t.inputBg,
+                    background: selected ? `${BURG_LT}22` : t.inputBg,
                     color: selected ? BURG_LT : t.textSub,
                     fontSize: 12,
                     fontFamily: "'Space Grotesk', sans-serif",

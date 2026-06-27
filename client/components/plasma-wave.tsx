@@ -132,7 +132,9 @@ export default function PlasmaWave(props: PlasmaWaveProps) {
   } = props;
 
   const propsRef = useRef<PlasmaWaveProps>(props);
-  propsRef.current = props;
+  useEffect(() => {
+    propsRef.current = props;
+  });
 
   const containerRef = useRef<HTMLDivElement>(null);
 

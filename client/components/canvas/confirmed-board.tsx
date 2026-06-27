@@ -129,7 +129,13 @@ export function ConfirmedBoard({
               width: 6,
               height: 6,
               borderRadius: "50%",
-              background: done ? "#3dba8c" : state.loading ? GOLD : hasContent ? GOLD : t.textDim,
+              background: done
+                ? "#3dba8c"
+                : state.loading
+                  ? GOLD
+                  : hasContent
+                    ? GOLD
+                    : t.textDim,
               boxShadow: done
                 ? "0 0 6px #3dba8c"
                 : hasContent && !state.loading
@@ -147,7 +153,11 @@ export function ConfirmedBoard({
               fontWeight: done ? 700 : 400,
             }}
           >
-            {done ? "done" : state.loading ? "syncing…" : `${filteredConfirmed.length}C`}
+            {done
+              ? "done"
+              : state.loading
+                ? "syncing…"
+                : `${filteredConfirmed.length}C`}
           </span>
           <button
             onClick={() => setExpanded(true)}
@@ -166,7 +176,16 @@ export function ConfirmedBoard({
             <Maximize2 size={11} strokeWidth={2} />
           </button>
           {state.loading && (
-            <div style={{ position: "absolute", bottom: 0, left: 0, right: 0, height: 2, overflow: "hidden" }}>
+            <div
+              style={{
+                position: "absolute",
+                bottom: 0,
+                left: 0,
+                right: 0,
+                height: 2,
+                overflow: "hidden",
+              }}
+            >
               <div
                 style={{
                   position: "absolute",
@@ -228,7 +247,9 @@ export function ConfirmedBoard({
               gap: 7,
               padding: "6px 12px",
               borderRadius: 8,
-              background: dark ? "rgba(61,186,140,0.12)" : "rgba(61,186,140,0.08)",
+              background: dark
+                ? "rgba(61,186,140,0.12)"
+                : "rgba(61,186,140,0.08)",
               border: "1px solid rgba(61,186,140,0.35)",
               marginBottom: 10,
             }}
@@ -251,7 +272,8 @@ export function ConfirmedBoard({
                 marginLeft: 2,
               }}
             >
-              · {state.confirmed.length} entr{state.confirmed.length === 1 ? "y" : "ies"} confirmed
+              · {state.confirmed.length} entr
+              {state.confirmed.length === 1 ? "y" : "ies"} confirmed
             </span>
           </div>
         )}

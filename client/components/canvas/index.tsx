@@ -185,7 +185,14 @@ export function Canvas({
     recompute();
     window.addEventListener("resize", recompute);
     return () => window.removeEventListener("resize", recompute);
-  }, [appMode, topbarWidth, topbarHeight, dockHeight, promptBarHeight]);
+  }, [
+    appMode,
+    topbarWidth,
+    topbarHeight,
+    dockHeight,
+    promptBarHeight,
+    DOCK_BOTTOM,
+  ]);
 
   const draftPos = boardLayout?.draftPos ?? null;
   const confirmedPos = boardLayout?.confirmedPos ?? null;
@@ -388,7 +395,6 @@ export function Canvas({
           <rect width="100%" height="100%" fill="url(#grid)" />
         </svg>
       )}
-
       {/* Ambient orbs */}
       {tweaks.showOrbs && dark && (
         <>
@@ -423,7 +429,6 @@ export function Canvas({
           />
         </>
       )}
-
       {/* Nodes + Edges (panned/zoomed) */}
       <div
         className="ctf"
@@ -528,7 +533,6 @@ export function Canvas({
           />
         )}
       </div>
-
       {/* ── Swarm-mode viewport overlays (not in world transform) ── */}
       {appMode === "swarm" && (
         <>
@@ -580,7 +584,6 @@ export function Canvas({
           />
         </>
       )}
-
       {/* Empty state — hidden during swarm mode or when a panel occupies the space */}
       {!hasNodes && appMode !== "swarm" && !phonebook && (
         <div
@@ -638,8 +641,8 @@ export function Canvas({
           </div>
         </div>
       )}
-
-      {/* Zoom indicator */}      {zoom !== 1 && (
+      {/* Zoom indicator */}{" "}
+      {zoom !== 1 && (
         <div
           style={{
             position: "absolute",
@@ -661,7 +664,6 @@ export function Canvas({
           {Math.round(zoom * 100)}%
         </div>
       )}
-
       {/* Minimap removed */}
     </div>
   );

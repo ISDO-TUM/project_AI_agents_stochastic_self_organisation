@@ -316,8 +316,7 @@ export function useCanvasState() {
       // the same agent must still re-derive that agent's capability — so it
       // is treated as a full detach-then-reattach for every agent in either
       // list, not just the ones whose membership actually changed.
-      const typeChanged =
-        previous !== undefined && previous.type !== data.type;
+      const typeChanged = previous !== undefined && previous.type !== data.type;
 
       const toDetach = typeChanged
         ? previousAgentIds

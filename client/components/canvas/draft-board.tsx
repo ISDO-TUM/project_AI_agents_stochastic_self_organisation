@@ -53,7 +53,14 @@ function SkeletonCard({ dark, delay = 0 }: { dark: boolean; delay?: number }) {
         marginBottom: 10,
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 9 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginBottom: 9,
+        }}
+      >
         <div style={sh(22, 22, 11)} />
         <div style={sh(72)} />
         <div style={{ ...sh(38, 8), marginLeft: "auto" }} />
@@ -162,7 +169,10 @@ export function DraftBoard({
   }, [visibleDraft.length]);
 
   const handleScrollToNew = () => {
-    bodyRef.current?.scrollTo({ top: bodyRef.current.scrollHeight, behavior: "smooth" });
+    bodyRef.current?.scrollTo({
+      top: bodyRef.current.scrollHeight,
+      behavior: "smooth",
+    });
     setNewCount(0);
   };
   const handleBodyScroll = () => {
@@ -331,7 +341,11 @@ export function DraftBoard({
                   fontWeight: done ? 700 : 400,
                 }}
               >
-                {done ? "done" : state.loading ? "syncing…" : `${visibleDraft.length}D`}
+                {done
+                  ? "done"
+                  : state.loading
+                    ? "syncing…"
+                    : `${visibleDraft.length}D`}
               </span>
             </>
           )}
@@ -408,7 +422,14 @@ export function DraftBoard({
 
         {/* Error */}
         {state.error && (
-          <div style={{ textAlign: "center", padding: "16px 0", color: "#c0392b", fontSize: 12 }}>
+          <div
+            style={{
+              textAlign: "center",
+              padding: "16px 0",
+              color: "#c0392b",
+              fontSize: 12,
+            }}
+          >
             {state.error}
           </div>
         )}
@@ -511,7 +532,9 @@ export function DraftBoard({
                 padding: "5px 14px",
                 borderRadius: 100,
                 border: "1px solid rgba(196,55,79,0.4)",
-                background: dark ? "rgba(139,26,47,0.88)" : "rgba(139,26,47,0.92)",
+                background: dark
+                  ? "rgba(139,26,47,0.88)"
+                  : "rgba(139,26,47,0.92)",
                 color: "#fff",
                 fontSize: 11,
                 fontWeight: 700,
@@ -651,31 +674,85 @@ export function DraftBoard({
                   </>
                 )}
                 {state.error && (
-                  <div style={{ textAlign: "center", padding: "24px 0", color: "#c0392b", fontSize: 13 }}>
+                  <div
+                    style={{
+                      textAlign: "center",
+                      padding: "24px 0",
+                      color: "#c0392b",
+                      fontSize: 13,
+                    }}
+                  >
                     {state.error}
                   </div>
                 )}
-                {!state.loading && !state.error && visibleDraft.length === 0 && (
-                  <EmptyState runId={runId} dark={dark} />
-                )}
+                {!state.loading &&
+                  !state.error &&
+                  visibleDraft.length === 0 && (
+                    <EmptyState runId={runId} dark={dark} />
+                  )}
                 {visibleDraft.length > 0 && !state.error && (
                   <>
                     {roundGroups.map((group, gi) => (
                       <div key={group.round}>
                         {gi > 0 && (
-                          <div style={{ display: "flex", alignItems: "center", gap: 8, margin: "10px 0 8px" }}>
-                            <div style={{ flex: 1, height: 1, background: dark ? "rgba(139,26,47,0.18)" : "rgba(139,26,47,0.1)" }} />
-                            <span style={{ fontSize: 9.5, color: dark ? "rgba(196,55,79,0.5)" : "rgba(139,26,47,0.4)", fontFamily: "'JetBrains Mono', monospace" }}>
+                          <div
+                            style={{
+                              display: "flex",
+                              alignItems: "center",
+                              gap: 8,
+                              margin: "10px 0 8px",
+                            }}
+                          >
+                            <div
+                              style={{
+                                flex: 1,
+                                height: 1,
+                                background: dark
+                                  ? "rgba(139,26,47,0.18)"
+                                  : "rgba(139,26,47,0.1)",
+                              }}
+                            />
+                            <span
+                              style={{
+                                fontSize: 9.5,
+                                color: dark
+                                  ? "rgba(196,55,79,0.5)"
+                                  : "rgba(139,26,47,0.4)",
+                                fontFamily: "'JetBrains Mono', monospace",
+                              }}
+                            >
                               Round {group.round}
                             </span>
-                            <div style={{ flex: 1, height: 1, background: dark ? "rgba(139,26,47,0.18)" : "rgba(139,26,47,0.1)" }} />
+                            <div
+                              style={{
+                                flex: 1,
+                                height: 1,
+                                background: dark
+                                  ? "rgba(139,26,47,0.18)"
+                                  : "rgba(139,26,47,0.1)",
+                              }}
+                            />
                           </div>
                         )}
                         {group.entries.map((entry) =>
                           entry.entry_type === "proposal" ? (
-                            <ProposalCard key={entry.id} entry={entry} threshold={threshold} promotedMap={promotedMap} agents={agents} />
+                            <ProposalCard
+                              key={entry.id}
+                              entry={entry}
+                              threshold={threshold}
+                              promotedMap={promotedMap}
+                              agents={agents}
+                            />
                           ) : (
-                            <ThreadedEntry key={entry.id} entry={entry} parentContent="" depth={0} threshold={threshold} promotedMap={promotedMap} agents={agents} />
+                            <ThreadedEntry
+                              key={entry.id}
+                              entry={entry}
+                              parentContent=""
+                              depth={0}
+                              threshold={threshold}
+                              promotedMap={promotedMap}
+                              agents={agents}
+                            />
                           ),
                         )}
                       </div>

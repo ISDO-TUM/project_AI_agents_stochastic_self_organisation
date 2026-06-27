@@ -169,17 +169,31 @@ export function CitationRing({
               fontSize: 12,
               padding: "3px 0",
               color: t.text,
-              borderBottom: i < citers.length - 1 ? `1px solid ${t.border}` : "none",
+              borderBottom:
+                i < citers.length - 1 ? `1px solid ${t.border}` : "none",
             }}
           >
             <span>{c.agentName}</span>
-            <span style={{ color: t.textDim, fontFamily: "'JetBrains Mono', monospace", fontSize: 11 }}>
+            <span
+              style={{
+                color: t.textDim,
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: 11,
+              }}
+            >
               Round {c.round}
             </span>
           </div>
         ))}
         {pct < 1 && (
-          <div style={{ marginTop: 8, fontSize: 10.5, color: t.textDim, fontStyle: "italic" }}>
+          <div
+            style={{
+              marginTop: 8,
+              fontSize: 10.5,
+              color: t.textDim,
+              fontStyle: "italic",
+            }}
+          >
             {threshold - count} more citation
             {threshold - count === 1 ? "" : "s"} needed → Confirmed
           </div>

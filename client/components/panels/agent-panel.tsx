@@ -311,11 +311,29 @@ export function AgentPanel({
                   color={t.textSub}
                 />
                 <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-                    <span style={{ fontSize: 12, color: t.text, fontWeight: 600, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  <div
+                    style={{ display: "flex", alignItems: "center", gap: 6 }}
+                  >
+                    <span
+                      style={{
+                        fontSize: 12,
+                        color: t.text,
+                        fontWeight: 600,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                    >
                       {src.name}
                     </span>
-                    <span style={{ fontSize: 9.5, color: t.textDim, textTransform: "uppercase", flexShrink: 0 }}>
+                    <span
+                      style={{
+                        fontSize: 9.5,
+                        color: t.textDim,
+                        textTransform: "uppercase",
+                        flexShrink: 0,
+                      }}
+                    >
                       {src.type}
                     </span>
                   </div>
@@ -343,26 +361,47 @@ export function AgentPanel({
                       transition: "color 0.15s, background 0.15s",
                     }}
                     onMouseEnter={(e) => {
-                      (e.currentTarget as HTMLButtonElement).style.color = t.text;
-                      (e.currentTarget as HTMLButtonElement).style.background = t.hover;
+                      (e.currentTarget as HTMLButtonElement).style.color =
+                        t.text;
+                      (e.currentTarget as HTMLButtonElement).style.background =
+                        t.hover;
                     }}
                     onMouseLeave={(e) => {
-                      (e.currentTarget as HTMLButtonElement).style.color = t.textDim;
-                      (e.currentTarget as HTMLButtonElement).style.background = "none";
+                      (e.currentTarget as HTMLButtonElement).style.color =
+                        t.textDim;
+                      (e.currentTarget as HTMLButtonElement).style.background =
+                        "none";
                     }}
                   >
                     <LIcon name="Pencil" size={12} color="currentColor" />
                   </button>
                 )}
                 {/* Detach button — shows an inline confirm before removing */}
-                {onDetachSource && (
-                  detachConfirm === src.id ? (
-                    <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
-                      <span style={{ fontSize: 9.5, color: "#e05555", fontWeight: 600, whiteSpace: "nowrap" }}>
+                {onDetachSource &&
+                  (detachConfirm === src.id ? (
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 4,
+                        flexShrink: 0,
+                      }}
+                    >
+                      <span
+                        style={{
+                          fontSize: 9.5,
+                          color: "#e05555",
+                          fontWeight: 600,
+                          whiteSpace: "nowrap",
+                        }}
+                      >
                         Detach?
                       </span>
                       <button
-                        onClick={() => { onDetachSource(src.id); setDetachConfirm(null); }}
+                        onClick={() => {
+                          onDetachSource(src.id);
+                          setDetachConfirm(null);
+                        }}
                         title="Confirm detach"
                         style={{
                           background: "rgba(224,85,85,0.15)",
@@ -411,18 +450,23 @@ export function AgentPanel({
                         transition: "color 0.15s, background 0.15s",
                       }}
                       onMouseEnter={(e) => {
-                        (e.currentTarget as HTMLButtonElement).style.color = "#e05555";
-                        (e.currentTarget as HTMLButtonElement).style.background = "rgba(224,85,85,0.1)";
+                        (e.currentTarget as HTMLButtonElement).style.color =
+                          "#e05555";
+                        (
+                          e.currentTarget as HTMLButtonElement
+                        ).style.background = "rgba(224,85,85,0.1)";
                       }}
                       onMouseLeave={(e) => {
-                        (e.currentTarget as HTMLButtonElement).style.color = t.textDim;
-                        (e.currentTarget as HTMLButtonElement).style.background = "none";
+                        (e.currentTarget as HTMLButtonElement).style.color =
+                          t.textDim;
+                        (
+                          e.currentTarget as HTMLButtonElement
+                        ).style.background = "none";
                       }}
                     >
                       <LIcon name="Unlink" size={12} color="currentColor" />
                     </button>
-                  )
-                )}
+                  ))}
               </div>
             ))}
 
@@ -445,15 +489,31 @@ export function AgentPanel({
                   <button
                     onClick={onAddFile}
                     style={{
-                      display: "flex", alignItems: "center", gap: 5,
-                      padding: "4px 10px", borderRadius: 20,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 5,
+                      padding: "4px 10px",
+                      borderRadius: 20,
                       border: `1.5px dashed ${t.border}`,
-                      background: "transparent", color: t.textSub,
-                      fontSize: 11.5, fontFamily: "'Space Grotesk', sans-serif",
-                      cursor: "pointer", transition: "all 0.15s",
+                      background: "transparent",
+                      color: t.textSub,
+                      fontSize: 11.5,
+                      fontFamily: "'Space Grotesk', sans-serif",
+                      cursor: "pointer",
+                      transition: "all 0.15s",
                     }}
-                    onMouseEnter={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = t.borderHi; el.style.color = t.text; el.style.background = t.hover; }}
-                    onMouseLeave={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = t.border; el.style.color = t.textSub; el.style.background = "transparent"; }}
+                    onMouseEnter={(e) => {
+                      const el = e.currentTarget as HTMLButtonElement;
+                      el.style.borderColor = t.borderHi;
+                      el.style.color = t.text;
+                      el.style.background = t.hover;
+                    }}
+                    onMouseLeave={(e) => {
+                      const el = e.currentTarget as HTMLButtonElement;
+                      el.style.borderColor = t.border;
+                      el.style.color = t.textSub;
+                      el.style.background = "transparent";
+                    }}
                   >
                     <LIcon name="Plus" size={11} color="currentColor" />
                     Add file
@@ -463,15 +523,31 @@ export function AgentPanel({
                   <button
                     onClick={onAddDataset}
                     style={{
-                      display: "flex", alignItems: "center", gap: 5,
-                      padding: "4px 10px", borderRadius: 20,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 5,
+                      padding: "4px 10px",
+                      borderRadius: 20,
                       border: `1.5px dashed ${t.border}`,
-                      background: "transparent", color: t.textSub,
-                      fontSize: 11.5, fontFamily: "'Space Grotesk', sans-serif",
-                      cursor: "pointer", transition: "all 0.15s",
+                      background: "transparent",
+                      color: t.textSub,
+                      fontSize: 11.5,
+                      fontFamily: "'Space Grotesk', sans-serif",
+                      cursor: "pointer",
+                      transition: "all 0.15s",
                     }}
-                    onMouseEnter={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = t.borderHi; el.style.color = t.text; el.style.background = t.hover; }}
-                    onMouseLeave={(e) => { const el = e.currentTarget as HTMLButtonElement; el.style.borderColor = t.border; el.style.color = t.textSub; el.style.background = "transparent"; }}
+                    onMouseEnter={(e) => {
+                      const el = e.currentTarget as HTMLButtonElement;
+                      el.style.borderColor = t.borderHi;
+                      el.style.color = t.text;
+                      el.style.background = t.hover;
+                    }}
+                    onMouseLeave={(e) => {
+                      const el = e.currentTarget as HTMLButtonElement;
+                      el.style.borderColor = t.border;
+                      el.style.color = t.textSub;
+                      el.style.background = "transparent";
+                    }}
                   >
                     <LIcon name="Plus" size={11} color="currentColor" />
                     Add table
