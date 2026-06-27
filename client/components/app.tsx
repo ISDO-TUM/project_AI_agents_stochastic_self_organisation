@@ -506,7 +506,11 @@ export function App({ onModeSelected }: AppProps = {}) {
   const onClear = useCallback(async () => {
     await clearAll().catch(() => {});
     dispatch({ type: "CLEAR" });
-  }, [dispatch]);
+    // Also wipe the swarm run state and boards so the canvas starts fresh.
+    dummy.reset();
+    setRunId(null);
+    stopSim();
+  }, [dispatch, dummy, stopSim]);
   const onAutoLayout = useCallback(
     () => dispatch({ type: "AUTO_LAYOUT" }),
     [dispatch],
