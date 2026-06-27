@@ -19,6 +19,8 @@ interface AgentDockProps {
     string,
     { domain: string; trust_score: number; runs_participated: number }[]
   >;
+  /** Agents with a promoted contribution — always rendered gold. */
+  promotedAgentIds?: Set<string>;
 }
 
 /** Fixed horizontal strip above the prompt bar — replaces individually
@@ -31,6 +33,7 @@ export function AgentDock({
   bottom,
   onHeightChange,
   trustVectors = {},
+  promotedAgentIds,
 }: AgentDockProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -129,7 +132,7 @@ export function AgentDock({
 
         <AnimatePresence initial={false}>
           {agents.map((agent) => {
-            const color = agentColor(agent.id, agents);
+            const color = agentColor(agent.id, agents, promotedAgentIds);
             const initial = (agent.name || "A")[0]?.toUpperCase() ?? "A";
             const tv = trustVectors[agent.id] ?? [];
             const chipContent = (

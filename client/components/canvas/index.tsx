@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect, useCallback } from "react";
+import { useState, useRef, useEffect, useCallback, useMemo } from "react";
 import {
   Agent,
   Source,
@@ -11,6 +11,7 @@ import {
   SimStep,
 } from "@/lib/types";
 import { clamp } from "@/lib/utils";
+import { computePromotedAuthorIds } from "@/lib/blackboard-utils";
 import { useTheme } from "@/lib/theme-context";
 
 import { AgentNode } from "./agent-node";
@@ -193,6 +194,15 @@ export function Canvas({
     promptBarHeight,
     DOCK_BOTTOM,
   ]);
+
+  const promotedAgentIds = useMemo(
+    () =>
+      computePromotedAuthorIds(
+        blackboardState?.draft ?? [],
+        blackboardState?.confirmed ?? [],
+      ),
+    [blackboardState],
+  );
 
   const draftPos = boardLayout?.draftPos ?? null;
   const confirmedPos = boardLayout?.confirmedPos ?? null;
@@ -542,6 +552,7 @@ export function Canvas({
             bottom={DOCK_BOTTOM}
             onHeightChange={setDockHeight}
             trustVectors={swarmTrustVectors}
+            promotedAgentIds={promotedAgentIds}
           />
           {draftPos && (
             <DraftBoard
@@ -563,6 +574,7 @@ export function Canvas({
               onThreadSelect={setActiveThreadId}
               agents={agents}
               done={swarmDone}
+              promotedAgentIds={promotedAgentIds}
             />
           )}
           <ConfirmedBoard

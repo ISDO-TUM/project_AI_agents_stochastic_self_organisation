@@ -26,6 +26,8 @@ interface DraftBoardProps {
   onThreadSelect?: (id: string | null) => void;
   /** Canvas agents list — used to assign stable, unique accent colours. */
   agents?: { id: string }[];
+  /** Agents with a promoted contribution — always rendered gold. */
+  promotedAgentIds?: Set<string>;
   /** True once the dummy / real run has fully completed. */
   done?: boolean;
 }
@@ -124,6 +126,7 @@ export function DraftBoard({
   activeThreadId = null,
   onThreadSelect,
   agents = [],
+  promotedAgentIds,
   done = false,
 }: DraftBoardProps) {
   const { dark } = useTheme();
@@ -493,6 +496,7 @@ export function DraftBoard({
                       threshold={threshold}
                       promotedMap={promotedMap}
                       agents={agents}
+                      promotedAgentIds={promotedAgentIds}
                     />
                   ) : (
                     <ThreadedEntry
@@ -503,6 +507,7 @@ export function DraftBoard({
                       threshold={threshold}
                       promotedMap={promotedMap}
                       agents={agents}
+                      promotedAgentIds={promotedAgentIds}
                     />
                   ),
                 )}
@@ -742,6 +747,7 @@ export function DraftBoard({
                               threshold={threshold}
                               promotedMap={promotedMap}
                               agents={agents}
+                              promotedAgentIds={promotedAgentIds}
                             />
                           ) : (
                             <ThreadedEntry
@@ -752,6 +758,7 @@ export function DraftBoard({
                               threshold={threshold}
                               promotedMap={promotedMap}
                               agents={agents}
+                              promotedAgentIds={promotedAgentIds}
                             />
                           ),
                         )}
