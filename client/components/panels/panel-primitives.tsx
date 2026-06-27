@@ -303,6 +303,12 @@ interface PanelShellProps {
   onClose: () => void;
   children: React.ReactNode;
   icon?: string;
+  /** Distance from the screen's true right edge — lets a second, narrower
+   *  panel sit further right while this one shifts left to make room. */
+  stackOffset?: number;
+  /** Reports this panel's live width (initial + every drag-resize step) so
+   *  a sibling panel can track it via `stackOffset`. */
+  onWidthChange?: (w: number) => void;
 }
 
 const PANEL_MIN_WIDTH = 360;
@@ -314,11 +320,17 @@ export function PanelShell({
   onClose,
   children,
   icon,
+  stackOffset = 0,
+  onWidthChange,
 }: PanelShellProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
   const [width, setWidth] = useState(PANEL_DEFAULT_WIDTH);
   const dragging = useRef(false);
+
+  useEffect(() => {
+    onWidthChange?.(width);
+  }, [width, onWidthChange]);
 
   useEffect(() => {
     const onMove = (e: MouseEvent) => {
@@ -351,7 +363,7 @@ export function PanelShell({
       style={{
         position: "fixed",
         top: 0,
-        right: 0,
+        right: stackOffset,
         bottom: 0,
         width,
         display: "flex",

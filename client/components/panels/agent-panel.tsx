@@ -26,6 +26,8 @@ interface AgentPanelProps {
   onAddFile?: () => void;
   /** Opens the "new dataset" panel pre-linked to this agent. */
   onAddDataset?: () => void;
+  /** Live width of a currently-open source overlay panel; 0/omitted when none is open. */
+  overlayWidth?: number;
 }
 
 interface AgentForm {
@@ -97,6 +99,7 @@ export function AgentPanel({
   onDetachSource,
   onAddFile,
   onAddDataset,
+  overlayWidth,
 }: AgentPanelProps) {
   const [availableModels, setAvailableModels] = useState<ModelEntry[]>([]);
   const { keys } = useApiKeys();
@@ -266,6 +269,7 @@ export function AgentPanel({
       title={agent ? "Configure Agent" : "New Agent"}
       onClose={onClose}
       icon={agent ? "Bot" : "Plus"}
+      stackOffset={overlayWidth ?? 0}
     >
       <FLabel>Name</FLabel>
       <FInput

@@ -18,6 +18,9 @@ interface SourcePanelProps {
   onSave: (source: Source) => void;
   onDelete: (id: string) => void;
   onClose: () => void;
+  /** Reports this panel's live width — passed straight through to PanelShell
+   *  so a layered AgentPanel can stay in sync via its own stackOffset. */
+  onWidthChange?: (w: number) => void;
 }
 
 const PREVIEW_MAX_HEIGHT = 420;
@@ -99,6 +102,7 @@ export function SourcePanel({
   onSave,
   onDelete,
   onClose,
+  onWidthChange,
 }: SourcePanelProps) {
   const [name, setName] = useState(source?.name ?? "");
   const [content, setContent] = useState(source?.content ?? "");
@@ -139,6 +143,7 @@ export function SourcePanel({
       title={source ? `Configure ${noun}` : `New ${noun}`}
       onClose={onClose}
       icon={isDataset ? "Table2" : source ? "FileText" : "Plus"}
+      onWidthChange={onWidthChange}
     >
       <FLabel>Type</FLabel>
       <FSelect

@@ -6,6 +6,7 @@ import {
   CanvasState,
   ConsensusMode,
   Rule,
+  SourceType,
   TopologyMode,
   Tweaks,
 } from "@/lib/types";
@@ -123,6 +124,11 @@ export function App({ onModeSelected }: AppProps = {}) {
     showTweaks,
     setShowTweaks,
   } = useUIState();
+  const [sourceOverlay, setSourceOverlay] = useState<{
+    id: string | null;
+    sourceType?: SourceType;
+  } | null>(null);
+  const [overlayWidth, setOverlayWidth] = useState(360);
 
   const [rules, setRules] = useState<Rule[]>([]);
   const [selectedRules, setSelectedRules] = useState<Set<string>>(new Set());
@@ -498,6 +504,9 @@ export function App({ onModeSelected }: AppProps = {}) {
     panel?.type === "source" && panel.id
       ? sources.find((s) => s.id === panel.id) ?? null
       : null;
+  const overlaySource = sourceOverlay?.id
+    ? sources.find((s) => s.id === sourceOverlay.id) ?? null
+    : null;
   const t = getTheme(dark);
   const hasNodes = agents.length > 0 || sources.length > 0;
 
@@ -690,18 +699,24 @@ export function App({ onModeSelected }: AppProps = {}) {
           agents={agents}
           sources={sources}
           edges={edges}
+          overlayWidth={sourceOverlay ? overlayWidth : 0}
           onSave={async (data) => {
             await saveAgent(data);
             setPanel(null);
+            setSourceOverlay(null);
           }}
           onDelete={async (id) => {
             await deleteAgent(id);
             setPanel(null);
+            setSourceOverlay(null);
             setSelNode(null);
             setCtx(null);
           }}
-          onClose={() => setPanel(null)}
-          onEditSource={(sourceId) => setPanel({ type: "source", id: sourceId })}
+          onClose={() => {
+            setPanel(null);
+            setSourceOverlay(null);
+          }}
+          onEditSource={(sourceId) => setSourceOverlay({ id: sourceId })}
           onDetachSource={(sourceId) => {
             if (!panelAgent) return;
             const edge = edges.find(
@@ -711,8 +726,26 @@ export function App({ onModeSelected }: AppProps = {}) {
             );
             if (edge) deleteEdge(edge.id);
           }}
-          onAddFile={() => setPanel({ type: "source", id: null, sourceType: "text" })}
-          onAddDataset={() => setPanel({ type: "source", id: null, sourceType: "dataset" })}
+          onAddFile={() => setSourceOverlay({ id: null, sourceType: "text" })}
+          onAddDataset={() => setSourceOverlay({ id: null, sourceType: "dataset" })}
+        />
+      )}
+      {sourceOverlay && (
+        <SourcePanel
+          key={sourceOverlay.id ?? "new-source-overlay"}
+          source={overlaySource}
+          initialType={sourceOverlay.sourceType}
+          agents={agents}
+          onSave={(data) => {
+            saveSource(data);
+            setSourceOverlay(null);
+          }}
+          onDelete={(id) => {
+            deleteSource(id);
+            setSourceOverlay(null);
+          }}
+          onClose={() => setSourceOverlay(null)}
+          onWidthChange={setOverlayWidth}
         />
       )}
       {panel?.type === "source" && (
