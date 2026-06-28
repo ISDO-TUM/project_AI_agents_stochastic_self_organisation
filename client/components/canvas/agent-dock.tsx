@@ -19,6 +19,8 @@ interface AgentDockProps {
     string,
     { domain: string; trust_score: number; runs_participated: number }[]
   >;
+  /** Agents with a promoted contribution — always rendered gold. */
+  promotedAgentIds?: Set<string>;
   /** Agent IDs whose turn is in flight — pulse a ring around their chip. */
   respondingIds?: string[];
 }
@@ -33,6 +35,7 @@ export function AgentDock({
   bottom,
   onHeightChange,
   trustVectors = {},
+  promotedAgentIds,
   respondingIds = [],
 }: AgentDockProps) {
   const { dark } = useTheme();
@@ -132,7 +135,7 @@ export function AgentDock({
 
         <AnimatePresence initial={false}>
           {agents.map((agent) => {
-            const color = agentColor(agent.id, agents);
+            const color = agentColor(agent.id, agents, promotedAgentIds);
             const initial = (agent.name || "A")[0]?.toUpperCase() ?? "A";
             const tv = trustVectors[agent.id] ?? [];
             const responding = respondingIds.includes(agent.id);
