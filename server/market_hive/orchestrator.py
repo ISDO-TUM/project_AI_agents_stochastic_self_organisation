@@ -89,7 +89,8 @@ class TrustRegistry(Protocol):
 
     async def update(
         self, *, run_id: str, takers: list[str], observers: list[str], db: AsyncConnection
-    ) -> None: ...
+    ) -> None:
+        raise NotImplementedError
 
 
 class AgentRunner(Protocol):
