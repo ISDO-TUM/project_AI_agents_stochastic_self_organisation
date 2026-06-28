@@ -2,7 +2,7 @@
 
 The minimal real Market Maker: **one structured LLM call** turns a raw user
 prompt into a *scoped, typed* contract — ``task_type``, ``required_expertise``,
-``complexity``, a 2–3 sentence ``brief`` and a ``confidence``. The brief plus the
+``complexity``, a 2-3 sentence ``brief`` and a ``confidence``. The brief plus the
 required-expertise list is what gets embedded, so the auction's cosine matching
 invites the *right* specialists (a one-line prompt alone matches role
 descriptions poorly).
@@ -136,7 +136,9 @@ class MarketMaker:
         # Embed the brief together with the named expertise so the contract
         # embedding sits close to the matching agents' role descriptions.
         expertise_line = ", ".join(analysis.required_expertise)
-        embedding_text = f"{brief}\nRelevant expertise: {expertise_line}" if expertise_line else brief
+        embedding_text = (
+            f"{brief}\nRelevant expertise: {expertise_line}" if expertise_line else brief
+        )
 
         contract, threads = await persist_contract(
             db,
@@ -172,7 +174,7 @@ class MarketMaker:
                 "MarketMaker LLM call timed out after %.0fs; using fallback.", self._timeout
             )
             return None
-        except Exception:  # noqa: BLE001 — never let the MM block a run
+        except Exception:
             logger.exception("MarketMaker LLM call failed.")
             return None
 
@@ -182,6 +184,6 @@ class MarketMaker:
             return None
         try:
             return _ContractAnalysis.model_validate(raw)
-        except Exception:  # noqa: BLE001 — malformed payload → fall back
+        except Exception:
             logger.exception("MarketMaker JSON failed validation: %r", raw)
             return None

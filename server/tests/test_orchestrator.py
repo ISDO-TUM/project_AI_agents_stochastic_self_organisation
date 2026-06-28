@@ -531,7 +531,9 @@ async def test_default_runner_wires_agent_files(db: AsyncConnection) -> None:
 
     assert text_out == "ok"
     assert "files" in captured["tool_names"]  # the files tool was offered
-    assert captured["tool_context"]["files"] == {"contract.txt": "Clause 7: price may change monthly."}
+    assert captured["tool_context"]["files"] == {
+        "contract.txt": "Clause 7: price may change monthly."
+    }
     assert "contract.txt" in (captured["system_prompt"] or "")  # prompt hints the file
 
 
