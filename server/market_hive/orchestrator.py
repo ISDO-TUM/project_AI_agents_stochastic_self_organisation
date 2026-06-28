@@ -120,7 +120,8 @@ class AmendmentProcessor(Protocol):
 
     def process(
         self, *, run_id: str, current_round: int, takers: list[str], db: AsyncConnection
-    ) -> AsyncIterator[SimulationStep]: ...
+    ) -> AsyncIterator[SimulationStep]:
+        pass
 
 
 async def _default_agent_runner(
