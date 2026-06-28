@@ -440,19 +440,23 @@ export function Canvas({
           zIndex: 1,
         }}
       >
-        <EdgeLayer
-          edges={edges}
-          dynamicEdges={dynamicEdges}
-          agents={agents}
-          sources={sources}
-          selectedEdge={selectedEdge}
-          onSelectEdge={onSelectEdge}
-          onDeleteEdge={onDeleteEdge}
-          activeEdgeId={activeEdgeId}
-          activeEdgeReversed={activeEdgeReversed}
-          animatedParticles={animatedParticles}
-          tweaks={tweaks}
-        />
+        {/* In swarm mode agents coordinate via the blackboard, not edges —
+            hide all agent/file connections (PRD §12.3). */}
+        {appMode !== "swarm" && (
+          <EdgeLayer
+            edges={edges}
+            dynamicEdges={dynamicEdges}
+            agents={agents}
+            sources={sources}
+            selectedEdge={selectedEdge}
+            onSelectEdge={onSelectEdge}
+            onDeleteEdge={onDeleteEdge}
+            activeEdgeId={activeEdgeId}
+            activeEdgeReversed={activeEdgeReversed}
+            animatedParticles={animatedParticles}
+            tweaks={tweaks}
+          />
+        )}
         {connectLine && (
           <svg
             style={{

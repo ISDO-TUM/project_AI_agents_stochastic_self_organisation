@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from server.db import create_trial, get_db, get_engine, resolve_experiment, update_trial_status
 from server.db.tables import agents
 from server.llm.credentials import RequestCredentials, current_credentials, use_credentials
+from server.market_hive.market_maker import MarketMaker
 from server.market_hive.orchestrator import run_swarm
 from server.market_hive.schemas import SwarmRunConfig
 from server.schemas import SimulationRunRequest, SimulationStartResponse
@@ -88,10 +89,18 @@ async def _swarm_event_stream(
     """
     from server.llm.credentials import _current as _creds_var
 
+    # Flush an SSE comment immediately so the client/proxy opens the stream
+    # before the first (embedding-bound) step is produced — defeats lazy buffering.
+    yield ": stream open\n\n"
+
     token = _creds_var.set(credentials)
     try:
         async with get_engine().connect() as db:
-            async for step in run_swarm(config, db):
+            # The real Market Maker (one LLM call) produces a typed, scoped
+            # contract so the auction invites the right specialists. It falls back
+            # to the no-LLM source internally if the call fails, so a run never
+            # blocks. Tests drive run_swarm on the no-LLM default.
+            async for step in run_swarm(config, db, contract_source=MarketMaker()):
                 yield f"data: {step.model_dump_json()}\n\n"
     finally:
         _creds_var.reset(token)
@@ -126,6 +135,13 @@ async def run_simulation(
         return StreamingResponse(
             _swarm_event_stream(config, current_credentials()),
             media_type="text/event-stream",
+            headers={
+                # Stream incrementally: disable client/proxy buffering so each
+                # event is flushed as it is produced (Next rewrite proxy, nginx).
+                "Cache-Control": "no-cache",
+                "Connection": "keep-alive",
+                "X-Accel-Buffering": "no",
+            },
         )
 
     experiment_id = await resolve_experiment(

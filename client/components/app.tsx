@@ -36,13 +36,13 @@ import { TweaksPanel } from "@/components/tweaks-panel";
 
 import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
-import { useBlackboard } from "@/hooks/useBlackboard";
 import { ModeGate, AppMode } from "@/components/mode-gate";
 import {
   SwarmConfigModal,
   SwarmRunConfig,
 } from "@/components/swarm-config-modal";
 import { useDummySwarm } from "@/hooks/useDummySwarm";
+import { useSwarmRun } from "@/hooks/useSwarmRun";
 import { generateDummyRun } from "@/lib/dummy-swarm";
 import { getTheme } from "@/lib/theme";
 
@@ -93,7 +93,6 @@ export function App({ onModeSelected }: AppProps = {}) {
     activeEdgeReversed,
     particles,
     runSim,
-    runSwarm,
     stopSim,
     dynamicEdges,
     resetContext,
@@ -143,31 +142,12 @@ export function App({ onModeSelected }: AppProps = {}) {
   const [topbarHeight, setTopbarHeight] = useState<number | null>(null);
   const [promptBarHeight, setPromptBarHeight] = useState<number | null>(null);
   const dummy = useDummySwarm();
-  // Bumped on each SSE step that changed the board, so useBlackboard re-fetches
-  // the authoritative GET /blackboard view as the swarm run progresses.
-  const [boardTick, setBoardTick] = useState(0);
-  const { state: realBlackboardState } = useBlackboard(
-    appMode === "swarm" && !dummy.state.active ? runId : null,
-    boardTick,
-  );
+  // Real swarm run: streams SSE and builds the board directly from the events
+  // (draft → confirmed), like the dummy — no REST re-fetch, no activity log.
+  const swarm = useSwarmRun();
   const blackboardState = dummy.state.active
     ? dummy.state.blackboard
-    : realBlackboardState;
-
-  // Kick off a real swarm run: stream its events into the activity log and let
-  // the blackboard panel re-fetch as the board changes. runId comes from the
-  // first system step so the panel knows which run to read.
-  const startSwarmRun = useCallback(
-    (prompt: string) => {
-      setRunId(null);
-      setBoardTick(0);
-      void runSwarm(prompt, {
-        onRunId: (id) => setRunId(id),
-        onBoardChange: () => setBoardTick((t) => t + 1),
-      });
-    },
-    [runSwarm],
-  );
+    : swarm.state.blackboard;
 
   // Run configuration — edited in the Settings panel, read at run start.
   const [consensusMode, setConsensusMode] =
@@ -228,6 +208,7 @@ export function App({ onModeSelected }: AppProps = {}) {
     (config: SwarmRunConfig) => {
       setSwarmConfigOpen(false);
       if (pendingSwarmPrompt.trim().toLowerCase() === "test_mohamed") {
+        swarm.reset();
         const fixture = generateDummyRun(
           { takers: config.takersMax, rounds: config.roundsMax },
           agents,
@@ -237,9 +218,10 @@ export function App({ onModeSelected }: AppProps = {}) {
         return;
       }
       dummy.reset();
-      startSwarmRun(pendingSwarmPrompt);
+      setRunId(null);
+      swarm.start(pendingSwarmPrompt);
     },
-    [pendingSwarmPrompt, agents, dummy, startSwarmRun],
+    [pendingSwarmPrompt, agents, dummy, swarm],
   );
   const importErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -634,12 +616,20 @@ export function App({ onModeSelected }: AppProps = {}) {
           panAdjust={panAdjust}
           blackboardState={blackboardState}
           appMode={appMode}
-          swarmRunId={appMode === "swarm" ? runId : null}
+          swarmRunId={
+            appMode === "swarm"
+              ? dummy.state.active
+                ? runId
+                : swarm.state.runId
+              : null
+          }
           topbarWidth={topbarWidth}
           topbarHeight={topbarHeight}
           promptBarHeight={promptBarHeight}
           onSelectAgentChip={openPanel}
-          swarmDone={appMode === "swarm" && dummy.state.done}
+          swarmDone={
+            appMode === "swarm" && (dummy.state.done || swarm.state.done)
+          }
           swarmTrustVectors={dummy.state.trustVectors}
           phonebook={
             topology === "dynamic"

@@ -24,7 +24,7 @@ from typing import Any, Protocol
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from server.db import deserialise_agent_row
+from server.db import deserialise_agent_row, hint_files_in_prompt, load_agent_files
 from server.db.tables import agents as agents_table
 from server.guardrails import build_guarded_system_prompt
 from server.llm import call_agent
@@ -130,15 +130,29 @@ async def _default_agent_runner(
     tool_context: dict[str, Any],
 ) -> tuple[str, list[ToolCall]]:
     """Drive one real LLM turn, guardrail-wrapped. Errors → no action (NFR-REL-01)."""
-    system_prompt = build_guarded_system_prompt(f"{agent['system_prompt']}\n\n{system_suffix}")
+    db = tool_context.get("db")
     try:
+        # Load this agent's knowledge files so it can consult them in any phase
+        # (auction self-selection through the discussion rounds, PRD §9.1). The
+        # ``files`` tool reads them from context; offer it whenever the agent has
+        # files, and steer the system prompt toward them. The per-turn lookup is a
+        # cheap SELECT next to the LLM call, and keeps file-wiring in one place.
+        files: dict[str, str] = await load_agent_files(db, agent["id"]) if db is not None else {}
+        effective_tools = list(tool_names)
+        if files and "files" not in effective_tools:
+            effective_tools.append("files")
+
+        combined = f"{agent['system_prompt']}\n\n{system_suffix}"
+        system_prompt = build_guarded_system_prompt(
+            hint_files_in_prompt(combined, list(files), effective_tools)
+        )
         response, tools_used = await call_agent(
             user_prompt,
             provider=agent["provider"],
             model=agent["model"],
             system_prompt=system_prompt,
-            tool_names=tool_names,
-            tool_context=tool_context,
+            tool_names=effective_tools,
+            tool_context={**tool_context, "files": files},
         )
         return response, tools_used
     except Exception:
@@ -146,6 +160,23 @@ async def _default_agent_runner(
             "Agent turn failed for agent_id=%s; treating as no action", agent.get("id")
         )
         return "", []
+    finally:
+        # A tool whose DB write failed (e.g. the LLM passed a bad thread_id/entry_id)
+        # leaves the shared run connection's transaction aborted, which would reject
+        # every later statement. Roll back so the next agent's writes succeed;
+        # committed work is unaffected (engines commit on success). Also clears the
+        # dangling transaction left by read-only tool calls.
+        await _reset_transaction(tool_context.get("db"))
+
+
+async def _reset_transaction(db: AsyncConnection | None) -> None:
+    """Roll back any open/aborted transaction on the shared connection."""
+    if db is None or not db.in_transaction():
+        return
+    try:
+        await db.rollback()
+    except Exception:
+        logger.exception("Failed to roll back the swarm connection after an agent turn")
 
 
 # ── Step helper ──────────────────────────────────────────────────────────────
@@ -202,23 +233,6 @@ async def _complete_run(
     await db.commit()
 
 
-async def _post_anchors(
-    bb: Blackboard, run_id: str, contract: ContractSchema, threads: list[ThreadSchema]
-) -> None:
-    """Seed the Confirmed layer with the permanent contract + thread anchors."""
-    await bb.post_anchor(
-        run_id=run_id,
-        thread_id=threads[0].id,
-        content=f"[ANCHOR] Contract: {contract.original_prompt}",
-    )
-    for thread in threads:
-        await bb.post_anchor(
-            run_id=run_id,
-            thread_id=thread.id,
-            content=f"[ANCHOR] Thread: {thread.title} — {thread.description}",
-        )
-
-
 async def _load_agents(db: AsyncConnection) -> dict[str, dict[str, Any]]:
     """Return ``{agent_id: agent_dict}`` for every agent in the DB."""
     rows = (await db.execute(select(agents_table))).mappings().all()
@@ -239,27 +253,76 @@ def _parse_entry_id(tool_output: str) -> str | None:
     return entry_id if isinstance(entry_id, str) else None
 
 
-def _tool_events(agent: dict[str, Any], tools_used: list[ToolCall]) -> list[SimulationStep]:
-    """Map blackboard tool calls (post/cite/vote/request_expertise) to steps.
+async def _draft_entry_payload(db: AsyncConnection, entry_id: str) -> dict[str, Any] | None:
+    """Fetch a posted draft entry shaped for the frontend board (DraftEntry)."""
+    row = (
+        (
+            await db.execute(
+                text(
+                    """
+                    SELECT de.id, de.run_id, de.thread_id, de.round, de.author_id,
+                           COALESCE(a.name, de.author_id) AS author_name,
+                           de.entry_type, de.content, de.reply_to, de.mention_agents,
+                           de.is_visible, de.last_cited_round, de.created_at
+                    FROM draft_entries de
+                    LEFT JOIN agents a ON a.id = de.author_id
+                    WHERE de.id = :id
+                    """
+                ),
+                {"id": entry_id},
+            )
+        )
+        .mappings()
+        .fetchone()
+    )
+    if row is None:
+        return None
+    return {
+        "id": row["id"],
+        "run_id": row["run_id"],
+        "thread_id": row["thread_id"],
+        "round": row["round"],
+        "author_id": row["author_id"],
+        "author_name": row["author_name"],
+        "entry_type": row["entry_type"],
+        "content": row["content"],
+        "reply_to": row["reply_to"],
+        "mention_agents": json.loads(row["mention_agents"] or "[]"),
+        "is_visible": bool(row["is_visible"]),
+        "deleted_at": None,
+        "last_cited_round": row["last_cited_round"],
+        "citation_count": 0,
+        "created_at": str(row["created_at"]),
+        "children": [],
+    }
 
-    Shared by the proposal, vote, and discussion rounds.
+
+async def _board_events(
+    db: AsyncConnection, agent: dict[str, Any], tools_used: list[ToolCall], round: int
+) -> list[SimulationStep]:
+    """Map blackboard tool calls to steps carrying full board payloads in ``data``.
+
+    The frontend builds the board directly from these events (no REST re-fetch):
+    bb-post carries the whole entry, bb-cite/bb-vote the cited id + citer.
     """
     steps: list[SimulationStep] = []
     for call in tools_used:
         if call.name == "post_to_blackboard":
-            entry_type = str(call.input.get("entry_type", "post"))
-            thread_id = call.input.get("thread_id")
             entry_id = _parse_entry_id(call.output)
+            payload = await _draft_entry_payload(db, entry_id) if entry_id else None
+            if payload is None:
+                continue
             steps.append(
                 _step(
                     "bb-post",
-                    f"{agent['name']} posted a {entry_type}",
+                    f"{agent['name']} posted a {payload['entry_type']}",
                     node_id=agent["id"],
-                    thread_id=thread_id,
+                    thread_id=payload["thread_id"],
                     entry_id=entry_id,
+                    data=payload,
                 )
             )
-            for mentioned in call.input.get("mention_agents") or []:
+            for mentioned in payload["mention_agents"]:
                 steps.append(
                     _step(
                         "bb-mention",
@@ -269,11 +332,28 @@ def _tool_events(agent: dict[str, Any], tools_used: list[ToolCall]) -> list[Simu
                     )
                 )
         elif call.name == "cite":
-            steps.append(_step("bb-cite", f"{agent['name']} cited entries", node_id=agent["id"]))
+            for cited in call.input.get("entry_ids") or []:
+                steps.append(
+                    _step(
+                        "bb-cite",
+                        f"{agent['name']} cited an entry",
+                        node_id=agent["id"],
+                        entry_id=str(cited),
+                        data={"entry_id": str(cited), "citer_name": agent["name"], "round": round},
+                    )
+                )
         elif call.name == "vote":
-            steps.append(
-                _step("bb-vote", f"{agent['name']} voted on a proposal", node_id=agent["id"])
-            )
+            cited = call.input.get("entry_id")
+            if cited:
+                steps.append(
+                    _step(
+                        "bb-vote",
+                        f"{agent['name']} voted on a proposal",
+                        node_id=agent["id"],
+                        entry_id=str(cited),
+                        data={"entry_id": str(cited), "citer_name": agent["name"], "round": round},
+                    )
+                )
         elif call.name == "request_expertise":
             domain = str(call.input.get("domain", ""))
             steps.append(
@@ -344,7 +424,10 @@ async def _run_auction(
             agent,
             user_prompt=auction_user_prompt(contract, invitation),
             system_suffix=AUCTION_SYSTEM_SUFFIX,
-            tool_names=["read_blackboard", "submit_bid", "abstain"],
+            # No read_blackboard here: the board is empty during the auction, and the
+            # full contract is already in the prompt. Offering it only invites agents
+            # to "read" an empty board and wrongly conclude there is no contract.
+            tool_names=["submit_bid", "abstain"],
             tool_context={
                 "db": db,
                 "run_id": run_id,
@@ -437,7 +520,7 @@ async def _run_round_one(
                     "round": 1,
                 },
             )
-            for step in _tool_events(agent, tools_used):
+            for step in await _board_events(db, agent, tools_used, 1):
                 yield step
 
 
@@ -470,7 +553,7 @@ async def _run_vote_subround(
                     "round": 1,
                 },
             )
-            for step in _tool_events(agent, tools_used):
+            for step in await _board_events(db, agent, tools_used, 1):
                 yield step
 
 
@@ -532,7 +615,7 @@ async def _run_discussion_round(
                     "round": round,
                 },
             )
-            for step in _tool_events(agent, tools_used):
+            for step in await _board_events(db, agent, tools_used, round):
                 yield step
 
 
@@ -569,6 +652,7 @@ async def _end_of_round(
             f"Entry promoted to Confirmed ({entry.citation_count} citations).",
             thread_id=entry.thread_id,
             entry_id=entry.source_draft_id,
+            data=entry.model_dump(mode="json"),
         )
 
     # soft_delete_stale returns only a count, so diff the visible set to recover IDs.
@@ -576,7 +660,12 @@ async def _end_of_round(
     await bb.soft_delete_stale(run_id=run_id, current_round=round, decay_rounds=config.decay_rounds)
     deleted_ids = before - await _visible_entry_ids(db, run_id)
     for entry_id in deleted_ids:
-        yield _step("bb-delete", "Entry soft-deleted (stale).", entry_id=entry_id)
+        yield _step(
+            "bb-delete",
+            "Entry soft-deleted (stale).",
+            entry_id=entry_id,
+            data={"entry_id": entry_id},
+        )
 
     await convergence.update_reputation(
         run_id=run_id,
@@ -632,12 +721,19 @@ async def run_swarm(
 
     run_id = str(uuid.uuid4())
     await _create_run(db, run_id)
-    bb = Blackboard(db)
     agents_by_id = await _load_agents(db)
 
-    # ── Contract + anchors (Market Maker seam) ───────────────────────────────
+    # ── Contract (Market Maker seam) ──────────────────────────────────────────
+    # The Confirmed layer starts empty by design — it fills only as draft entries
+    # earn enough citations to be promoted. The contract/threads live in the
+    # agents' prompts, not as confirmed anchors.
+    #
+    # Emit an immediate frame so the client sees the run start: the Market Maker's
+    # LLM call below is the first slow step, and some clients/proxies don't render
+    # the stream until the first real ``data:`` frame arrives (a comment is not
+    # enough). This also confirms liveness while the contract is being drafted.
+    yield _step("system", "Run started — drafting the contract…", data={"run_id": run_id})
     contract, threads = await contract_source.make_contract(config.prompt, run_id, db)
-    await _post_anchors(bb, run_id, contract, threads)
     yield _step(
         "system",
         f"Contract created: {contract.task_type}, {contract.task_nature}, "
@@ -647,7 +743,11 @@ async def run_swarm(
     yield _step(
         "system",
         f"Threads created: {', '.join(t.title for t in threads)}",
-        data={"thread_ids": [t.id for t in threads]},
+        data={
+            "thread_ids": [t.id for t in threads],
+            # Slim thread objects (no embeddings) so the board can show thread tabs.
+            "threads": [t.model_dump(mode="json", exclude={"thread_embedding"}) for t in threads],
+        },
     )
 
     # ── Auction (Market Hive §6.2) ───────────────────────────────────────────

@@ -8,7 +8,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, insert, select, text, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.db import (
@@ -261,6 +261,35 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: DBDep) -> AgentResp
     return AgentResponse(**deserialise_agent_row(row))
 
 
+# ECSAS swarm-run tables that reference agents (directly, or via draft entries).
+# Listed leaf-first so the deletes respect the foreign keys between them.
+_SWARM_TABLES_DELETE_ORDER: tuple[str, ...] = (
+    "citations",
+    "votes",
+    "confirmed_entries",
+    "bids",
+    "amendments",
+    "reputation",
+    "draft_entries",
+    "agent_trust",
+    "threads",
+    "contracts",
+    "swarm_runs",
+)
+
+
+async def _clear_swarm_data(db: AsyncConnection) -> None:
+    """Delete all swarm-run rows so agents referenced by them can be removed.
+
+    The ECSAS tables reference ``agents`` without ``ON DELETE CASCADE``, so an
+    agent that joined a swarm run cannot be deleted while those rows exist. Swarm
+    runs are transient experiments, so clearing them on a board reset / re-import
+    is the intended behavior (unlike topology trial history, which is preserved).
+    """
+    for table in _SWARM_TABLES_DELETE_ORDER:
+        await db.execute(text(f"DELETE FROM {table}"))  # noqa: S608 — table from constant list
+
+
 @router.delete(
     "",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -269,13 +298,13 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: DBDep) -> AgentResp
 async def delete_all(db: DBDep) -> None:
     """Clear the board — delete every agent and knowledge file.
 
-    Run history (trials, rounds, connections, messages) is intentionally
-    preserved so statistics from previous runs remain available for comparison.
-    The agent foreign keys on connections/messages are ``ON DELETE SET NULL`` and
-    agent names are snapshotted onto those rows, so the history stays intact and
-    readable after the agents are removed. Deleting agents cascades to
+    Topology run history (trials, rounds, connections, messages) is preserved:
+    its agent foreign keys are ``ON DELETE SET NULL`` and names are snapshotted.
+    Swarm-run data is cleared first because its foreign keys to ``agents`` have no
+    cascade and would otherwise block deletion. Deleting agents cascades to
     ``agent_files``; knowledge files are then removed explicitly.
     """
+    await _clear_swarm_data(db)
     await db.execute(delete(agents))
     await db.execute(delete(knowledge_files))
     await db.commit()
@@ -299,6 +328,9 @@ async def delete_agent(agent_id: str, db: DBDep) -> None:
     existing = await db.execute(select(agents.c.id).where(agents.c.id == agent_id))
     if existing.first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    # Swarm-run rows reference agents without cascade; clear them so the delete
+    # is not blocked once this agent has participated in a run.
+    await _clear_swarm_data(db)
     await db.execute(delete(agents).where(agents.c.id == agent_id))
     await db.commit()
 

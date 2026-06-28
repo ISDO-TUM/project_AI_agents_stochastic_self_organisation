@@ -1544,6 +1544,39 @@ async def test_swarm_run_with_no_agents_returns_422(client: AsyncClient) -> None
 
 
 @pytest.mark.asyncio
+async def test_delete_agent_clears_swarm_data(client: AsyncClient) -> None:
+    """An agent that joined a swarm run can still be deleted (re-import flow).
+
+    The swarm tables reference agents without ON DELETE CASCADE, so deletion must
+    clear the run data first rather than failing on the foreign key.
+    """
+    from sqlalchemy import text
+
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        agent_id = await _create_agent(client)
+
+    async with get_engine().connect() as conn:
+        await conn.execute(text("INSERT INTO swarm_runs (id) VALUES ('run-x')"))
+        await conn.execute(
+            text("INSERT INTO bids (id, run_id, agent_id) VALUES ('bid-x', 'run-x', :a)"),
+            {"a": agent_id},
+        )
+        await conn.commit()
+
+    resp = await client.delete(f"/api/agents/{agent_id}")
+    assert resp.status_code == 204
+
+    async with get_engine().connect() as conn:
+        bids = (await conn.execute(text("SELECT COUNT(*) FROM bids"))).scalar_one()
+        runs = (await conn.execute(text("SELECT COUNT(*) FROM swarm_runs"))).scalar_one()
+    assert bids == 0
+    assert runs == 0
+
+
+@pytest.mark.asyncio
 async def test_swarm_run_streams_simulation_steps_as_sse(client: AsyncClient) -> None:
     # Avoid the embedding network call during agent creation.
     with patch(

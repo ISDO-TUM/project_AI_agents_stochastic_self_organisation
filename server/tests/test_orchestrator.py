@@ -9,6 +9,7 @@ embedding when no embedding API key is present.
 from __future__ import annotations
 
 import json
+import uuid
 from collections.abc import AsyncGenerator, AsyncIterator, Iterator
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -21,7 +22,7 @@ from sqlalchemy.pool import StaticPool
 from server.db.tables import metadata
 from server.market_hive.auction import AuctionEngine
 from server.market_hive.blackboard import Blackboard
-from server.market_hive.orchestrator import AgentRunner, run_swarm
+from server.market_hive.orchestrator import AgentRunner, _default_agent_runner, run_swarm
 from server.market_hive.schemas import SimulationStep, SwarmRunConfig
 from server.schemas import ToolCall
 
@@ -225,31 +226,23 @@ async def test_run_swarm_creates_run_contract_and_thread(db: AsyncConnection) ->
     assert len(threads) == 1
 
 
-async def test_run_swarm_posts_anchors(db: AsyncConnection) -> None:
+async def test_run_swarm_confirmed_layer_starts_empty(db: AsyncConnection) -> None:
     await _drain(SwarmRunConfig(prompt="Analyze this energy contract"), db)
 
-    anchors = (
-        (
-            await db.execute(
-                text("SELECT content FROM confirmed_entries WHERE entry_type = 'anchor'")
-            )
-        )
-        .mappings()
-        .fetchall()
-    )
-    # One contract anchor + one thread anchor for the single-thread fallback.
-    assert len(anchors) == 2
-    contents = " ".join(a["content"] for a in anchors)
-    assert "Contract:" in contents
-    assert "Thread:" in contents
+    # No anchors are seeded — the Confirmed layer is empty until a draft entry is
+    # promoted via citations.
+    confirmed = (await db.execute(text("SELECT COUNT(*) FROM confirmed_entries"))).scalar_one()
+    assert confirmed == 0
 
 
 async def test_run_swarm_emits_system_steps(db: AsyncConnection) -> None:
     steps = await _drain(SwarmRunConfig(prompt="Analyze this energy contract"), db)
 
+    # An immediate liveness frame is emitted before the (slow) contract step.
     assert steps[0].type == "system"
-    assert "Contract created" in steps[0].msg
-    assert "Threads created" in steps[1].msg
+    assert "Run started" in steps[0].msg
+    assert any("Contract created" in s.msg for s in steps)
+    assert any("Threads created" in s.msg for s in steps)
 
 
 # ── M1: auction ───────────────────────────────────────────────────────────────
@@ -463,7 +456,7 @@ async def test_final_output_convergence_step(db: AsyncConnection) -> None:
     assert final.data["termination_round"] == 2
 
     # Both round-1 proposals were promoted; the answer for the thread is one of them.
-    threads_data = steps[1].data
+    threads_data = next(s.data for s in steps if s.msg.startswith("Threads created"))
     assert threads_data is not None
     thread_id = threads_data["thread_ids"][0]
     assert thread_id in final.data["answers"]
@@ -493,3 +486,82 @@ def _run_id(steps: list[SimulationStep]) -> str:
     run_id = data["run_id"]
     assert isinstance(run_id, str)
     return run_id
+
+
+# ── knowledge-file wiring into agent turns ─────────────────────────────────────
+
+
+async def test_default_runner_wires_agent_files(db: AsyncConnection) -> None:
+    """_default_agent_runner loads the agent's files, offers the `files` tool, and
+    hints the system prompt — so takers can read attached documents in any phase."""
+    agent_id = str(uuid.uuid4())
+    file_id = str(uuid.uuid4())
+    await _insert_agent(db, agent_id, "Counsel")
+    await db.execute(
+        text("INSERT INTO knowledge_files (id, name, content) VALUES (:id, :name, :content)"),
+        {"id": file_id, "name": "contract.txt", "content": "Clause 7: price may change monthly."},
+    )
+    await db.execute(
+        text("INSERT INTO agent_files (agent_id, file_id) VALUES (:aid, :fid)"),
+        {"aid": agent_id, "fid": file_id},
+    )
+    await db.commit()
+
+    agent = {
+        "id": agent_id,
+        "name": "Counsel",
+        "system_prompt": "You are a lawyer.",
+        "provider": "openai",
+        "model": "gpt-4o",
+    }
+    captured: dict[str, Any] = {}
+
+    async def _fake_call_agent(prompt: str, **kwargs: Any) -> tuple[str, list[ToolCall]]:
+        captured.update(kwargs)
+        return "ok", []
+
+    with patch("server.market_hive.orchestrator.call_agent", new=_fake_call_agent):
+        text_out, _ = await _default_agent_runner(
+            agent,
+            user_prompt="Analyse the contract.",
+            system_suffix="ROUND 1",
+            tool_names=["post_to_blackboard"],
+            tool_context={"db": db, "agent_id": agent_id, "run_id": str(uuid.uuid4())},
+        )
+
+    assert text_out == "ok"
+    assert "files" in captured["tool_names"]  # the files tool was offered
+    assert captured["tool_context"]["files"] == {"contract.txt": "Clause 7: price may change monthly."}
+    assert "contract.txt" in (captured["system_prompt"] or "")  # prompt hints the file
+
+
+async def test_default_runner_no_files_omits_files_tool(db: AsyncConnection) -> None:
+    """An agent with no attached files is not given the files tool."""
+    agent_id = str(uuid.uuid4())
+    await _insert_agent(db, agent_id, "Plain")
+    await db.commit()
+
+    agent = {
+        "id": agent_id,
+        "name": "Plain",
+        "system_prompt": "You are helpful.",
+        "provider": "openai",
+        "model": "gpt-4o",
+    }
+    captured: dict[str, Any] = {}
+
+    async def _fake_call_agent(prompt: str, **kwargs: Any) -> tuple[str, list[ToolCall]]:
+        captured.update(kwargs)
+        return "ok", []
+
+    with patch("server.market_hive.orchestrator.call_agent", new=_fake_call_agent):
+        await _default_agent_runner(
+            agent,
+            user_prompt="Hi",
+            system_suffix="ROUND 1",
+            tool_names=["post_to_blackboard"],
+            tool_context={"db": db, "agent_id": agent_id, "run_id": str(uuid.uuid4())},
+        )
+
+    assert "files" not in captured["tool_names"]
+    assert captured["tool_context"]["files"] == {}
