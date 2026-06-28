@@ -127,11 +127,17 @@ async def test_make_contract_uses_llm_decomposition(db: AsyncConnection) -> None
 
     # Persisted to the DB, not just returned.
     row = (
-        await db.execute(
-            text("SELECT task_type, required_expertise, confidence FROM contracts WHERE id = :id"),
-            {"id": contract.id},
+        (
+            await db.execute(
+                text(
+                    "SELECT task_type, required_expertise, confidence FROM contracts WHERE id = :id"
+                ),
+                {"id": contract.id},
+            )
         )
-    ).mappings().fetchone()
+        .mappings()
+        .fetchone()
+    )
     assert row is not None
     assert row["task_type"] == "energy_contract_review"
     assert json.loads(row["required_expertise"]) == [

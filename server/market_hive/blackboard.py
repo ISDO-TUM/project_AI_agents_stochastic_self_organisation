@@ -54,11 +54,15 @@ class Blackboard:
             return None
 
         exact = (
-            await self._db.execute(
-                text("SELECT id FROM draft_entries WHERE run_id = :run_id AND id = :id"),
-                {"run_id": run_id, "id": candidate},
+            (
+                await self._db.execute(
+                    text("SELECT id FROM draft_entries WHERE run_id = :run_id AND id = :id"),
+                    {"run_id": run_id, "id": candidate},
+                )
             )
-        ).mappings().fetchone()
+            .mappings()
+            .fetchone()
+        )
         if exact is not None:
             return str(exact["id"])
 
@@ -68,11 +72,15 @@ class Blackboard:
         if len(candidate) < 4 or "%" in candidate or "_" in candidate:
             return None
         rows = (
-            await self._db.execute(
-                text("SELECT id FROM draft_entries WHERE run_id = :run_id AND id LIKE :prefix"),
-                {"run_id": run_id, "prefix": f"{candidate}%"},
+            (
+                await self._db.execute(
+                    text("SELECT id FROM draft_entries WHERE run_id = :run_id AND id LIKE :prefix"),
+                    {"run_id": run_id, "prefix": f"{candidate}%"},
+                )
             )
-        ).mappings().fetchall()
+            .mappings()
+            .fetchall()
+        )
         return str(rows[0]["id"]) if len(rows) == 1 else None
 
     # ── write ─────────────────────────────────────────────────────────────
