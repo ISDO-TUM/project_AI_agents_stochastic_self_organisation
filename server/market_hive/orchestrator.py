@@ -66,7 +66,8 @@ class ContractSource(Protocol):
 
     async def make_contract(
         self, prompt: str, run_id: str, db: AsyncConnection
-    ) -> tuple[ContractSchema, list[ThreadSchema]]: ...
+    ) -> tuple[ContractSchema, list[ThreadSchema]]:
+        raise NotImplementedError
 
 
 class Terminator(Protocol):
