@@ -112,11 +112,14 @@ class PostToBlackboardTool(Tool):
         run_id: str = ctx["run_id"]
         author_id: str = ctx["agent_id"]
         round_: int = ctx.get("round", 1)
+        # The orchestrator assigns the thread for this turn; trust it over the LLM's
+        # argument, which may be a mangled/hallucinated id and would FK-violate.
+        thread_id: str = ctx.get("thread_id") or validated_input.thread_id
 
         bb = Blackboard(db)
         entry_id = await bb.post(
             run_id=run_id,
-            thread_id=validated_input.thread_id,
+            thread_id=thread_id,
             author_id=author_id,
             content=validated_input.content,
             entry_type=validated_input.entry_type,

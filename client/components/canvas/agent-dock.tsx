@@ -19,6 +19,8 @@ interface AgentDockProps {
     string,
     { domain: string; trust_score: number; runs_participated: number }[]
   >;
+  /** Agent IDs whose turn is in flight — pulse a ring around their chip. */
+  respondingIds?: string[];
 }
 
 /** Fixed horizontal strip above the prompt bar — replaces individually
@@ -31,6 +33,7 @@ export function AgentDock({
   bottom,
   onHeightChange,
   trustVectors = {},
+  respondingIds = [],
 }: AgentDockProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -132,24 +135,53 @@ export function AgentDock({
             const color = agentColor(agent.id, agents);
             const initial = (agent.name || "A")[0]?.toUpperCase() ?? "A";
             const tv = trustVectors[agent.id] ?? [];
+            const responding = respondingIds.includes(agent.id);
             const chipContent = (
               <span
                 style={{
-                  width: 40,
-                  height: 40,
-                  borderRadius: "50%",
-                  background: `${color}26`,
-                  color,
-                  border: `1.5px solid ${color}55`,
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontSize: 15,
-                  fontWeight: 800,
-                  cursor: "pointer",
+                  position: "relative",
+                  display: "inline-flex",
+                  flexShrink: 0,
                 }}
               >
-                {initial}
+                {responding && (
+                  <motion.span
+                    aria-hidden
+                    initial={{ opacity: 0.7, scale: 1 }}
+                    animate={{ opacity: [0.7, 0, 0.7], scale: [1, 1.5, 1] }}
+                    transition={{
+                      duration: 1.3,
+                      repeat: Infinity,
+                      ease: "easeOut",
+                    }}
+                    style={{
+                      position: "absolute",
+                      inset: -3,
+                      borderRadius: "50%",
+                      border: `2px solid ${color}`,
+                      pointerEvents: "none",
+                    }}
+                  />
+                )}
+                <span
+                  style={{
+                    width: 40,
+                    height: 40,
+                    borderRadius: "50%",
+                    background: `${color}26`,
+                    color,
+                    border: `1.5px solid ${color}55`,
+                    boxShadow: responding ? `0 0 14px ${color}aa` : undefined,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    fontSize: 15,
+                    fontWeight: 800,
+                    cursor: "pointer",
+                  }}
+                >
+                  {initial}
+                </span>
               </span>
             );
             return (

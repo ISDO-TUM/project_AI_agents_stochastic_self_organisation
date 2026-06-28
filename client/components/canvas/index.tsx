@@ -75,6 +75,8 @@ interface CanvasProps {
     string,
     { domain: string; trust_score: number; runs_participated: number }[]
   >;
+  /** Agent IDs whose turn is in flight — pulse their AgentDock chip. */
+  swarmRespondingIds?: string[];
 }
 
 interface ConnectingState {
@@ -121,6 +123,7 @@ export function Canvas({
   biddingBoard = null,
   swarmDone = false,
   swarmTrustVectors = {},
+  swarmRespondingIds = [],
 }: CanvasProps) {
   const { dark } = useTheme();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -440,19 +443,23 @@ export function Canvas({
           zIndex: 1,
         }}
       >
-        <EdgeLayer
-          edges={edges}
-          dynamicEdges={dynamicEdges}
-          agents={agents}
-          sources={sources}
-          selectedEdge={selectedEdge}
-          onSelectEdge={onSelectEdge}
-          onDeleteEdge={onDeleteEdge}
-          activeEdgeId={activeEdgeId}
-          activeEdgeReversed={activeEdgeReversed}
-          animatedParticles={animatedParticles}
-          tweaks={tweaks}
-        />
+        {/* In swarm mode agents coordinate via the blackboard, not edges —
+            hide all agent/file connections (PRD §12.3). */}
+        {appMode !== "swarm" && (
+          <EdgeLayer
+            edges={edges}
+            dynamicEdges={dynamicEdges}
+            agents={agents}
+            sources={sources}
+            selectedEdge={selectedEdge}
+            onSelectEdge={onSelectEdge}
+            onDeleteEdge={onDeleteEdge}
+            activeEdgeId={activeEdgeId}
+            activeEdgeReversed={activeEdgeReversed}
+            animatedParticles={animatedParticles}
+            tweaks={tweaks}
+          />
+        )}
         {connectLine && (
           <svg
             style={{
@@ -542,6 +549,7 @@ export function Canvas({
             bottom={DOCK_BOTTOM}
             onHeightChange={setDockHeight}
             trustVectors={swarmTrustVectors}
+            respondingIds={swarmRespondingIds}
           />
           {draftPos && (
             <DraftBoard

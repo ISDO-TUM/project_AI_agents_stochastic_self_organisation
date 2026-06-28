@@ -150,6 +150,34 @@ async def test_invite_filters_by_floor(db: AsyncConnection) -> None:
     assert orthogonal not in ids  # cosine 0.0 < 0.3
 
 
+async def test_invite_falls_back_to_all_when_floor_excludes_everyone(
+    db: AsyncConnection,
+) -> None:
+    """The cosine floor must never abort a runnable swarm.
+
+    When no agent clears the floor (e.g. a short contract prompt scores low
+    against every role description), every agent is invited instead — with real
+    cosine scores preserved — so LLM self-selection decides participation.
+    """
+    run_id = str(uuid.uuid4())
+    contract_id = str(uuid.uuid4())
+    await _seed_run(db, run_id)
+    await _seed_contract(db, run_id=run_id, contract_id=contract_id, embedding=[1.0, 0.0])
+
+    a, b = str(uuid.uuid4()), str(uuid.uuid4())
+    # Both agents score well below the floor (cosine ~0.1 and 0.0).
+    await _seed_agent(db, agent_id=a, name="A", embedding=[0.1, 1.0])
+    await _seed_agent(db, agent_id=b, name="B", embedding=[0.0, 1.0])
+
+    eng = AuctionEngine(db, invite_floor=0.9)
+    invited = await eng.invite(run_id=run_id, contract_id=contract_id)
+
+    assert {i.agent_id for i in invited} == {a, b}
+    # Real cosine scores are preserved for downstream ranking, not zeroed out.
+    by_id = {i.agent_id: i.preliminary_score for i in invited}
+    assert by_id[a] > by_id[b]
+
+
 async def test_invite_includes_trust_score(db: AsyncConnection) -> None:
     run_id = str(uuid.uuid4())
     contract_id = str(uuid.uuid4())

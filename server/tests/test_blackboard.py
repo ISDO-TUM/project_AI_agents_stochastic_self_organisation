@@ -759,3 +759,93 @@ async def test_mention_writes_to_messages_table(db: AsyncConnection) -> None:
     assert rows[0][1] == agent_b
     assert rows[0][2] == "bb_mention"
     assert rows[0][3] == "Hey agent_b!"
+
+
+# ── id resolution (truncated display ids → real ids) ───────────────────────────
+
+
+async def test_reply_to_resolves_truncated_id(db: AsyncConnection) -> None:
+    """A reply whose reply_to is the 8-char display prefix links to the full entry."""
+    from sqlalchemy import text
+
+    run_id = str(uuid.uuid4())
+    thread_id = str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+
+    bb = Blackboard(db)
+    parent_id = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_a,
+        content="Parent proposal",
+        entry_type="proposal",
+        round=1,
+    )
+    # The LLM copies the 8-char prefix shown by read_blackboard.
+    reply_id = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_b,
+        content="Building on that",
+        entry_type="reply",
+        round=2,
+        reply_to=parent_id[:8],
+    )
+
+    stored = (
+        await db.execute(
+            text("SELECT reply_to FROM draft_entries WHERE id = :id"), {"id": reply_id}
+        )
+    ).scalar_one()
+    assert stored == parent_id  # resolved to the full id, not the 8-char prefix
+
+
+async def test_reply_to_unknown_id_becomes_top_level(db: AsyncConnection) -> None:
+    """An unresolvable reply_to is dropped (top-level post), never an FK violation."""
+    from sqlalchemy import text
+
+    run_id = str(uuid.uuid4())
+    thread_id = str(uuid.uuid4())
+    agent_a, _ = await _seed_two_agents(db, run_id, thread_id)
+
+    bb = Blackboard(db)
+    reply_id = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_a,
+        content="Reply to a stale id",
+        entry_type="reply",
+        round=2,
+        reply_to="deadbeef",  # no such entry
+    )
+
+    stored = (
+        await db.execute(
+            text("SELECT reply_to FROM draft_entries WHERE id = :id"), {"id": reply_id}
+        )
+    ).scalar_one()
+    assert stored is None
+
+
+async def test_cite_resolves_truncated_entry_id(db: AsyncConnection) -> None:
+    """A citation using the 8-char display id is recorded, not silently dropped."""
+    run_id = str(uuid.uuid4())
+    thread_id = str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+
+    bb = Blackboard(db)
+    target_id = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_a,
+        content="Cite me",
+        entry_type="proposal",
+        round=1,
+    )
+    result = await bb.cite(
+        run_id=run_id,
+        citing_agent_id=agent_b,
+        entry_ids=[target_id[:8]],
+        round=2,
+    )
+    assert result["cited"] == 1

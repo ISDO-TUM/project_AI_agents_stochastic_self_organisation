@@ -138,7 +138,10 @@ class AuctionEngine:
         is ``>= invite_floor``. When the contract has no embedding yet, or an
         agent has no ``capability_embedding``, we cannot discriminate, so we
         invite inclusively (score 0.0) rather than abort the run — consistent
-        with the Market Maker's "never block the run" philosophy.
+        with the Market Maker's "never block the run" philosophy. For the same
+        reason, if the floor would invite *nobody*, every agent is invited
+        instead (real scores kept for ranking) so self-selection — not a cosine
+        pre-filter — decides who participates.
         """
         contract = (
             (
@@ -165,6 +168,7 @@ class AuctionEngine:
         trust_by_agent = await self._trust_scores(task_type)
 
         invitations: list[Invitation] = []
+        all_agents: list[Invitation] = []
         for row in rows:
             agent_emb = self._parse_embedding(row["capability_embedding"])
             if contract_emb is not None and agent_emb is not None:
@@ -174,15 +178,25 @@ class AuctionEngine:
                 # Missing embedding on either side → cannot discriminate; invite.
                 score = 0.0
                 invited = True
+            candidate = Invitation(
+                agent_id=row["id"],
+                agent_name=row["name"],
+                preliminary_score=score,
+                trust_score=trust_by_agent.get(row["id"], DEFAULT_TRUST),
+            )
+            all_agents.append(candidate)
             if invited:
-                invitations.append(
-                    Invitation(
-                        agent_id=row["id"],
-                        agent_name=row["name"],
-                        preliminary_score=score,
-                        trust_score=trust_by_agent.get(row["id"], DEFAULT_TRUST),
-                    )
-                )
+                invitations.append(candidate)
+
+        # The cosine floor is a pre-filter to skip clearly-irrelevant agents, not
+        # a hard run gate. If it excludes *everyone* (e.g. a short contract prompt
+        # vs. role descriptions scores below the floor for all agents), inviting
+        # nobody would abort the whole run — which contradicts the "never block the
+        # run" philosophy. Fall back to inviting every agent (real cosine scores
+        # preserved for ranking) and let the LLM self-selection (bid/abstain) be
+        # the real filter. When some agents do clear the floor, this is a no-op.
+        if not invitations:
+            return all_agents
         return invitations
 
     # ── Phase 2: recording self-selection ────────────────────────────────────

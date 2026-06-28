@@ -201,6 +201,7 @@ class SwarmFinalOutput(BaseModel):
 # stream carries the live activity log + canvas animation triggers.
 SwarmSimStepType = Literal[
     "system",
+    "agent-thinking",
     "bid",
     "abstain",
     "bb-post",
