@@ -74,7 +74,8 @@ class Terminator(Protocol):
 
     async def should_terminate(
         self, *, run_id: str, round: int, config: SwarmRunConfig, db: AsyncConnection
-    ) -> bool: ...
+    ) -> bool:
+        raise NotImplementedError
 
     async def format_output(
         self, *, run_id: str, round: int, reason: str, db: AsyncConnection
