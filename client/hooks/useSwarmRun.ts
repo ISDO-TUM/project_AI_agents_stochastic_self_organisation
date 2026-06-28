@@ -36,6 +36,9 @@ export interface SwarmRunState {
   done: boolean;
   runId: string | null;
   blackboard: BlackboardState;
+  // Agent IDs currently producing a turn (their LLM call is in flight). Drives
+  // the "is responding…" pulse on the agent dock chips.
+  responding: string[];
   error: string | null;
 }
 
@@ -44,6 +47,7 @@ const IDLE: SwarmRunState = {
   done: false,
   runId: null,
   blackboard: EMPTY_BOARD,
+  responding: [],
   error: null,
 };
 
@@ -55,6 +59,8 @@ type Action =
   | { type: "CITE"; entryId: string; citerName: string; round: number }
   | { type: "PROMOTE"; confirmed: ConfirmedEntry }
   | { type: "DELETE"; entryId: string }
+  | { type: "THINKING_RESET" }
+  | { type: "THINKING_ADD"; nodeId: string }
   | { type: "DONE" }
   | { type: "ERROR"; error: string }
   | { type: "RESET" };
@@ -116,6 +122,10 @@ function reducer(state: SwarmRunState, action: Action): SwarmRunState {
     case "POST":
       return {
         ...state,
+        // The author has produced its turn → stop pulsing it.
+        responding: state.responding.filter(
+          (id) => id !== action.entry.author_id,
+        ),
         blackboard: { ...bb, draft: insertEntry(bb.draft, action.entry) },
       };
     case "CITE":
@@ -149,8 +159,15 @@ function reducer(state: SwarmRunState, action: Action): SwarmRunState {
           })),
         },
       };
+    case "THINKING_RESET":
+      // A fresh sub-round wave starts: nobody from the previous wave is pulsing.
+      return { ...state, responding: [] };
+    case "THINKING_ADD":
+      return state.responding.includes(action.nodeId)
+        ? state
+        : { ...state, responding: [...state.responding, action.nodeId] };
     case "DONE":
-      return { ...state, active: false, done: true };
+      return { ...state, active: false, done: true, responding: [] };
     case "ERROR":
       return { ...state, error: action.error };
     case "RESET":
@@ -191,6 +208,10 @@ export function useSwarmRun(): {
         const reader = res.body.getReader();
         const decoder = new TextDecoder();
         let buffer = "";
+        // The backend emits all of a sub-round's "agent-thinking" frames in one
+        // run before any output; the first one after any other frame opens a new
+        // wave and clears the previous responders.
+        let prevThinking = false;
 
         while (seqRef.current === seq) {
           const { done, value } = await reader.read();
@@ -212,6 +233,14 @@ export function useSwarmRun(): {
               continue;
             }
             if (seqRef.current !== seq) break;
+            if (step.type === "agent-thinking") {
+              if (!prevThinking) dispatch({ type: "THINKING_RESET" });
+              prevThinking = true;
+              if (step.node_id)
+                dispatch({ type: "THINKING_ADD", nodeId: step.node_id });
+              continue;
+            }
+            prevThinking = false;
             applyStep(dispatch, step);
           }
         }

@@ -631,6 +631,7 @@ export function App({ onModeSelected }: AppProps = {}) {
             appMode === "swarm" && (dummy.state.done || swarm.state.done)
           }
           swarmTrustVectors={dummy.state.trustVectors}
+          swarmRespondingIds={swarm.state.responding}
           phonebook={
             topology === "dynamic"
               ? {

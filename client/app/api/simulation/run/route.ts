@@ -26,7 +26,8 @@ export const dynamic = "force-dynamic";
 export const runtime = "nodejs";
 export const fetchCache = "force-no-store";
 
-const INTERNAL_API_URL = process.env.INTERNAL_API_URL ?? "http://localhost:8000";
+const INTERNAL_API_URL =
+  process.env.INTERNAL_API_URL ?? "http://localhost:8000";
 
 // Hop-by-hop / proxy-managed request headers we must not forward upstream.
 // `accept-encoding` is dropped so the backend answers with identity encoding and
@@ -61,7 +62,8 @@ export async function POST(req: NextRequest): Promise<Response> {
     statusText: upstream.statusText,
     headers: {
       "Content-Type":
-        upstream.headers.get("content-type") ?? "text/event-stream; charset=utf-8",
+        upstream.headers.get("content-type") ??
+        "text/event-stream; charset=utf-8",
       "Cache-Control": "no-cache, no-transform",
       Connection: "keep-alive",
       "X-Accel-Buffering": "no",

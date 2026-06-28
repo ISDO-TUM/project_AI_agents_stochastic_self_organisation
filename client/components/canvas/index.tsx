@@ -75,6 +75,8 @@ interface CanvasProps {
     string,
     { domain: string; trust_score: number; runs_participated: number }[]
   >;
+  /** Agent IDs whose turn is in flight — pulse their AgentDock chip. */
+  swarmRespondingIds?: string[];
 }
 
 interface ConnectingState {
@@ -121,6 +123,7 @@ export function Canvas({
   biddingBoard = null,
   swarmDone = false,
   swarmTrustVectors = {},
+  swarmRespondingIds = [],
 }: CanvasProps) {
   const { dark } = useTheme();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -546,6 +549,7 @@ export function Canvas({
             bottom={DOCK_BOTTOM}
             onHeightChange={setDockHeight}
             trustVectors={swarmTrustVectors}
+            respondingIds={swarmRespondingIds}
           />
           {draftPos && (
             <DraftBoard

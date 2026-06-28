@@ -14,12 +14,13 @@ action into a ``SimulationStep`` for the SSE stream.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import uuid
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any, NamedTuple, Protocol
 
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -202,6 +203,137 @@ def _step(
         entry_id=entry_id,
         data=data,
     )
+
+
+# ── Concurrent agent turns ───────────────────────────────────────────────────
+# Within a sub-round every agent's turn is independent — each reads the
+# start-of-round board and posts its own entry — so the turns can overlap. The
+# wall-clock cost is one LLM round-trip apiece; running them concurrently turns a
+# round from N sequential calls into ~1, so the board fills far faster.
+
+# Cap on simultaneous in-flight turns, so a large swarm can't open an unbounded
+# number of LLM calls / DB connections at once (rate limits, pool exhaustion).
+_MAX_CONCURRENT_TURNS = 8
+
+
+class _Turn(NamedTuple):
+    """One agent's pending turn: who it is, plus a coroutine that runs it.
+
+    ``run`` takes the DB connection the turn should use (the shared one when
+    serialized, a private one when parallelized) and returns the steps to emit.
+    """
+
+    agent_name: str
+    node_id: str
+    run: Callable[[AsyncConnection], Awaitable[list[SimulationStep]]]
+
+
+async def _run_turns(db: AsyncConnection, turns: list[_Turn]) -> AsyncIterator[SimulationStep]:
+    """Run a sub-round's agent turns, yielding each one's steps as it finishes.
+
+    First emits an ``agent-thinking`` frame per turn so the UI lights up every
+    agent the moment the (slow) LLM calls start, instead of going silent.
+
+    On Postgres the turns run concurrently, each on its own connection, so their
+    LLM calls overlap and entries stream back in completion order. On SQLite —
+    whose ``StaticPool`` shares one underlying DBAPI connection that can't carry
+    concurrent transactions — they run sequentially on the shared connection,
+    preserving the single-connection semantics the test suite relies on.
+    """
+    if not turns:
+        return
+    for turn in turns:
+        yield _step("agent-thinking", f"{turn.agent_name} is responding…", node_id=turn.node_id)
+
+    serial = db.engine.dialect.name == "sqlite" or len(turns) == 1
+    if serial:
+        for turn in turns:
+            for step in await turn.run(db):
+                yield step
+        return
+
+    # Postgres: fan out, each turn on a private connection, bounded by a semaphore.
+    sem = asyncio.Semaphore(_MAX_CONCURRENT_TURNS)
+
+    async def _isolated(turn: _Turn) -> list[SimulationStep]:
+        async with sem, db.engine.connect() as conn:
+            return await turn.run(conn)
+
+    tasks = [asyncio.create_task(_isolated(turn)) for turn in turns]
+    try:
+        for finished in asyncio.as_completed(tasks):
+            for step in await finished:
+                yield step
+    finally:
+        # Cover early consumer exit (client disconnect) and any task error: cancel
+        # whatever is still running and drain so every connection closes cleanly.
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _auction_turn(
+    invitation: Invitation,
+    agent: dict[str, Any],
+    run_id: str,
+    contract: ContractSchema,
+    agent_runner: AgentRunner,
+) -> _Turn:
+    """Build one auction self-selection turn (bid vs. abstain)."""
+
+    async def run(conn: AsyncConnection) -> list[SimulationStep]:
+        _text, tools_used = await agent_runner(
+            agent,
+            user_prompt=auction_user_prompt(contract, invitation),
+            system_suffix=AUCTION_SYSTEM_SUFFIX,
+            # No read_blackboard here: the board is empty during the auction, and the
+            # full contract is already in the prompt. Offering it only invites agents
+            # to "read" an empty board and wrongly conclude there is no contract.
+            tool_names=["submit_bid", "abstain"],
+            tool_context={
+                "db": conn,
+                "run_id": run_id,
+                "agent_id": invitation.agent_id,
+                "contract_id": contract.id,
+                "preliminary_score": invitation.preliminary_score,
+            },
+        )
+        return _auction_events(invitation, agent, tools_used)
+
+    return _Turn(agent_name=agent["name"], node_id=invitation.agent_id, run=run)
+
+
+def _board_turn(
+    agent: dict[str, Any],
+    *,
+    run_id: str,
+    agent_runner: AgentRunner,
+    user_prompt: str,
+    system_suffix: str,
+    tool_names: list[str],
+    thread_id: str,
+    round: int,
+) -> _Turn:
+    """Build one blackboard turn (round 1 / vote / discussion) for ``agent``."""
+
+    async def run(conn: AsyncConnection) -> list[SimulationStep]:
+        _text, tools_used = await agent_runner(
+            agent,
+            user_prompt=user_prompt,
+            system_suffix=system_suffix,
+            tool_names=tool_names,
+            tool_context={
+                "db": conn,
+                "run_id": run_id,
+                "agent_id": agent["id"],
+                "thread_id": thread_id,
+                "round": round,
+            },
+        )
+        return await _board_events(conn, agent, tools_used, round)
+
+    return _Turn(agent_name=agent["name"], node_id=agent["id"], run=run)
 
 
 # ── Run lifecycle helpers ────────────────────────────────────────────────────
@@ -419,28 +551,13 @@ async def _run_auction(
     invitations = await auction.invite(run_id=run_id, contract_id=contract.id)
     yield _step("system", f"Auction open. {len(invitations)} agent(s) invited.")
 
-    for invitation in invitations:
-        agent = agents_by_id.get(invitation.agent_id)
-        if agent is None:
-            continue
-        _text, tools_used = await agent_runner(
-            agent,
-            user_prompt=auction_user_prompt(contract, invitation),
-            system_suffix=AUCTION_SYSTEM_SUFFIX,
-            # No read_blackboard here: the board is empty during the auction, and the
-            # full contract is already in the prompt. Offering it only invites agents
-            # to "read" an empty board and wrongly conclude there is no contract.
-            tool_names=["submit_bid", "abstain"],
-            tool_context={
-                "db": db,
-                "run_id": run_id,
-                "agent_id": invitation.agent_id,
-                "contract_id": contract.id,
-                "preliminary_score": invitation.preliminary_score,
-            },
-        )
-        for step in _auction_events(invitation, agent, tools_used):
-            yield step
+    turns = [
+        _auction_turn(invitation, agent, run_id, contract, agent_runner)
+        for invitation in invitations
+        if (agent := agents_by_id.get(invitation.agent_id)) is not None
+    ]
+    async for step in _run_turns(db, turns):
+        yield step
 
     selection = await auction.select_takers(run_id=run_id, contract_id=contract.id)
     if selection.aborted:
@@ -502,29 +619,29 @@ async def _run_round_one(
     instruction = ConvergenceEngine.temperature_instruction(0.5)
     suffix = round_one_system_suffix(instruction)
 
+    turns: list[_Turn] = []
     for thread in threads:
         coworkers = [agents_by_id[t]["name"] for t in takers if t in agents_by_id]
         for taker in takers:
             agent = agents_by_id.get(taker)
             if agent is None:
                 continue
-            _text, tools_used = await agent_runner(
-                agent,
-                user_prompt=round_one_user_prompt(
-                    contract, thread, max_rounds=config.max_rounds, coworkers=coworkers
-                ),
-                system_suffix=suffix,
-                tool_names=_ROUND1_TOOLS,
-                tool_context={
-                    "db": db,
-                    "run_id": run_id,
-                    "agent_id": taker,
-                    "thread_id": thread.id,
-                    "round": 1,
-                },
+            turns.append(
+                _board_turn(
+                    agent,
+                    run_id=run_id,
+                    agent_runner=agent_runner,
+                    user_prompt=round_one_user_prompt(
+                        contract, thread, max_rounds=config.max_rounds, coworkers=coworkers
+                    ),
+                    system_suffix=suffix,
+                    tool_names=_ROUND1_TOOLS,
+                    thread_id=thread.id,
+                    round=1,
+                )
             )
-            for step in await _board_events(db, agent, tools_used, 1):
-                yield step
+    async for step in _run_turns(db, turns):
+        yield step
 
 
 async def _run_vote_subround(
@@ -537,27 +654,27 @@ async def _run_vote_subround(
 ) -> AsyncIterator[SimulationStep]:
     """Each taker votes on the round-1 proposals it endorses (PRD §9.4)."""
     yield _step("system", "Vote sub-round. Agents review Round 1 proposals.")
+    turns: list[_Turn] = []
     for thread in threads:
         proposals = await _round1_proposals(db, run_id, thread.id)
         for taker in takers:
             agent = agents_by_id.get(taker)
             if agent is None:
                 continue
-            _text, tools_used = await agent_runner(
-                agent,
-                user_prompt=vote_user_prompt(thread, proposals),
-                system_suffix=VOTE_SYSTEM_SUFFIX,
-                tool_names=_VOTE_TOOLS,
-                tool_context={
-                    "db": db,
-                    "run_id": run_id,
-                    "agent_id": taker,
-                    "thread_id": thread.id,
-                    "round": 1,
-                },
+            turns.append(
+                _board_turn(
+                    agent,
+                    run_id=run_id,
+                    agent_runner=agent_runner,
+                    user_prompt=vote_user_prompt(thread, proposals),
+                    system_suffix=VOTE_SYSTEM_SUFFIX,
+                    tool_names=_VOTE_TOOLS,
+                    thread_id=thread.id,
+                    round=1,
+                )
             )
-            for step in await _board_events(db, agent, tools_used, 1):
-                yield step
+    async for step in _run_turns(db, turns):
+        yield step
 
 
 async def _cold_start_temperatures(
@@ -597,29 +714,29 @@ async def _run_discussion_round(
 ) -> AsyncIterator[SimulationStep]:
     """One discussion round: each taker reads, replies, and cites (PRD §9.5)."""
     yield _step("system", f"Round {round} begins.")
+    turns: list[_Turn] = []
     for thread in threads:
         for taker in takers:
             agent = agents_by_id.get(taker)
             if agent is None:
                 continue
             instruction = ConvergenceEngine.temperature_instruction(temperatures.get(taker, 1.0))
-            _text, tools_used = await agent_runner(
-                agent,
-                user_prompt=rounds_user_prompt(
-                    contract, thread, round=round, max_rounds=config.max_rounds
-                ),
-                system_suffix=rounds_system_suffix(instruction),
-                tool_names=_ROUNDS_TOOLS,
-                tool_context={
-                    "db": db,
-                    "run_id": run_id,
-                    "agent_id": taker,
-                    "thread_id": thread.id,
-                    "round": round,
-                },
+            turns.append(
+                _board_turn(
+                    agent,
+                    run_id=run_id,
+                    agent_runner=agent_runner,
+                    user_prompt=rounds_user_prompt(
+                        contract, thread, round=round, max_rounds=config.max_rounds
+                    ),
+                    system_suffix=rounds_system_suffix(instruction),
+                    tool_names=_ROUNDS_TOOLS,
+                    thread_id=thread.id,
+                    round=round,
+                )
             )
-            for step in await _board_events(db, agent, tools_used, round):
-                yield step
+    async for step in _run_turns(db, turns):
+        yield step
 
 
 async def _visible_entry_ids(db: AsyncConnection, run_id: str) -> set[str]:
