@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import os
+from collections.abc import AsyncIterator
 from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from httpx import AsyncClient
@@ -12,6 +14,7 @@ from sqlalchemy import insert
 import server.topology as sim
 from server.db import create_connection, create_round, create_trial, get_engine, resolve_experiment
 from server.db.tables import agents
+from server.market_hive.schemas import SimulationStep
 from server.topology import (
     Reputation,
     TopologyController,
@@ -1528,3 +1531,74 @@ async def test_run_route_accepts_topology_and_rejects_no_agents(client: AsyncCli
     )
     assert resp.status_code == 422
     assert "No agents" in resp.json()["detail"]
+
+
+# ── M5: swarm engine streams SSE ─────────────────────────────────────────────
+
+
+@pytest.mark.asyncio
+async def test_swarm_run_with_no_agents_returns_422(client: AsyncClient) -> None:
+    resp = await client.post("/api/simulation/run", json={"engine": "swarm", "prompt": "hi"})
+    assert resp.status_code == 422
+    assert "No agents" in resp.json()["detail"]
+
+
+@pytest.mark.asyncio
+async def test_delete_agent_clears_swarm_data(client: AsyncClient) -> None:
+    """An agent that joined a swarm run can still be deleted (re-import flow).
+
+    The swarm tables reference agents without ON DELETE CASCADE, so deletion must
+    clear the run data first rather than failing on the foreign key.
+    """
+    from sqlalchemy import text
+
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        agent_id = await _create_agent(client)
+
+    async with get_engine().connect() as conn:
+        await conn.execute(text("INSERT INTO swarm_runs (id) VALUES ('run-x')"))
+        await conn.execute(
+            text("INSERT INTO bids (id, run_id, agent_id) VALUES ('bid-x', 'run-x', :a)"),
+            {"a": agent_id},
+        )
+        await conn.commit()
+
+    resp = await client.delete(f"/api/agents/{agent_id}")
+    assert resp.status_code == 204
+
+    async with get_engine().connect() as conn:
+        bids = (await conn.execute(text("SELECT COUNT(*) FROM bids"))).scalar_one()
+        runs = (await conn.execute(text("SELECT COUNT(*) FROM swarm_runs"))).scalar_one()
+    assert bids == 0
+    assert runs == 0
+
+
+@pytest.mark.asyncio
+async def test_swarm_run_streams_simulation_steps_as_sse(client: AsyncClient) -> None:
+    # Avoid the embedding network call during agent creation.
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    async def fake_run_swarm(config: Any, db: Any, **kwargs: Any) -> AsyncIterator[SimulationStep]:
+        yield SimulationStep(type="system", msg="Contract created: analysis, single")
+        yield SimulationStep(
+            type="convergence", msg="Run complete.", data={"termination_reason": "max_rounds"}
+        )
+
+    with patch("server.routes.simulation.run_swarm", new=fake_run_swarm):
+        resp = await client.post(
+            "/api/simulation/run", json={"engine": "swarm", "prompt": "Analyze this contract"}
+        )
+
+    assert resp.status_code == 200
+    assert resp.headers["content-type"].startswith("text/event-stream")
+    body = resp.text
+    assert "data: " in body
+    assert "Contract created" in body
+    assert "convergence" in body
