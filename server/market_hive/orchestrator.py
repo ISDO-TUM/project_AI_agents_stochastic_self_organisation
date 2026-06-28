@@ -81,7 +81,8 @@ class Terminator(Protocol):
 
     async def format_output(
         self, *, run_id: str, round: int, reason: str, db: AsyncConnection
-    ) -> Any: ...
+    ) -> Any:
+        raise NotImplementedError
 
 
 class TrustRegistry(Protocol):
