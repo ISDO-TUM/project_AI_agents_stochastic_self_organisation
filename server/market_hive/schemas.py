@@ -17,6 +17,7 @@ class SwarmRunConfig(BaseModel):
     min_rounds: int = Field(default=2, ge=1, le=5)
     max_rounds: int = Field(default=10, ge=2, le=20)
     token_budget: int = Field(default=50_000, ge=5_000, le=500_000)
+    enable_token_budget: bool = True
     max_amendments: int = Field(default=2, ge=0, le=5)
     decay_rounds: int = Field(default=3, ge=1, le=10)
     invite_floor: float = Field(default=0.3, ge=0.0, le=1.0)
@@ -258,6 +259,7 @@ class RunStatusResponse(BaseModel):
     status: str
     current_round: int
     termination_reason: str | None = None
+    termination_round: int | None = None
     token_usage: dict[str, Any] = {}
 
 
