@@ -50,7 +50,7 @@ from server.market_hive.schemas import (
     ThreadSchema,
 )
 from server.market_hive.termination import MaxRoundsTerminator
-from server.market_hive.trust import NoopTrustRegistry
+from server.market_hive.trust import TrustRegistry as DefaultTrustRegistry
 from server.schemas import ToolCall
 
 logger = logging.getLogger(__name__)
@@ -838,7 +838,7 @@ async def run_swarm(
     """
     contract_source = contract_source or FallbackContractSource()
     terminator = terminator or MaxRoundsTerminator()
-    trust = trust or NoopTrustRegistry()
+    trust = trust or DefaultTrustRegistry.from_config(config)
     agent_runner = agent_runner or _default_agent_runner
 
     run_id = str(uuid.uuid4())
