@@ -15,7 +15,7 @@ git push origin --delete old-branch-name
 
 **Pattern:** `<type>/<issue-number>-<short-description>`
 
-Valid types: `feat` `fix` `docs` `refactor` `test` `ci` `chore` `perf`
+Valid types: `feat` `fix` `hotfix` `docs` `refactor` `test` `ci` `chore` `perf`
 
 See [CONTRIBUTING.md](../../CONTRIBUTING.md#branch-naming) for the full reference.
 
