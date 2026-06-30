@@ -269,6 +269,59 @@ async def test_equilibrium_respects_epsilon_entropy(db: AsyncConnection) -> None
     assert await eng.check_equilibrium(run_id=run_id, current_round=2)
 
 
+async def test_equilibrium_false_on_cold_start_empty_board(db: AsyncConnection) -> None:
+    """Regression: an all-quiet run with nothing confirmed must not look converged.
+
+    Before the cold-start guard the empty Confirmed board satisfied the quiet
+    K-round window on the first check, ending the run at round 2 with no final
+    answer. Equilibrium must stay False every round while the board is empty.
+    """
+    run_id, _, _ = await _seed_run(db)
+    eng = TerminationEngine(db, min_rounds=3, k_consecutive=2, epsilon_entropy=0)
+
+    for current_round in range(2, 11):
+        assert not await eng.check_equilibrium(run_id=run_id, current_round=current_round)
+
+
+async def test_equilibrium_true_after_confirmation_then_quiet_rounds(db: AsyncConnection) -> None:
+    """A finding is confirmed, then the window goes quiet → converged with an answer."""
+    run_id, _, thread_id = await _seed_run(db)
+    await _confirmed(
+        db,
+        run_id=run_id,
+        thread_id=thread_id,
+        content="answer",
+        citation_count=2,
+        round_confirmed=3,
+    )
+    eng = TerminationEngine(db, min_rounds=3, k_consecutive=2, epsilon_entropy=0)
+
+    # Round 4: the [3, 4] window still holds the round-3 confirmation → not yet.
+    assert not await eng.check_equilibrium(run_id=run_id, current_round=4)
+    # Round 5: the [4, 5] window is quiet and the board is non-empty → converged.
+    assert await eng.check_equilibrium(run_id=run_id, current_round=5)
+
+
+async def test_has_confirmed_findings_ignores_non_findings(db: AsyncConnection) -> None:
+    run_id, _, thread_id = await _seed_run(db)
+    eng = TerminationEngine(db)
+    assert not await eng.has_confirmed_findings(run_id=run_id)
+
+    # Anchors / system rows are not findings — the swarm has produced nothing yet.
+    await _confirmed(
+        db,
+        run_id=run_id,
+        thread_id=thread_id,
+        content="anchor",
+        entry_type="anchor",
+        round_confirmed=1,
+    )
+    assert not await eng.has_confirmed_findings(run_id=run_id)
+
+    await _confirmed(db, run_id=run_id, thread_id=thread_id, content="finding", round_confirmed=2)
+    assert await eng.has_confirmed_findings(run_id=run_id)
+
+
 async def test_select_final_answer_orders_by_citations_then_earliest_round(
     db: AsyncConnection,
 ) -> None:

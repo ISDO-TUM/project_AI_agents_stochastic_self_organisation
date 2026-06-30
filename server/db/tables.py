@@ -160,6 +160,8 @@ swarm_runs = Table(
     Column("termination_round", Integer),
     Column("amendment_count", Integer, nullable=False, server_default=text("0")),
     Column("token_usage", Text, nullable=False, server_default=text("'{}'")),
+    # Brief synthesised answer to the prompt, written once at run completion.
+    Column("final_answer", Text),
     Column("created_at", DateTime(timezone=True), server_default=func.now()),
     Column("completed_at", DateTime(timezone=True)),
     CheckConstraint(

@@ -49,7 +49,8 @@ from server.market_hive.schemas import (
     SwarmRunConfig,
     ThreadSchema,
 )
-from server.market_hive.termination import MaxRoundsTerminator
+from server.market_hive.synthesis import FallbackAnswerSynthesizer
+from server.market_hive.termination import MaxRoundsTerminator, Synthesizer
 from server.market_hive.trust import TrustRegistry as DefaultTrustRegistry
 from server.schemas import ToolCall
 
@@ -80,7 +81,14 @@ class Terminator(Protocol):
         raise NotImplementedError
 
     async def format_output(
-        self, *, run_id: str, round: int, reason: str, db: AsyncConnection
+        self,
+        *,
+        run_id: str,
+        round: int,
+        reason: str,
+        db: AsyncConnection,
+        prompt: str | None = None,
+        synthesizer: Synthesizer | None = None,
     ) -> Any:
         raise NotImplementedError
 
@@ -350,13 +358,20 @@ async def _create_run(db: AsyncConnection, run_id: str) -> None:
 
 
 async def _complete_run(
-    db: AsyncConnection, run_id: str, *, status: str, reason: str | None, round: int
+    db: AsyncConnection,
+    run_id: str,
+    *,
+    status: str,
+    reason: str | None,
+    round: int,
+    final_answer: str | None = None,
 ) -> None:
     await db.execute(
         text(
             "UPDATE swarm_runs "
             "SET status = :status, termination_reason = :reason, "
-            "    termination_round = :round, completed_at = :now "
+            "    termination_round = :round, final_answer = :final_answer, "
+            "    completed_at = :now "
             "WHERE id = :id"
         ),
         {
@@ -364,6 +379,7 @@ async def _complete_run(
             "status": status,
             "reason": reason,
             "round": round,
+            "final_answer": final_answer,
             "now": datetime.now(UTC),
         },
     )
@@ -831,6 +847,7 @@ async def run_swarm(
     trust: TrustRegistry | None = None,
     agent_runner: AgentRunner | None = None,
     amendment_processor: AmendmentProcessor | None = None,
+    synthesizer: Synthesizer | None = None,
 ) -> AsyncIterator[SimulationStep]:
     """Drive one swarm run end-to-end, yielding ``SimulationStep`` events.
 
@@ -840,6 +857,9 @@ async def run_swarm(
     terminator = terminator or MaxRoundsTerminator()
     trust = trust or DefaultTrustRegistry.from_config(config)
     agent_runner = agent_runner or _default_agent_runner
+    # No-LLM default so the run loop and tests stay offline; routes inject the real
+    # AnswerSynthesizer (one LLM call) exactly as they inject the Market Maker.
+    synthesizer = synthesizer or FallbackAnswerSynthesizer()
 
     run_id = str(uuid.uuid4())
     await _create_run(db, run_id)
@@ -934,13 +954,25 @@ async def run_swarm(
             termination_reason = "equilibrium"
             break
 
-    # ── Finalize: select the answer, update trust, emit the result (§6.6, §6.7) ─
+    # ── Finalize: select + synthesize the answer, update trust, emit (§6.6, §6.7) ─
     output = await terminator.format_output(
-        run_id=run_id, round=last_round, reason=termination_reason, db=db
+        run_id=run_id,
+        round=last_round,
+        reason=termination_reason,
+        db=db,
+        prompt=config.prompt,
+        synthesizer=synthesizer,
     )
     observers = await auction.get_observers(run_id=run_id)
     await trust.update(run_id=run_id, takers=takers, observers=observers, db=db)
-    await _complete_run(db, run_id, status="completed", reason=termination_reason, round=last_round)
+    await _complete_run(
+        db,
+        run_id,
+        status="completed",
+        reason=termination_reason,
+        round=last_round,
+        final_answer=output.final_answer,
+    )
     yield _step(
         "convergence",
         f"Run complete ({termination_reason}, round {last_round}).",

@@ -71,6 +71,11 @@ interface CanvasProps {
   } | null;
   /** True once the dummy / real swarm run has fully completed. */
   swarmDone?: boolean;
+  /** Brief answer synthesised from the confirmed findings, shown on the
+   *  Confirmed board once the run completes. */
+  swarmFinalAnswer?: string | null;
+  /** Re-opens the completion answer overlay from the in-board answer card. */
+  onShowFinalAnswer?: () => void;
   /** Trust vectors keyed by agent ID — shown on hover in the AgentDock chips. */
   swarmTrustVectors?: Record<
     string,
@@ -123,6 +128,8 @@ export function Canvas({
   phonebook = null,
   biddingBoard = null,
   swarmDone = false,
+  swarmFinalAnswer = null,
+  onShowFinalAnswer,
   swarmTrustVectors = {},
   swarmRespondingIds = [],
 }: CanvasProps) {
@@ -601,6 +608,8 @@ export function Canvas({
             zoom={zoom}
             activeThreadId={activeThreadId}
             done={swarmDone}
+            finalAnswer={swarmFinalAnswer}
+            onShowFinalAnswer={onShowFinalAnswer}
           />
         </>
       )}

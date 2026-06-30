@@ -39,6 +39,10 @@ export interface SwarmRunState {
   // Agent IDs currently producing a turn (their LLM call is in flight). Drives
   // the "is responding…" pulse on the agent dock chips.
   responding: string[];
+  // The brief answer synthesised from the confirmed findings at run end, carried
+  // on the final `convergence` step. Null until the run completes (or if a run
+  // produced no answer).
+  finalAnswer: string | null;
   error: string | null;
 }
 
@@ -48,6 +52,7 @@ const IDLE: SwarmRunState = {
   runId: null,
   blackboard: EMPTY_BOARD,
   responding: [],
+  finalAnswer: null,
   error: null,
 };
 
@@ -61,7 +66,7 @@ type Action =
   | { type: "DELETE"; entryId: string }
   | { type: "THINKING_RESET" }
   | { type: "THINKING_ADD"; nodeId: string }
-  | { type: "DONE" }
+  | { type: "DONE"; finalAnswer?: string | null }
   | { type: "ERROR"; error: string }
   | { type: "RESET" };
 
@@ -167,7 +172,15 @@ function reducer(state: SwarmRunState, action: Action): SwarmRunState {
         ? state
         : { ...state, responding: [...state.responding, action.nodeId] };
     case "DONE":
-      return { ...state, active: false, done: true, responding: [] };
+      return {
+        ...state,
+        active: false,
+        done: true,
+        responding: [],
+        // The convergence step carries the answer; the stream-end DONE that
+        // follows omits it, so keep whatever was already set.
+        finalAnswer: action.finalAnswer ?? state.finalAnswer,
+      };
     case "ERROR":
       return { ...state, error: action.error };
     case "RESET":
@@ -303,7 +316,10 @@ function applyStep(
       }
       break;
     case "convergence":
-      dispatch({ type: "DONE" });
+      dispatch({
+        type: "DONE",
+        finalAnswer: typeof d.final_answer === "string" ? d.final_answer : null,
+      });
       break;
   }
 }

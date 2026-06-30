@@ -16,7 +16,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from time import monotonic
-from typing import Any, Literal, cast
+from typing import Any, Literal, Protocol, cast
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -25,7 +25,21 @@ from server.market_hive.schemas import ConfirmedEntrySchema, SwarmFinalOutput, S
 
 TerminationReason = Literal["equilibrium", "max_rounds", "budget"]
 
-DEFAULT_MIN_ROUNDS = 2
+
+class Synthesizer(Protocol):
+    """Turns the confirmed findings into one brief answer to the original prompt.
+
+    A structural seam (see ``server.market_hive.synthesis``) so ``format_output``
+    can stay LLM-free in tests: pass no synthesizer and ``final_answer`` is ``None``.
+    """
+
+    async def synthesize(self, *, prompt: str, findings: list[ConfirmedEntrySchema]) -> str: ...
+
+
+# 3, not 2: the round loop starts at round 2 (round 1 is proposals + votes), so a
+# minimum of 2 would let equilibrium fire on the very first discussion round, before
+# deliberation has happened. 3 requires at least two real discussion rounds first.
+DEFAULT_MIN_ROUNDS = 3
 DEFAULT_MAX_ROUNDS = 10
 DEFAULT_K_CONSECUTIVE = 2
 DEFAULT_EPSILON_ENTROPY = 0
@@ -207,12 +221,54 @@ class TerminationEngine:
             ).scalar_one()
         )
 
+    async def has_confirmed_findings(self, *, run_id: str) -> bool:
+        """True once the run has promoted at least one finding.
+
+        Equilibrium (PRD §6.6) is the state where confirmations have *ceased* — it
+        presupposes the swarm produced something to converge on. A run that has
+        confirmed nothing has not converged; it has not begun. Without this guard
+        an all-quiet cold start (every round trivially at/below ``epsilon_entropy``
+        because nothing is ever confirmed) satisfies the K-round window on the very
+        first check and ends the run with an empty Confirmed board.
+        """
+        count = (
+            await self._db.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM confirmed_entries
+                    WHERE run_id = :run_id AND entry_type = 'finding'
+                    """
+                ),
+                {"run_id": run_id},
+            )
+        ).scalar_one()
+        return int(count) > 0
+
     async def check_equilibrium(self, *, run_id: str, current_round: int) -> bool:
-        """Return true when the last k rounds produced no more than epsilon findings."""
+        """Return true when the swarm has converged.
+
+        Convergence requires *both* that the run has confirmed at least one finding
+        and that the last ``k_consecutive`` promotion rounds added no more than
+        ``epsilon_entropy`` new findings. The two guards below keep a cold start —
+        an empty board where every round is trivially quiet — from being mistaken
+        for convergence and ending the run before any proposal can be promoted.
+        """
         if current_round < self.min_rounds:
             return False
 
-        start_round = max(1, current_round - self.k_consecutive + 1)
+        # Nothing confirmed yet ⇒ the swarm has not started converging, let alone
+        # converged. Skipping this check is the cold-start bug: the trailing window
+        # is quiet only because no citations have accumulated into a promotion yet.
+        if not await self.has_confirmed_findings(run_id=run_id):
+            return False
+
+        # Promotions only run from round 2 onward (round 1 is opening proposals plus
+        # the vote sub-round, and votes are not promotion signals), so round 1 is
+        # structurally always quiet. Start the window at round 2 so it spans only
+        # rounds that *could* have promoted; counting round 1 would pad the window
+        # with a guaranteed-quiet round and make the swarm look converged a round early.
+        start_round = max(2, current_round - self.k_consecutive + 1)
         for round_number in range(start_round, current_round + 1):
             new_confirmed = await self.count_confirmed_this_round(run_id=run_id, round=round_number)
             if new_confirmed > self.epsilon_entropy:
@@ -257,8 +313,16 @@ class TerminationEngine:
         termination_reason: TerminationReason,
         tracker: TokenTracker | None = None,
         metadata: dict[str, Any] | None = None,
+        prompt: str | None = None,
+        synthesizer: Synthesizer | None = None,
     ) -> SwarmFinalOutput:
-        """Build the final output object from confirmed state."""
+        """Build the final output object from confirmed state.
+
+        When a ``synthesizer`` and the original ``prompt`` are supplied, the
+        confirmed findings are also condensed into a single ``final_answer``. Both
+        are optional so callers that only need the structured layers (e.g. the
+        audit endpoint, which reads the persisted answer instead) skip the LLM call.
+        """
         threads = (
             (
                 await self._db.execute(
@@ -283,10 +347,15 @@ class TerminationEngine:
         if metadata:
             final_metadata.update(metadata)
 
+        final_answer: str | None = None
+        if synthesizer is not None and prompt is not None:
+            final_answer = await synthesizer.synthesize(prompt=prompt, findings=confirmed_layer)
+
         return SwarmFinalOutput(
             run_id=run_id,
             answers=answers,
             confirmed_layer=confirmed_layer,
+            final_answer=final_answer,
             termination_round=termination_round,
             termination_reason=termination_reason,
             metadata=final_metadata,
@@ -414,10 +483,19 @@ class MaxRoundsTerminator:
         )
 
     async def format_output(
-        self, *, run_id: str, round: int, reason: str, db: AsyncConnection
+        self,
+        *,
+        run_id: str,
+        round: int,
+        reason: str,
+        db: AsyncConnection,
+        prompt: str | None = None,
+        synthesizer: Synthesizer | None = None,
     ) -> SwarmFinalOutput:
         return await TerminationEngine(db).format_output(
             run_id=run_id,
             termination_round=round,
             termination_reason=cast(TerminationReason, reason),
+            prompt=prompt,
+            synthesizer=synthesizer,
         )

@@ -462,9 +462,19 @@ async def test_final_output_convergence_step(db: AsyncConnection) -> None:
     assert thread_id in final.data["answers"]
     assert len(final.data["confirmed_layer"]) >= 1
 
-    run = (await db.execute(text("SELECT status FROM swarm_runs"))).mappings().fetchone()
+    # The confirmed findings are synthesised into a brief final answer (the no-LLM
+    # default joins them deterministically) and persisted on the run.
+    final_answer = final.data["final_answer"]
+    assert isinstance(final_answer, str) and final_answer.strip()
+
+    run = (
+        (await db.execute(text("SELECT status, final_answer FROM swarm_runs")))
+        .mappings()
+        .fetchone()
+    )
     assert run is not None
     assert run["status"] == "completed"
+    assert run["final_answer"] == final_answer
 
 
 async def test_aborted_run_has_no_convergence_step(db: AsyncConnection) -> None:
