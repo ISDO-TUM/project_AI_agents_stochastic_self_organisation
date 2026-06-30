@@ -30,16 +30,17 @@ Welcome to the team! This guide is the single source of truth for how we work to
 <type>/<issue-number>-<short-description>
 ```
 
-| Type       | When to use it                |
-| ---------- | ----------------------------- |
-| `feat`     | You're building something new |
-| `fix`      | You're squashing a bug        |
-| `refactor` | Same behaviour, better code   |
-| `docs`     | Documentation only            |
-| `test`     | Adding or updating tests      |
-| `chore`    | Deps, config, tooling         |
-| `ci`       | CI/CD pipeline changes        |
-| `perf`     | Making something faster       |
+| Type       | When to use it                    |
+| ---------- | --------------------------------- |
+| `feat`     | You're building something new     |
+| `fix`      | You're squashing a bug            |
+| `hotfix`   | Urgent fix for a production issue |
+| `refactor` | Same behaviour, better code       |
+| `docs`     | Documentation only                |
+| `test`     | Adding or updating tests          |
+| `chore`    | Deps, config, tooling             |
+| `ci`       | CI/CD pipeline changes            |
+| `perf`     | Making something faster           |
 
 ```bash
 # ✅ Good
