@@ -140,7 +140,12 @@ function reducer(state: BlackboardState, action: Action): BlackboardState {
   }
 }
 
-export function useBlackboard(runId: string | null): {
+export function useBlackboard(
+  runId: string | null,
+  // Bump this to force a re-fetch while the run is live (e.g. on each SSE step
+  // that changed the board). GET /blackboard is the authoritative view.
+  refreshKey: number = 0,
+): {
   state: BlackboardState;
   dispatch: (event: SwarmSimStep) => void;
 } {
@@ -185,7 +190,7 @@ export function useBlackboard(runId: string | null): {
     return () => {
       cancelled = true;
     };
-  }, [runId]);
+  }, [runId, refreshKey]);
 
   const dispatch = useCallback((event: SwarmSimStep) => {
     dispatchReducer({ type: "DISPATCH_STEP", event });

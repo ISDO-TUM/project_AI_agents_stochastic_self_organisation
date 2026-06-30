@@ -1,9 +1,14 @@
 """Termination engine — budget, equilibrium, final-output selection (PRD §6.6).
 
-This module owns deterministic run-ending logic. The orchestrator decides when
-to call it; the engine answers from persisted blackboard state and updates run
-bookkeeping. Token-budget enforcement is switchable so local/dev runs can record
-or ignore usage without changing the round loop.
+This module owns deterministic run-ending logic. The orchestrator reaches it
+through ``MaxRoundsTerminator``'s small seam while tests and routes can use the
+full ``TerminationEngine`` directly.
+
+``MaxRoundsTerminator`` keeps the name introduced on main for compatibility, but
+it now delegates to the real PRD §6.6 implementation: equilibrium detection over
+quiet confirmed-finding rounds and final answer selection by citation count.
+Token-budget tracking is implemented here as an opt-in/opt-out utility; the
+current orchestrator does not yet pass usage events into it.
 """
 
 from __future__ import annotations
@@ -11,12 +16,12 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass, field
 from time import monotonic
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from server.market_hive.schemas import ConfirmedEntrySchema, SwarmFinalOutput
+from server.market_hive.schemas import ConfirmedEntrySchema, SwarmFinalOutput, SwarmRunConfig
 
 TerminationReason = Literal["equilibrium", "max_rounds", "budget"]
 
@@ -62,6 +67,7 @@ class TokenTracker:
 
     def record(
         self,
+        tokens: int | None = None,
         *,
         input_tokens: int = 0,
         output_tokens: int = 0,
@@ -70,9 +76,15 @@ class TokenTracker:
         agent_id: str | None = None,
         phase: str | None = None,
     ) -> None:
-        """Record one LLM usage event when tracking is enabled."""
+        """Record one LLM usage event when tracking is enabled.
+
+        ``tokens`` is accepted for compatibility with main's placeholder tracker;
+        richer call sites can pass input/output/model/agent/phase metadata.
+        """
         if not self.enabled:
             return
+        if tokens is not None and total_tokens is None:
+            total_tokens = tokens
         self.records.append(
             TokenUsageRecord(
                 input_tokens=max(0, input_tokens),
@@ -383,3 +395,29 @@ class TerminationEngine:
                 "draft_authors": draft_authors,
             }
         }
+
+
+class MaxRoundsTerminator:
+    """Orchestrator-facing termination adapter.
+
+    The name is retained from main's placeholder seam, but the behavior now
+    delegates to the full termination engine: equilibrium may stop the loop
+    before ``max_rounds``, and output selection uses the PRD §6.6 ranking.
+    """
+
+    async def should_terminate(
+        self, *, run_id: str, round: int, config: SwarmRunConfig, db: AsyncConnection
+    ) -> bool:
+        return await TerminationEngine.from_config(db, config).check_equilibrium(
+            run_id=run_id,
+            current_round=round,
+        )
+
+    async def format_output(
+        self, *, run_id: str, round: int, reason: str, db: AsyncConnection
+    ) -> SwarmFinalOutput:
+        return await TerminationEngine(db).format_output(
+            run_id=run_id,
+            termination_round=round,
+            termination_reason=cast(TerminationReason, reason),
+        )

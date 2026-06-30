@@ -8,7 +8,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import delete, insert, select, update
+from sqlalchemy import delete, insert, select, text, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.db import (
@@ -28,6 +28,7 @@ from server.guardrails.input_sanitizer import PromptInjectionError
 from server.guardrails.output_validator import InjectionEchoError, LLMRefusalError
 from server.llm import call_agent
 from server.llm.credentials import MissingCredentialsError, use_credentials
+from server.market_hive.agent_embeddings import compute_capability_embedding
 from server.schemas import (
     AgentCreate,
     AgentResponse,
@@ -91,6 +92,10 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
         if tool_name not in tools:
             tools.append(tool_name)
 
+    capability_embedding = await compute_capability_embedding(
+        body.name, body.description, body.system_prompt
+    )
+
     await db.execute(
         insert(agents).values(
             id=agent_id,
@@ -101,6 +106,7 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
             model=body.model,
             tools=json.dumps(tools),
             connections=json.dumps(body.connections),
+            capability_embedding=capability_embedding,
         )
     )
     await db.commit()
@@ -178,19 +184,22 @@ async def replace_agent(agent_id: str, body: AgentCreate, db: DBDep) -> AgentRes
     existing = await db.execute(select(agents.c.id).where(agents.c.id == agent_id))
     if existing.first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
-    await db.execute(
-        update(agents)
-        .where(agents.c.id == agent_id)
-        .values(
-            name=body.name,
-            description=body.description,
-            system_prompt=body.system_prompt,
-            provider=body.provider,
-            model=body.model,
-            tools=json.dumps(body.tools),
-            connections=json.dumps(body.connections),
-        )
+    values: dict[str, str] = {
+        "name": body.name,
+        "description": body.description,
+        "system_prompt": body.system_prompt,
+        "provider": body.provider,
+        "model": body.model,
+        "tools": json.dumps(body.tools),
+        "connections": json.dumps(body.connections),
+    }
+    # Recompute capability embedding; skip on transient failure rather than wipe.
+    capability_embedding = await compute_capability_embedding(
+        body.name, body.description, body.system_prompt
     )
+    if capability_embedding is not None:
+        values["capability_embedding"] = capability_embedding
+    await db.execute(update(agents).where(agents.c.id == agent_id).values(**values))
     await db.commit()
     result = await db.execute(select(agents).where(agents.c.id == agent_id))
     row = result.mappings().first()
@@ -230,6 +239,17 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: DBDep) -> AgentResp
         if field in _PATCHABLE_COLUMNS
     }
 
+    # If any field the capability embedding is derived from changed, recompute it
+    # from the merged (existing + patched) values. Skip on transient failure.
+    if updates.keys() & {"name", "description", "system_prompt"}:
+        embedding = await compute_capability_embedding(
+            updates.get("name", row["name"]),
+            updates.get("description", row["description"]),
+            updates.get("system_prompt", row["system_prompt"]),
+        )
+        if embedding is not None:
+            updates["capability_embedding"] = embedding
+
     if updates:
         await db.execute(update(agents).where(agents.c.id == agent_id).values(**updates))
         await db.commit()
@@ -241,6 +261,35 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: DBDep) -> AgentResp
     return AgentResponse(**deserialise_agent_row(row))
 
 
+# ECSAS swarm-run tables that reference agents (directly, or via draft entries).
+# Listed leaf-first so the deletes respect the foreign keys between them.
+_SWARM_TABLES_DELETE_ORDER: tuple[str, ...] = (
+    "citations",
+    "votes",
+    "confirmed_entries",
+    "bids",
+    "amendments",
+    "reputation",
+    "draft_entries",
+    "agent_trust",
+    "threads",
+    "contracts",
+    "swarm_runs",
+)
+
+
+async def _clear_swarm_data(db: AsyncConnection) -> None:
+    """Delete all swarm-run rows so agents referenced by them can be removed.
+
+    The ECSAS tables reference ``agents`` without ``ON DELETE CASCADE``, so an
+    agent that joined a swarm run cannot be deleted while those rows exist. Swarm
+    runs are transient experiments, so clearing them on a board reset / re-import
+    is the intended behavior (unlike topology trial history, which is preserved).
+    """
+    for table in _SWARM_TABLES_DELETE_ORDER:
+        await db.execute(text(f"DELETE FROM {table}"))  # noqa: S608 — table from constant list
+
+
 @router.delete(
     "",
     status_code=status.HTTP_204_NO_CONTENT,
@@ -249,13 +298,13 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: DBDep) -> AgentResp
 async def delete_all(db: DBDep) -> None:
     """Clear the board — delete every agent and knowledge file.
 
-    Run history (trials, rounds, connections, messages) is intentionally
-    preserved so statistics from previous runs remain available for comparison.
-    The agent foreign keys on connections/messages are ``ON DELETE SET NULL`` and
-    agent names are snapshotted onto those rows, so the history stays intact and
-    readable after the agents are removed. Deleting agents cascades to
+    Topology run history (trials, rounds, connections, messages) is preserved:
+    its agent foreign keys are ``ON DELETE SET NULL`` and names are snapshotted.
+    Swarm-run data is cleared first because its foreign keys to ``agents`` have no
+    cascade and would otherwise block deletion. Deleting agents cascades to
     ``agent_files``; knowledge files are then removed explicitly.
     """
+    await _clear_swarm_data(db)
     await db.execute(delete(agents))
     await db.execute(delete(knowledge_files))
     await db.commit()
@@ -279,6 +328,9 @@ async def delete_agent(agent_id: str, db: DBDep) -> None:
     existing = await db.execute(select(agents.c.id).where(agents.c.id == agent_id))
     if existing.first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
+    # Swarm-run rows reference agents without cascade; clear them so the delete
+    # is not blocked once this agent has participated in a run.
+    await _clear_swarm_data(db)
     await db.execute(delete(agents).where(agents.c.id == agent_id))
     await db.commit()
 

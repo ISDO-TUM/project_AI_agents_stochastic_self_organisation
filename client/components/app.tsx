@@ -36,13 +36,13 @@ import { TweaksPanel } from "@/components/tweaks-panel";
 
 import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
-import { useBlackboard } from "@/hooks/useBlackboard";
 import { ModeGate, AppMode } from "@/components/mode-gate";
 import {
   SwarmConfigModal,
   SwarmRunConfig,
 } from "@/components/swarm-config-modal";
 import { useDummySwarm } from "@/hooks/useDummySwarm";
+import { useSwarmRun } from "@/hooks/useSwarmRun";
 import { generateDummyRun } from "@/lib/dummy-swarm";
 import { getTheme } from "@/lib/theme";
 
@@ -142,30 +142,12 @@ export function App({ onModeSelected }: AppProps = {}) {
   const [topbarHeight, setTopbarHeight] = useState<number | null>(null);
   const [promptBarHeight, setPromptBarHeight] = useState<number | null>(null);
   const dummy = useDummySwarm();
-  const { state: realBlackboardState } = useBlackboard(
-    appMode === "swarm" && !dummy.state.active ? runId : null,
-  );
+  // Real swarm run: streams SSE and builds the board directly from the events
+  // (draft → confirmed), like the dummy — no REST re-fetch, no activity log.
+  const swarm = useSwarmRun();
   const blackboardState = dummy.state.active
     ? dummy.state.blackboard
-    : realBlackboardState;
-
-  const handleSeed = useCallback(async (promptOverride?: string) => {
-    try {
-      const res = await fetch("/api/simulation/seed", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          prompt: promptOverride?.trim() || "Test blackboard seeding",
-          agent_ids: [],
-        }),
-      });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      const data = (await res.json()) as { run_id: string; thread_id: string };
-      setRunId(data.run_id);
-    } catch (err) {
-      console.error("Seed failed:", err);
-    }
-  }, []);
+    : swarm.state.blackboard;
 
   // Run configuration — edited in the Settings panel, read at run start.
   const [consensusMode, setConsensusMode] =
@@ -226,6 +208,7 @@ export function App({ onModeSelected }: AppProps = {}) {
     (config: SwarmRunConfig) => {
       setSwarmConfigOpen(false);
       if (pendingSwarmPrompt.trim().toLowerCase() === "test_mohamed") {
+        swarm.reset();
         const fixture = generateDummyRun(
           { takers: config.takersMax, rounds: config.roundsMax },
           agents,
@@ -235,9 +218,10 @@ export function App({ onModeSelected }: AppProps = {}) {
         return;
       }
       dummy.reset();
-      handleSeed(pendingSwarmPrompt);
+      setRunId(null);
+      swarm.start(pendingSwarmPrompt);
     },
-    [pendingSwarmPrompt, agents, dummy, handleSeed],
+    [pendingSwarmPrompt, agents, dummy, swarm],
   );
   const importErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
@@ -632,13 +616,22 @@ export function App({ onModeSelected }: AppProps = {}) {
           panAdjust={panAdjust}
           blackboardState={blackboardState}
           appMode={appMode}
-          swarmRunId={appMode === "swarm" ? runId : null}
+          swarmRunId={
+            appMode === "swarm"
+              ? dummy.state.active
+                ? runId
+                : swarm.state.runId
+              : null
+          }
           topbarWidth={topbarWidth}
           topbarHeight={topbarHeight}
           promptBarHeight={promptBarHeight}
           onSelectAgentChip={openPanel}
-          swarmDone={appMode === "swarm" && dummy.state.done}
+          swarmDone={
+            appMode === "swarm" && (dummy.state.done || swarm.state.done)
+          }
           swarmTrustVectors={dummy.state.trustVectors}
+          swarmRespondingIds={swarm.state.responding}
           phonebook={
             topology === "dynamic"
               ? {

@@ -20,6 +20,7 @@ interface ThreadedEntryProps {
   threshold: number;
   promotedMap: Map<string, number>;
   agents?: { id: string }[];
+  promotedAgentIds?: Set<string>;
 }
 
 const MAX_DEPTH = 4;
@@ -31,12 +32,13 @@ export function ThreadedEntry({
   threshold,
   promotedMap,
   agents = [],
+  promotedAgentIds,
 }: ThreadedEntryProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
   const [expanded, setExpanded] = useState(true);
   const indent = Math.min(depth, MAX_DEPTH) * 16;
-  const color = agentColor(entry.author_id, agents);
+  const color = agentColor(entry.author_id, agents, promotedAgentIds);
   const promotedRound = promotedMap.get(entry.id);
   const hasChildren = entry.children.length > 0;
 
@@ -53,6 +55,7 @@ export function ThreadedEntry({
             threshold={threshold}
             promotedMap={promotedMap}
             agents={agents}
+            promotedAgentIds={promotedAgentIds}
           />
         ))}
       </div>
@@ -247,6 +250,7 @@ export function ThreadedEntry({
                 threshold={threshold}
                 promotedMap={promotedMap}
                 agents={agents}
+                promotedAgentIds={promotedAgentIds}
               />
             ))}
           </motion.div>

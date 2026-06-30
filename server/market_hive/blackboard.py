@@ -37,6 +37,52 @@ class Blackboard:
     def __init__(self, db: AsyncConnection) -> None:
         self._db = db
 
+    async def _resolve_entry_id(self, run_id: str, candidate: str | None) -> str | None:
+        """Map a possibly-truncated id to a real ``draft_entries`` id in this run.
+
+        ``read_blackboard`` renders ids as an 8-char prefix, so the LLM copies
+        that prefix back into ``reply_to`` / ``cite``. Resolve an exact id first,
+        then a *unique* prefix; return ``None`` when nothing matches uniquely so
+        the caller can drop the reply linkage / skip the citation instead of
+        letting a bad id raise a foreign-key violation (which aborts the whole
+        transaction on PostgreSQL).
+        """
+        if not candidate:
+            return None
+        candidate = candidate.strip()
+        if not candidate:
+            return None
+
+        exact = (
+            (
+                await self._db.execute(
+                    text("SELECT id FROM draft_entries WHERE run_id = :run_id AND id = :id"),
+                    {"run_id": run_id, "id": candidate},
+                )
+            )
+            .mappings()
+            .fetchone()
+        )
+        if exact is not None:
+            return str(exact["id"])
+
+        # Unique-prefix match handles the 8-char display truncation. Skip if the
+        # candidate carries SQL LIKE wildcards (our ids never do) or is too short
+        # to be discriminating.
+        if len(candidate) < 4 or "%" in candidate or "_" in candidate:
+            return None
+        rows = (
+            (
+                await self._db.execute(
+                    text("SELECT id FROM draft_entries WHERE run_id = :run_id AND id LIKE :prefix"),
+                    {"run_id": run_id, "prefix": f"{candidate}%"},
+                )
+            )
+            .mappings()
+            .fetchall()
+        )
+        return str(rows[0]["id"]) if len(rows) == 1 else None
+
     # ── write ─────────────────────────────────────────────────────────────
 
     async def post(
@@ -57,6 +103,9 @@ class Blackboard:
         When mention_agents is non-empty a companion system entry is also
         inserted so the mention is visible as a card on the blackboard.
         """
+        # The LLM copies the 8-char display id back into reply_to; resolve it to
+        # a real id (or drop the linkage) so a stale/truncated id can't FK-violate.
+        reply_to = await self._resolve_entry_id(run_id, reply_to)
         entry_id = str(uuid.uuid4())
         vecs = await embed_texts([content])
         embedding = json.dumps(vecs[0]) if vecs else _ZERO_EMBEDDING
@@ -68,7 +117,8 @@ class Blackboard:
                      content, content_embedding, reply_to, mention_agents,
                      is_visible, last_cited_round)
                 VALUES (:id, :run_id, :thread_id, :round, :author_id, :entry_type,
-                        :content, :embedding, :reply_to, :mention_agents, 1, :round)
+                        :content, :embedding, :reply_to, :mention_agents,
+                        :is_visible, :round)
                 """
             ),
             {
@@ -82,6 +132,7 @@ class Blackboard:
                 "embedding": embedding,
                 "reply_to": reply_to,
                 "mention_agents": json.dumps(mention_agents or []),
+                "is_visible": True,
             },
         )
         if mention_agents:
@@ -94,7 +145,8 @@ class Blackboard:
                          content, content_embedding, reply_to, mention_agents,
                          is_visible, last_cited_round)
                     VALUES (:id, :run_id, :thread_id, :round, :author_id, 'system',
-                            :content, :embedding, :reply_to, :mention_agents, 1, :round)
+                            :content, :embedding, :reply_to, :mention_agents,
+                            :is_visible, :round)
                     """
                 ),
                 {
@@ -107,6 +159,7 @@ class Blackboard:
                     "embedding": _ZERO_EMBEDDING,
                     "reply_to": entry_id,
                     "mention_agents": json.dumps(mention_agents),
+                    "is_visible": True,
                 },
             )
             if round_id is not None:
@@ -312,7 +365,12 @@ class Blackboard:
         skipped_self = 0
         # De-duplicate while preserving order: an agent citing the same entry twice
         # in one call would otherwise trip the UNIQUE(agent, entry, round) constraint.
-        for entry_id in dict.fromkeys(entry_ids):
+        for raw_id in dict.fromkeys(entry_ids):
+            # The LLM cites the 8-char display id; resolve it so a valid endorsement
+            # is not silently dropped (and a stale id is skipped, not FK-violated).
+            entry_id = await self._resolve_entry_id(run_id, raw_id)
+            if entry_id is None:
+                continue
             result = await self._db.execute(
                 text("SELECT author_id FROM draft_entries WHERE id = :id"),
                 {"id": entry_id},
@@ -388,7 +446,10 @@ class Blackboard:
             await self._db.commit()
             return {"ok": True}
         except IntegrityError:
-            # UNIQUE constraint: agent already voted for this entry
+            # UNIQUE (already voted) or FK (bad entry_id). On PostgreSQL the failed
+            # statement aborts the whole transaction, so roll back before returning —
+            # otherwise every later statement on this connection is rejected.
+            await self._db.rollback()
             return {"ok": False}
 
     async def get_confirmed(
