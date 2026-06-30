@@ -16,7 +16,7 @@ import json
 import os
 import uuid
 from datetime import UTC, datetime
-from typing import Annotated, Any, Literal
+from typing import Annotated, Any, Literal, cast
 
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy import select, text
@@ -44,6 +44,7 @@ from server.market_hive.schemas import (
     ThreadSchema,
     VoteSchema,
 )
+from server.market_hive.termination import TerminationEngine, TerminationReason
 
 router = APIRouter(tags=["Market Hive"])
 
@@ -185,6 +186,19 @@ async def get_audit(run_id: str, db: DBDep) -> AuditResponse:
     amendments = [AmendmentSchema(**r) for r in await _rows("amendments")]
     reputation = [ReputationSchema(**r) for r in await _rows("reputation", "updated_at ASC")]
     draft_entries = await _fetch_draft_entries(db, run_id, include_deleted=True)
+    final_output = None
+    reason = run_row["termination_reason"]
+    term_round = run_row["termination_round"]
+    if reason in ("equilibrium", "max_rounds", "budget") and term_round is not None:
+        final_output = await TerminationEngine(db).format_output(
+            run_id=run_id,
+            termination_round=int(term_round),
+            termination_reason=cast(TerminationReason, reason),
+            metadata={"token_usage": json.loads(run_row["token_usage"] or "{}")},
+        )
+        # Replay the answer the run synthesised at completion rather than spending
+        # another (non-deterministic) LLM call here on a read-only audit fetch.
+        final_output.final_answer = run_row.get("final_answer")
 
     return AuditResponse(
         run=SwarmRunSchema(**dict(run_row)),
@@ -197,7 +211,7 @@ async def get_audit(run_id: str, db: DBDep) -> AuditResponse:
         confirmed_entries=confirmed,
         amendments=amendments,
         reputation=reputation,
-        final_output=None,
+        final_output=final_output,
     )
 
 
@@ -208,7 +222,10 @@ async def get_audit(run_id: str, db: DBDep) -> AuditResponse:
 )
 async def get_run_status(run_id: str, db: DBDep) -> RunStatusResponse:
     run_result = await db.execute(
-        text("SELECT status, termination_reason, token_usage FROM swarm_runs WHERE id = :id"),
+        text(
+            "SELECT status, termination_reason, termination_round, token_usage "
+            "FROM swarm_runs WHERE id = :id"
+        ),
         {"id": run_id},
     )
     run_row = run_result.mappings().fetchone()
@@ -226,6 +243,7 @@ async def get_run_status(run_id: str, db: DBDep) -> RunStatusResponse:
         status=run_row["status"],
         current_round=current_round,
         termination_reason=run_row["termination_reason"],
+        termination_round=run_row["termination_round"],
         token_usage=json.loads(run_row["token_usage"] or "{}"),
     )
 

@@ -13,9 +13,12 @@ import { LIcon } from "@/lib/icons";
 import { BURG, BURG_LT, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { Toast } from "./panels/panel-primitives";
+import type { AppMode } from "@/components/mode-gate";
 
 interface ToolbarProps {
   simMode: boolean;
+  appMode?: AppMode | null;
+  onSwitchMode?: () => void;
   onToggleTheme: () => void;
   onAddAgent: () => void;
   onAddFile: () => void;
@@ -710,6 +713,8 @@ function TLink({
 
 export function Toolbar({
   simMode,
+  appMode,
+  onSwitchMode,
   onToggleTheme,
   onAddAgent,
   onAddFile,
@@ -814,6 +819,20 @@ export function Toolbar({
         </div>
 
         <Sep t={t} />
+
+        {!simMode && onSwitchMode && (
+          <>
+            <TBtn
+              onClick={onSwitchMode}
+              icon="ArrowLeftRight"
+              title="Switch simulation mode"
+              t={t}
+            >
+              {appMode === "swarm" ? "Market Hive" : "Topology"}
+            </TBtn>
+            <Sep t={t} />
+          </>
+        )}
 
         {!simMode && (
           <>

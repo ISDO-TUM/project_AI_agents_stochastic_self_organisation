@@ -23,6 +23,7 @@ from server.llm.credentials import RequestCredentials, current_credentials, use_
 from server.market_hive.market_maker import MarketMaker
 from server.market_hive.orchestrator import run_swarm
 from server.market_hive.schemas import SwarmRunConfig
+from server.market_hive.synthesis import AnswerSynthesizer
 from server.schemas import SimulationRunRequest, SimulationStartResponse
 from server.topology import ConsensusMode, run_topology
 
@@ -97,10 +98,14 @@ async def _swarm_event_stream(
     try:
         async with get_engine().connect() as db:
             # The real Market Maker (one LLM call) produces a typed, scoped
-            # contract so the auction invites the right specialists. It falls back
-            # to the no-LLM source internally if the call fails, so a run never
-            # blocks. Tests drive run_swarm on the no-LLM default.
-            async for step in run_swarm(config, db, contract_source=MarketMaker()):
+            # contract so the auction invites the right specialists, and the real
+            # AnswerSynthesizer (one LLM call at the end) condenses the confirmed
+            # findings into a brief final answer. Both fall back to their no-LLM
+            # stand-ins internally on failure, so a run never blocks. Tests drive
+            # run_swarm on the no-LLM defaults.
+            async for step in run_swarm(
+                config, db, contract_source=MarketMaker(), synthesizer=AnswerSynthesizer()
+            ):
                 yield f"data: {step.model_dump_json()}\n\n"
     finally:
         _creds_var.reset(token)

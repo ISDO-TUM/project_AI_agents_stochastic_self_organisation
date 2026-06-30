@@ -1,6 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   CanvasState,
@@ -36,13 +42,28 @@ import { TweaksPanel } from "@/components/tweaks-panel";
 
 import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
-import { ModeGate, AppMode } from "@/components/mode-gate";
+import {
+  ModeGate,
+  readAppMode,
+  saveAppMode,
+  subscribeAppMode,
+} from "@/components/mode-gate";
 import {
   SwarmConfigModal,
   SwarmRunConfig,
 } from "@/components/swarm-config-modal";
 import { useDummySwarm } from "@/hooks/useDummySwarm";
 import { useSwarmRun } from "@/hooks/useSwarmRun";
+import { FinalAnswerReveal } from "@/components/canvas/final-answer-reveal";
+import { NotifyConsentModal } from "@/components/notify-consent-modal";
+import {
+  NotifyScope,
+  fireAnswerNotification,
+  notificationsSupported,
+  readNotifyPref,
+  requestNotifyPermission,
+  saveNotifyPref,
+} from "@/lib/notifications";
 import { generateDummyRun } from "@/lib/dummy-swarm";
 import { getTheme } from "@/lib/theme";
 
@@ -135,7 +156,21 @@ export function App({ onModeSelected }: AppProps = {}) {
   const [selectedRules, setSelectedRules] = useState<Set<string>>(new Set());
   const [importError, setImportError] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
-  const [appMode, setAppMode] = useState<AppMode | null>(null);
+  // The chosen mode is derived from a persisted external store, so reloading the
+  // page keeps the user on the same page (Topology / Market Hive) instead of
+  // bouncing back to the mode-selection gate. `hydrated` is false on the server
+  // and first client render and true thereafter, so we don't flash the gate
+  // before localStorage has been read.
+  const appMode = useSyncExternalStore(
+    subscribeAppMode,
+    () => readAppMode(),
+    () => null,
+  );
+  const hydrated = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
   const [swarmConfigOpen, setSwarmConfigOpen] = useState(false);
   const [pendingSwarmPrompt, setPendingSwarmPrompt] = useState("");
   const [topbarWidth, setTopbarWidth] = useState<number | null>(null);
@@ -145,6 +180,13 @@ export function App({ onModeSelected }: AppProps = {}) {
   // Real swarm run: streams SSE and builds the board directly from the events
   // (draft → confirmed), like the dummy — no REST re-fetch, no activity log.
   const swarm = useSwarmRun();
+  // The completion answer overlay shows once per run; dismissing it sets this so
+  // it stays closed until the next run resets it (see handleSwarmConfigConfirm).
+  const [answerDismissed, setAnswerDismissed] = useState(false);
+  // First-run consent for an "answer ready" browser notification.
+  const [notifyConsentOpen, setNotifyConsentOpen] = useState(false);
+  // Guards the once-per-run notification so the effect can't double-fire.
+  const notifiedRunRef = useRef<string | null>(null);
   const blackboardState = dummy.state.active
     ? dummy.state.blackboard
     : swarm.state.blackboard;
@@ -169,6 +211,13 @@ export function App({ onModeSelected }: AppProps = {}) {
       .catch(() => {});
   }, []);
 
+  // Whenever a mode is active — whether freshly chosen or restored on reload —
+  // lock the shell onto the app section so the hero intro is skipped. This only
+  // drives the parent shell's scroll/lock; it sets no state of this component.
+  useEffect(() => {
+    if (appMode) onModeSelected?.();
+  }, [appMode, onModeSelected]);
+
   const toggleRule = useCallback((id: string) => {
     setSelectedRules((prev) => {
       const next = new Set(prev);
@@ -177,6 +226,9 @@ export function App({ onModeSelected }: AppProps = {}) {
       return next;
     });
   }, []);
+
+  // Return to the mode-selection gate and forget the saved mode.
+  const switchMode = useCallback(() => saveAppMode(null), []);
 
   const handleRun = useCallback(
     (prompt: string) => {
@@ -219,10 +271,42 @@ export function App({ onModeSelected }: AppProps = {}) {
       }
       dummy.reset();
       setRunId(null);
+      setAnswerDismissed(false);
+      // First swarm run, notifications available, never asked → request consent.
+      // Non-blocking: the run starts regardless of the user's choice.
+      if (notificationsSupported() && readNotifyPref() === null) {
+        setNotifyConsentOpen(true);
+      }
       swarm.start(pendingSwarmPrompt);
     },
     [pendingSwarmPrompt, agents, dummy, swarm],
   );
+
+  const handleNotifyDecision = useCallback(
+    (enabled: boolean, scope: NotifyScope) => {
+      saveNotifyPref(enabled, scope);
+      setNotifyConsentOpen(false);
+      // Permission must be requested from this click (a user gesture).
+      if (enabled) void requestNotifyPermission();
+    },
+    [],
+  );
+
+  // When a run finishes with an answer, fire the "ready" notification once. The
+  // helper itself no-ops unless the user consented, granted permission, and is
+  // away from the tab (the reveal overlay covers the focused case).
+  useEffect(() => {
+    const runId = swarm.state.runId;
+    if (
+      swarm.state.done &&
+      swarm.state.finalAnswer &&
+      runId &&
+      notifiedRunRef.current !== runId
+    ) {
+      notifiedRunRef.current = runId;
+      fireAnswerNotification(swarm.state.finalAnswer);
+    }
+  }, [swarm.state.done, swarm.state.finalAnswer, swarm.state.runId]);
   const importErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -534,15 +618,15 @@ export function App({ onModeSelected }: AppProps = {}) {
   const t = getTheme(dark);
   const hasNodes = agents.length > 0 || sources.length > 0;
 
-  if (!appMode) {
+  // Avoid flashing the mode gate before localStorage has been read.
+  if (!hydrated) {
     return (
-      <ModeGate
-        onSelect={(mode) => {
-          setAppMode(mode);
-          onModeSelected?.();
-        }}
-      />
+      <div style={{ width: "100%", height: "100%", background: t.bg }} />
     );
+  }
+
+  if (!appMode) {
+    return <ModeGate onSelect={(mode) => saveAppMode(mode)} />;
   }
 
   return (
@@ -630,6 +714,10 @@ export function App({ onModeSelected }: AppProps = {}) {
           swarmDone={
             appMode === "swarm" && (dummy.state.done || swarm.state.done)
           }
+          swarmFinalAnswer={
+            appMode === "swarm" ? swarm.state.finalAnswer : null
+          }
+          onShowFinalAnswer={() => setAnswerDismissed(false)}
           swarmTrustVectors={dummy.state.trustVectors}
           swarmRespondingIds={swarm.state.responding}
           phonebook={
@@ -655,6 +743,8 @@ export function App({ onModeSelected }: AppProps = {}) {
 
         <Toolbar
           simMode={simMode}
+          appMode={appMode}
+          onSwitchMode={switchMode}
           onToggleTheme={toggleTheme}
           onAddAgent={onAddAgent}
           onAddFile={onAddFile}
@@ -726,6 +816,28 @@ export function App({ onModeSelected }: AppProps = {}) {
           onConfirm={handleSwarmConfigConfirm}
         />
       )}
+
+      {notifyConsentOpen && (
+        <NotifyConsentModal onDecide={handleNotifyDecision} />
+      )}
+
+      <FinalAnswerReveal
+        // Remount per run so the overlay's transient UI (expanded findings,
+        // copied flash) resets cleanly for each new answer.
+        key={swarm.state.runId ?? "no-run"}
+        open={
+          appMode === "swarm" &&
+          swarm.state.done &&
+          !!swarm.state.finalAnswer &&
+          !answerDismissed
+        }
+        prompt={pendingSwarmPrompt}
+        answer={swarm.state.finalAnswer ?? ""}
+        findings={swarm.state.blackboard.confirmed.filter(
+          (e) => e.entry_type === "finding",
+        )}
+        onClose={() => setAnswerDismissed(true)}
+      />
 
       {panel?.type === "agent" && (
         <AgentPanel
