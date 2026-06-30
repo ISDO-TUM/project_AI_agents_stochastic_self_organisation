@@ -620,9 +620,7 @@ export function App({ onModeSelected }: AppProps = {}) {
 
   // Avoid flashing the mode gate before localStorage has been read.
   if (!hydrated) {
-    return (
-      <div style={{ width: "100%", height: "100%", background: t.bg }} />
-    );
+    return <div style={{ width: "100%", height: "100%", background: t.bg }} />;
   }
 
   if (!appMode) {
