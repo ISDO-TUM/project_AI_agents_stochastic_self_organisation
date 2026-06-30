@@ -196,6 +196,9 @@ async def get_audit(run_id: str, db: DBDep) -> AuditResponse:
             termination_reason=cast(TerminationReason, reason),
             metadata={"token_usage": json.loads(run_row["token_usage"] or "{}")},
         )
+        # Replay the answer the run synthesised at completion rather than spending
+        # another (non-deterministic) LLM call here on a read-only audit fetch.
+        final_output.final_answer = run_row.get("final_answer")
 
     return AuditResponse(
         run=SwarmRunSchema(**dict(run_row)),

@@ -14,7 +14,7 @@ class SwarmRunConfig(BaseModel):
     mode: Literal["swarm", "topology"] = "swarm"
     min_takers: int = Field(default=2, ge=1, le=10)
     max_takers: int = Field(default=5, ge=1, le=20)
-    min_rounds: int = Field(default=2, ge=1, le=5)
+    min_rounds: int = Field(default=3, ge=1, le=5)
     max_rounds: int = Field(default=10, ge=2, le=20)
     token_budget: int = Field(default=50_000, ge=5_000, le=500_000)
     enable_token_budget: bool = True
@@ -176,6 +176,7 @@ class SwarmRunSchema(BaseModel):
     termination_round: int | None = None
     amendment_count: int = 0
     token_usage: dict[str, Any] = {}
+    final_answer: str | None = None
     created_at: datetime
     completed_at: datetime | None = None
 
@@ -191,6 +192,9 @@ class SwarmFinalOutput(BaseModel):
     run_id: str
     answers: dict[str, ConfirmedEntrySchema]
     confirmed_layer: list[ConfirmedEntrySchema]
+    # A single brief answer to the original prompt, synthesised from the confirmed
+    # findings. ``None`` only on legacy runs persisted before synthesis existed.
+    final_answer: str | None = None
     termination_round: int
     termination_reason: Literal["equilibrium", "max_rounds", "budget"]
     metadata: dict[str, Any] = {}

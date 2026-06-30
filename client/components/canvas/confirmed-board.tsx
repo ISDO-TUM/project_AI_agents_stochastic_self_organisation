@@ -5,10 +5,87 @@ import { createPortal } from "react-dom";
 import { BlackboardState } from "@/lib/types";
 import { useTheme } from "@/lib/theme-context";
 import { getTheme } from "@/lib/theme";
-import { CheckCircle2, Maximize2, X } from "lucide-react";
+import { CheckCircle2, Maximize2, Sparkles, X } from "lucide-react";
 import { ConfirmedCard } from "./blackboard/confirmed-card";
+import { MarkdownRenderer } from "@/components/markdown-renderer";
 
 const GOLD = "#b5860d";
+
+/** The synthesised final answer, shown above the confirmed cards once the run
+ *  completes. Combines the confirmed findings into one brief reply to the prompt.
+ *  ``onExpand`` (when provided) re-opens the prominent completion overlay. */
+function FinalAnswer({
+  text,
+  dark,
+  onExpand,
+}: {
+  text: string;
+  dark: boolean;
+  onExpand?: () => void;
+}) {
+  return (
+    <div
+      style={{
+        padding: "10px 13px",
+        borderRadius: 10,
+        background: dark ? "rgba(181,134,13,0.12)" : "rgba(181,134,13,0.07)",
+        border: "1px solid rgba(181,134,13,0.35)",
+        marginBottom: 12,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 6,
+        }}
+      >
+        <Sparkles size={12} strokeWidth={2} color={GOLD} />
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 800,
+            color: GOLD,
+            letterSpacing: "0.09em",
+            textTransform: "uppercase",
+            fontFamily: "'Space Grotesk', system-ui, sans-serif",
+          }}
+        >
+          Final answer
+        </span>
+        {onExpand && (
+          <button
+            onClick={onExpand}
+            title="View full answer"
+            style={{
+              marginLeft: "auto",
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              padding: "2px 4px",
+              display: "flex",
+              alignItems: "center",
+              opacity: 0.65,
+              color: GOLD,
+            }}
+          >
+            <Maximize2 size={11} strokeWidth={2} />
+          </button>
+        )}
+      </div>
+      <div
+        style={{
+          fontSize: 12.5,
+          lineHeight: 1.55,
+          color: dark ? "rgba(255,250,235,0.92)" : "rgba(35,28,8,0.92)",
+        }}
+      >
+        <MarkdownRenderer content={text} />
+      </div>
+    </div>
+  );
+}
 
 interface ConfirmedBoardProps {
   state: BlackboardState;
@@ -21,6 +98,10 @@ interface ConfirmedBoardProps {
   activeThreadId?: string | null;
   /** True once the run has fully completed — turns the header dot solid green. */
   done?: boolean;
+  /** Brief answer synthesised from the confirmed findings at run end. */
+  finalAnswer?: string | null;
+  /** Re-opens the prominent completion overlay from the in-board answer card. */
+  onShowFinalAnswer?: () => void;
 }
 
 export function ConfirmedBoard({
@@ -31,6 +112,8 @@ export function ConfirmedBoard({
   zoom = 1,
   activeThreadId = null,
   done = false,
+  finalAnswer = null,
+  onShowFinalAnswer,
 }: ConfirmedBoardProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -278,6 +361,14 @@ export function ConfirmedBoard({
           </div>
         )}
 
+        {done && !state.loading && finalAnswer && (
+          <FinalAnswer
+            text={finalAnswer}
+            dark={dark}
+            onExpand={onShowFinalAnswer}
+          />
+        )}
+
         {!state.loading && state.error && (
           <div
             style={{
@@ -469,6 +560,9 @@ export function ConfirmedBoard({
                 )}
                 {!state.loading && !state.error && (
                   <>
+                    {done && finalAnswer && (
+                      <FinalAnswer text={finalAnswer} dark={dark} />
+                    )}
                     {filteredConfirmed.length === 0 ? (
                       <div
                         style={{

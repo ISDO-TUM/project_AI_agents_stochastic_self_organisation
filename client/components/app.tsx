@@ -43,6 +43,16 @@ import {
 } from "@/components/swarm-config-modal";
 import { useDummySwarm } from "@/hooks/useDummySwarm";
 import { useSwarmRun } from "@/hooks/useSwarmRun";
+import { FinalAnswerReveal } from "@/components/canvas/final-answer-reveal";
+import { NotifyConsentModal } from "@/components/notify-consent-modal";
+import {
+  NotifyScope,
+  fireAnswerNotification,
+  notificationsSupported,
+  readNotifyPref,
+  requestNotifyPermission,
+  saveNotifyPref,
+} from "@/lib/notifications";
 import { generateDummyRun } from "@/lib/dummy-swarm";
 import { getTheme } from "@/lib/theme";
 
@@ -145,6 +155,13 @@ export function App({ onModeSelected }: AppProps = {}) {
   // Real swarm run: streams SSE and builds the board directly from the events
   // (draft → confirmed), like the dummy — no REST re-fetch, no activity log.
   const swarm = useSwarmRun();
+  // The completion answer overlay shows once per run; dismissing it sets this so
+  // it stays closed until the next run resets it (see handleSwarmConfigConfirm).
+  const [answerDismissed, setAnswerDismissed] = useState(false);
+  // First-run consent for an "answer ready" browser notification.
+  const [notifyConsentOpen, setNotifyConsentOpen] = useState(false);
+  // Guards the once-per-run notification so the effect can't double-fire.
+  const notifiedRunRef = useRef<string | null>(null);
   const blackboardState = dummy.state.active
     ? dummy.state.blackboard
     : swarm.state.blackboard;
@@ -219,10 +236,42 @@ export function App({ onModeSelected }: AppProps = {}) {
       }
       dummy.reset();
       setRunId(null);
+      setAnswerDismissed(false);
+      // First swarm run, notifications available, never asked → request consent.
+      // Non-blocking: the run starts regardless of the user's choice.
+      if (notificationsSupported() && readNotifyPref() === null) {
+        setNotifyConsentOpen(true);
+      }
       swarm.start(pendingSwarmPrompt);
     },
     [pendingSwarmPrompt, agents, dummy, swarm],
   );
+
+  const handleNotifyDecision = useCallback(
+    (enabled: boolean, scope: NotifyScope) => {
+      saveNotifyPref(enabled, scope);
+      setNotifyConsentOpen(false);
+      // Permission must be requested from this click (a user gesture).
+      if (enabled) void requestNotifyPermission();
+    },
+    [],
+  );
+
+  // When a run finishes with an answer, fire the "ready" notification once. The
+  // helper itself no-ops unless the user consented, granted permission, and is
+  // away from the tab (the reveal overlay covers the focused case).
+  useEffect(() => {
+    const runId = swarm.state.runId;
+    if (
+      swarm.state.done &&
+      swarm.state.finalAnswer &&
+      runId &&
+      notifiedRunRef.current !== runId
+    ) {
+      notifiedRunRef.current = runId;
+      fireAnswerNotification(swarm.state.finalAnswer);
+    }
+  }, [swarm.state.done, swarm.state.finalAnswer, swarm.state.runId]);
   const importErrorTimerRef = useRef<ReturnType<typeof setTimeout> | null>(
     null,
   );
@@ -630,6 +679,10 @@ export function App({ onModeSelected }: AppProps = {}) {
           swarmDone={
             appMode === "swarm" && (dummy.state.done || swarm.state.done)
           }
+          swarmFinalAnswer={
+            appMode === "swarm" ? swarm.state.finalAnswer : null
+          }
+          onShowFinalAnswer={() => setAnswerDismissed(false)}
           swarmTrustVectors={dummy.state.trustVectors}
           swarmRespondingIds={swarm.state.responding}
           phonebook={
@@ -726,6 +779,28 @@ export function App({ onModeSelected }: AppProps = {}) {
           onConfirm={handleSwarmConfigConfirm}
         />
       )}
+
+      {notifyConsentOpen && (
+        <NotifyConsentModal onDecide={handleNotifyDecision} />
+      )}
+
+      <FinalAnswerReveal
+        // Remount per run so the overlay's transient UI (expanded findings,
+        // copied flash) resets cleanly for each new answer.
+        key={swarm.state.runId ?? "no-run"}
+        open={
+          appMode === "swarm" &&
+          swarm.state.done &&
+          !!swarm.state.finalAnswer &&
+          !answerDismissed
+        }
+        prompt={pendingSwarmPrompt}
+        answer={swarm.state.finalAnswer ?? ""}
+        findings={swarm.state.blackboard.confirmed.filter(
+          (e) => e.entry_type === "finding",
+        )}
+        onClose={() => setAnswerDismissed(true)}
+      />
 
       {panel?.type === "agent" && (
         <AgentPanel
