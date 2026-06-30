@@ -1,6 +1,12 @@
 "use client";
 
-import { useState, useEffect, useCallback, useRef } from "react";
+import {
+  useState,
+  useEffect,
+  useCallback,
+  useRef,
+  useSyncExternalStore,
+} from "react";
 import { createPortal } from "react-dom";
 import {
   CanvasState,
@@ -36,7 +42,12 @@ import { TweaksPanel } from "@/components/tweaks-panel";
 
 import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
-import { ModeGate, AppMode } from "@/components/mode-gate";
+import {
+  ModeGate,
+  readAppMode,
+  saveAppMode,
+  subscribeAppMode,
+} from "@/components/mode-gate";
 import {
   SwarmConfigModal,
   SwarmRunConfig,
@@ -145,7 +156,21 @@ export function App({ onModeSelected }: AppProps = {}) {
   const [selectedRules, setSelectedRules] = useState<Set<string>>(new Set());
   const [importError, setImportError] = useState<string | null>(null);
   const [runId, setRunId] = useState<string | null>(null);
-  const [appMode, setAppMode] = useState<AppMode | null>(null);
+  // The chosen mode is derived from a persisted external store, so reloading the
+  // page keeps the user on the same page (Topology / Market Hive) instead of
+  // bouncing back to the mode-selection gate. `hydrated` is false on the server
+  // and first client render and true thereafter, so we don't flash the gate
+  // before localStorage has been read.
+  const appMode = useSyncExternalStore(
+    subscribeAppMode,
+    () => readAppMode(),
+    () => null,
+  );
+  const hydrated = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  );
   const [swarmConfigOpen, setSwarmConfigOpen] = useState(false);
   const [pendingSwarmPrompt, setPendingSwarmPrompt] = useState("");
   const [topbarWidth, setTopbarWidth] = useState<number | null>(null);
@@ -186,6 +211,13 @@ export function App({ onModeSelected }: AppProps = {}) {
       .catch(() => {});
   }, []);
 
+  // Whenever a mode is active — whether freshly chosen or restored on reload —
+  // lock the shell onto the app section so the hero intro is skipped. This only
+  // drives the parent shell's scroll/lock; it sets no state of this component.
+  useEffect(() => {
+    if (appMode) onModeSelected?.();
+  }, [appMode, onModeSelected]);
+
   const toggleRule = useCallback((id: string) => {
     setSelectedRules((prev) => {
       const next = new Set(prev);
@@ -194,6 +226,9 @@ export function App({ onModeSelected }: AppProps = {}) {
       return next;
     });
   }, []);
+
+  // Return to the mode-selection gate and forget the saved mode.
+  const switchMode = useCallback(() => saveAppMode(null), []);
 
   const handleRun = useCallback(
     (prompt: string) => {
@@ -583,15 +618,13 @@ export function App({ onModeSelected }: AppProps = {}) {
   const t = getTheme(dark);
   const hasNodes = agents.length > 0 || sources.length > 0;
 
+  // Avoid flashing the mode gate before localStorage has been read.
+  if (!hydrated) {
+    return <div style={{ width: "100%", height: "100%", background: t.bg }} />;
+  }
+
   if (!appMode) {
-    return (
-      <ModeGate
-        onSelect={(mode) => {
-          setAppMode(mode);
-          onModeSelected?.();
-        }}
-      />
-    );
+    return <ModeGate onSelect={(mode) => saveAppMode(mode)} />;
   }
 
   return (
@@ -708,6 +741,8 @@ export function App({ onModeSelected }: AppProps = {}) {
 
         <Toolbar
           simMode={simMode}
+          appMode={appMode}
+          onSwitchMode={switchMode}
           onToggleTheme={toggleTheme}
           onAddAgent={onAddAgent}
           onAddFile={onAddFile}

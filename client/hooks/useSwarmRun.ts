@@ -7,6 +7,7 @@ import {
   DraftEntry,
   ThreadInfo,
 } from "@/lib/types";
+import { useApiKeys, apiKeyHeaders } from "@/lib/api-keys-context";
 
 // SSE goes through the Next rewrite proxy by default (relative ""). If that proxy
 // buffers the stream, set NEXT_PUBLIC_API_URL (e.g. http://localhost:8000) to hit
@@ -204,71 +205,83 @@ export function useSwarmRun(): {
   const [state, dispatch] = useReducer(reducer, IDLE);
   const seqRef = useRef(0);
 
-  const start = useCallback((prompt: string) => {
-    const seq = seqRef.current + 1;
-    seqRef.current = seq;
-    dispatch({ type: "BEGIN" });
+  // BYOK keys are sent as X-LLM-* headers on the run request, mirroring the rest
+  // of the API layer (lib/api.ts `request`). Without these, a deployment whose
+  // server has no provider env vars (e.g. Railway) can't embed the contract or
+  // drive agent turns — the auction aborts and no threads are ever worked.
+  const { keys } = useApiKeys();
 
-    void (async () => {
-      try {
-        const res = await fetch(`${API_BASE}/api/simulation/run`, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ engine: "swarm", prompt }),
-        });
-        if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+  const start = useCallback(
+    (prompt: string) => {
+      const seq = seqRef.current + 1;
+      seqRef.current = seq;
+      dispatch({ type: "BEGIN" });
 
-        const reader = res.body.getReader();
-        const decoder = new TextDecoder();
-        let buffer = "";
-        // The backend emits all of a sub-round's "agent-thinking" frames in one
-        // run before any output; the first one after any other frame opens a new
-        // wave and clears the previous responders.
-        let prevThinking = false;
-
-        while (seqRef.current === seq) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buffer += decoder.decode(value, { stream: true });
-
-          // SSE frames are separated by a blank line; each is "data: <json>".
-          const frames = buffer.split("\n\n");
-          buffer = frames.pop() ?? "";
-          for (const frame of frames) {
-            const dataLine = frame
-              .split("\n")
-              .find((l) => l.startsWith("data: "));
-            if (!dataLine) continue;
-            let step: SwarmStreamStep;
-            try {
-              step = JSON.parse(dataLine.slice(6)) as SwarmStreamStep;
-            } catch {
-              continue;
-            }
-            if (seqRef.current !== seq) break;
-            if (step.type === "agent-thinking") {
-              if (!prevThinking) dispatch({ type: "THINKING_RESET" });
-              prevThinking = true;
-              if (step.node_id)
-                dispatch({ type: "THINKING_ADD", nodeId: step.node_id });
-              continue;
-            }
-            prevThinking = false;
-            applyStep(dispatch, step);
-          }
-        }
-      } catch (err) {
-        if (seqRef.current === seq) {
-          dispatch({
-            type: "ERROR",
-            error: err instanceof Error ? err.message : String(err),
+      void (async () => {
+        try {
+          const res = await fetch(`${API_BASE}/api/simulation/run`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              ...apiKeyHeaders(keys),
+            },
+            body: JSON.stringify({ engine: "swarm", prompt }),
           });
+          if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
+
+          const reader = res.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          // The backend emits all of a sub-round's "agent-thinking" frames in one
+          // run before any output; the first one after any other frame opens a new
+          // wave and clears the previous responders.
+          let prevThinking = false;
+
+          while (seqRef.current === seq) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            buffer += decoder.decode(value, { stream: true });
+
+            // SSE frames are separated by a blank line; each is "data: <json>".
+            const frames = buffer.split("\n\n");
+            buffer = frames.pop() ?? "";
+            for (const frame of frames) {
+              const dataLine = frame
+                .split("\n")
+                .find((l) => l.startsWith("data: "));
+              if (!dataLine) continue;
+              let step: SwarmStreamStep;
+              try {
+                step = JSON.parse(dataLine.slice(6)) as SwarmStreamStep;
+              } catch {
+                continue;
+              }
+              if (seqRef.current !== seq) break;
+              if (step.type === "agent-thinking") {
+                if (!prevThinking) dispatch({ type: "THINKING_RESET" });
+                prevThinking = true;
+                if (step.node_id)
+                  dispatch({ type: "THINKING_ADD", nodeId: step.node_id });
+                continue;
+              }
+              prevThinking = false;
+              applyStep(dispatch, step);
+            }
+          }
+        } catch (err) {
+          if (seqRef.current === seq) {
+            dispatch({
+              type: "ERROR",
+              error: err instanceof Error ? err.message : String(err),
+            });
+          }
+        } finally {
+          if (seqRef.current === seq) dispatch({ type: "DONE" });
         }
-      } finally {
-        if (seqRef.current === seq) dispatch({ type: "DONE" });
-      }
-    })();
-  }, []);
+      })();
+    },
+    [keys],
+  );
 
   const reset = useCallback(() => {
     seqRef.current += 1;

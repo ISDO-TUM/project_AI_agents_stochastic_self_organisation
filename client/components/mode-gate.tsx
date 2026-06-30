@@ -15,6 +15,49 @@ import { useTheme } from "@/lib/theme-context";
 
 export type AppMode = "topology" | "swarm";
 
+// Persist the chosen mode so a page reload keeps the user on the same page
+// (Topology / Market Hive) instead of bouncing back to this selection gate.
+// Exposed as a tiny external store so components can read it with
+// useSyncExternalStore — SSR-safe and re-rendering on every change (including
+// same-tab writes via saveAppMode and cross-tab writes via the storage event).
+const MODE_KEY = "app.mode";
+const modeListeners = new Set<() => void>();
+
+export function readAppMode(): AppMode | null {
+  if (typeof window === "undefined") return null;
+  try {
+    const raw = window.localStorage.getItem(MODE_KEY);
+    return raw === "topology" || raw === "swarm" ? raw : null;
+  } catch {
+    // Storage blocked (private mode) or unavailable — treat as "not chosen".
+    return null;
+  }
+}
+
+export function saveAppMode(mode: AppMode | null): void {
+  if (typeof window === "undefined") return;
+  try {
+    if (mode) window.localStorage.setItem(MODE_KEY, mode);
+    else window.localStorage.removeItem(MODE_KEY);
+  } catch {
+    // Storage unavailable — the selection still applies for this session.
+  }
+  // storage events don't fire in the tab that made the change, so notify here.
+  modeListeners.forEach((l) => l());
+}
+
+export function subscribeAppMode(onChange: () => void): () => void {
+  modeListeners.add(onChange);
+  const onStorage = (e: StorageEvent) => {
+    if (e.key === MODE_KEY) onChange();
+  };
+  window.addEventListener("storage", onStorage);
+  return () => {
+    modeListeners.delete(onChange);
+    window.removeEventListener("storage", onStorage);
+  };
+}
+
 interface ModeGateProps {
   onSelect: (mode: AppMode) => void;
 }
@@ -423,7 +466,7 @@ export function ModeGate({ onSelect }: ModeGateProps) {
             fontFamily: "'Space Grotesk', system-ui, sans-serif",
           }}
         >
-          You can switch modes by refreshing the page
+          You can switch modes anytime from the toolbar
         </span>
       </div>
     </div>
