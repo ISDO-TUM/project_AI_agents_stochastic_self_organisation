@@ -567,3 +567,91 @@ async def test_default_runner_no_files_omits_files_tool(db: AsyncConnection) -> 
 
     assert "files" not in captured["tool_names"]
     assert captured["tool_context"]["files"] == {}
+
+
+# ── Trust registry: cross-run loop (PRD §6.7) ─────────────────────────────────
+
+
+async def _trust_for(db: AsyncConnection, agent_id: str) -> tuple[float, int] | None:
+    """(trust_score, runs_participated) for an agent's single domain, or None."""
+    row = (
+        await db.execute(
+            text("SELECT trust_score, runs_participated FROM agent_trust WHERE agent_id = :a"),
+            {"a": agent_id},
+        )
+    ).fetchone()
+    return (float(row[0]), int(row[1])) if row is not None else None
+
+
+async def test_trust_populated_after_first_swarm_run(db: AsyncConnection) -> None:
+    """End-to-end: a real run_swarm() writes agent_trust at run end (was a no-op)."""
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+
+    # Before the run there is no trust anywhere.
+    assert (await db.execute(text("SELECT COUNT(*) FROM agent_trust"))).scalar_one() == 0
+
+    await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2),
+        db,
+        agent_runner=_scripted_runner(),
+    )
+
+    # Both takers authored confirmed findings (each cited once), so both gained
+    # trust above the 0.5 cold-start, and each participated in exactly one run.
+    for agent_id in ("a1", "a2"):
+        trust = await _trust_for(db, agent_id)
+        assert trust is not None, f"{agent_id} has no trust row after the run"
+        score, runs = trust
+        assert score > 0.5, f"{agent_id} trust did not rise above cold-start"
+        assert runs == 1
+
+
+async def test_trust_accumulates_across_runs(db: AsyncConnection) -> None:
+    """The learning loop compounds: a second run lifts trust further (PRD §6.7)."""
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+
+    config = SwarmRunConfig(prompt="Analyze this contract", max_rounds=2)
+
+    await _drain(config, db, agent_runner=_scripted_runner())
+    after_run_1 = await _trust_for(db, "a1")
+    assert after_run_1 is not None
+    score_1, runs_1 = after_run_1
+    assert runs_1 == 1
+
+    await _drain(config, db, agent_runner=_scripted_runner())
+    after_run_2 = await _trust_for(db, "a1")
+    assert after_run_2 is not None
+    score_2, runs_2 = after_run_2
+
+    # Trust strictly increases and participation is counted once per run — the
+    # cross-run loop is closed, not frozen at the cold-start value.
+    assert score_2 > score_1
+    assert runs_2 == 2
+
+
+async def test_observer_trust_decremented_after_run(db: AsyncConnection) -> None:
+    """An agent that bids and loses (observer) has its trust lowered at run end."""
+    # Three agents, but cap takers at 2 so the lowest-scored bidder loses.
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+    await _insert_agent(db, "a3", "Gamma")
+
+    await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2, max_takers=2),
+        db,
+        agent_runner=_scripted_runner(),
+    )
+
+    observers = (
+        await db.execute(text("SELECT agent_id FROM bids WHERE is_observer = true"))
+    ).fetchall()
+    # If taker selection produced an observer, its trust must be below cold-start
+    # and it must not have been credited with participation.
+    for (agent_id,) in observers:
+        trust = await _trust_for(db, agent_id)
+        assert trust is not None
+        score, runs = trust
+        assert score < 0.5
+        assert runs == 0
