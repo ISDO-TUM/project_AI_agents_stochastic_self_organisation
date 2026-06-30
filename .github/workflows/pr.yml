@@ -22,10 +22,10 @@ jobs:
             exit 0
           fi
           BRANCH="${{ github.head_ref }}"
-          PATTERN="^(feat|fix|docs|refactor|test|ci|chore|perf)/[0-9]+-[a-z0-9-]+$"
+          PATTERN="^(feat|fix|hotfix|docs|refactor|test|ci|chore|perf)/[0-9]+-[a-z0-9-]+$"
           if [[ ! "$BRANCH" =~ $PATTERN ]]; then
             echo "❌ Branch '$BRANCH' does not match <type>/<issue-number>-<description>"
-            echo "   Valid types: feat fix docs refactor test ci chore perf"
+            echo "   Valid types: feat fix hotfix docs refactor test ci chore perf"
             echo "   Example: feat/42-agent-streaming"
             exit 1
           fi
