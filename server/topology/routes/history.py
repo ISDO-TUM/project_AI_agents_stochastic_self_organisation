@@ -108,6 +108,7 @@ _VALID_MESSAGE_TYPES: frozenset[str] = frozenset(
         "trust_evolution",
         "trust_update",
         "vote_tally",
+        "bb_summary",
     }
 )
 

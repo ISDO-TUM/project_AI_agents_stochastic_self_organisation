@@ -25,7 +25,15 @@ from typing import Any, NamedTuple, Protocol
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from server.db import deserialise_agent_row, hint_files_in_prompt, load_agent_files
+from server.db import (
+    create_round,
+    create_trial,
+    deserialise_agent_row,
+    hint_files_in_prompt,
+    load_agent_files,
+    record_message,
+    update_trial_status,
+)
 from server.db.tables import agents as agents_table
 from server.guardrails import build_guarded_system_prompt
 from server.llm import call_agent
@@ -835,6 +843,48 @@ async def _next_temperatures(
     return temperatures
 
 
+# ── Swarm summary history helpers ────────────────────────────────────────────
+
+
+def _format_swarm_summary(output: Any, prompt: str) -> str:
+    """Build the human-readable bb_summary message stored in the history tables."""
+    findings = sorted(
+        [e for e in output.confirmed_layer if e.entry_type == "finding"],
+        key=lambda e: (e.citation_count, -e.round_confirmed),
+        reverse=True,
+    )
+
+    answer_text = output.final_answer or "No answer synthesized."
+
+    lines: list[str] = [f"FINAL ANSWER\n{answer_text}"]
+
+    if findings:
+        noun = "finding" if len(findings) == 1 else "findings"
+        lines.append(f"\nSUPPORTING EVIDENCE ({len(findings)} confirmed {noun})")
+        for i, e in enumerate(findings[:20], 1):
+            lines.append(f"{i}. {e.content.strip()} (citations: {e.citation_count})")
+    else:
+        lines.append("\nNo confirmed findings.")
+
+    lines.append(f"\nTermination: {output.termination_reason}, round {output.termination_round}")
+
+    return "\n".join(lines)
+
+
+async def _record_swarm_summary(
+    db: AsyncConnection,
+    prompt: str,
+    output: Any,
+) -> None:
+    """Persist a bb_summary message in the shared history tables for this swarm run."""
+    prompt_preview = prompt[:80] + ("…" if len(prompt) > 80 else "")
+    trial_id = await create_trial(db, prompt, f"swarm: {prompt_preview}", "swarm")
+    await update_trial_status(db, trial_id, "completed")
+    round_id = await create_round(db, trial_id, output.termination_round, "summary")
+    summary = _format_swarm_summary(output, prompt)
+    await record_message(db, round_id, None, None, "bb_summary", summary)
+
+
 # ── Orchestrator ─────────────────────────────────────────────────────────────
 
 
@@ -973,6 +1023,10 @@ async def run_swarm(
         round=last_round,
         final_answer=output.final_answer,
     )
+    try:
+        await _record_swarm_summary(db, config.prompt, output)
+    except Exception:
+        logger.exception("Failed to record swarm summary in history; run result unaffected")
     yield _step(
         "convergence",
         f"Run complete ({termination_reason}, round {last_round}).",

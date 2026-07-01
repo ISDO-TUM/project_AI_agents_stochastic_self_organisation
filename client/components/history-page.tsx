@@ -239,44 +239,64 @@ export function HistoryPage({ onBack }: HistoryPageProps) {
             </tr>
           </thead>
           <tbody>
-            {messages.map((message) => (
-              <tr
-                key={message.id}
-                onClick={() => setSelected(message)}
-                style={{
-                  cursor: "pointer",
-                  borderBottom: `1px solid ${t.border}`,
-                }}
-              >
-                <td style={{ padding: "10px 14px", width: 74 }}>
-                  {message.roundIndex}
-                </td>
-                <td style={{ padding: "10px 14px", width: 130 }}>
-                  {message.phase}
-                </td>
-                <td style={{ padding: "10px 14px", width: 180 }}>
-                  {message.fromAgentName}
-                </td>
-                <td style={{ padding: "10px 14px", width: 180 }}>
-                  {message.toAgentName}
-                </td>
-                <td style={{ padding: "10px 14px", width: 170 }}>
-                  {message.messageType}
-                </td>
-                <td
+            {messages.map((message) => {
+              const isSummary = message.messageType === "bb_summary";
+              return (
+                <tr
+                  key={message.id}
+                  onClick={() => setSelected(message)}
                   style={{
-                    padding: "10px 14px",
-                    color: t.textSub,
-                    maxWidth: 560,
-                    whiteSpace: "nowrap",
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
+                    cursor: "pointer",
+                    borderBottom: `1px solid ${t.border}`,
+                    ...(isSummary && {
+                      background: dark
+                        ? "rgba(255,200,60,0.08)"
+                        : "rgba(180,120,0,0.07)",
+                      borderLeft: `3px solid ${dark ? "#f0b429" : "#b07800"}`,
+                    }),
                   }}
                 >
-                  {message.message || ""}
-                </td>
-              </tr>
-            ))}
+                  <td style={{ padding: "10px 14px", width: 74 }}>
+                    {message.roundIndex}
+                  </td>
+                  <td style={{ padding: "10px 14px", width: 130 }}>
+                    {message.phase}
+                  </td>
+                  <td style={{ padding: "10px 14px", width: 180 }}>
+                    {message.fromAgentName}
+                  </td>
+                  <td style={{ padding: "10px 14px", width: 180 }}>
+                    {message.toAgentName}
+                  </td>
+                  <td
+                    style={{
+                      padding: "10px 14px",
+                      width: 170,
+                      fontWeight: isSummary ? 700 : undefined,
+                      color: isSummary
+                        ? dark
+                          ? "#f0b429"
+                          : "#8a5e00"
+                        : undefined,
+                    }}
+                  >
+                    {message.messageType}
+                  </td>
+                  <td
+                    style={{
+                      padding: "10px 14px",
+                      color: t.textSub,
+                      maxWidth: 560,
+                      whiteSpace: "nowrap",
+                      overflow: "hidden",
+                      textOverflow: "ellipsis",
+                    }}
+                  >
+                    {message.message || ""}
+                  </td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
