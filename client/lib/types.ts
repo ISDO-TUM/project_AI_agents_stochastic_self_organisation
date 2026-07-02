@@ -396,14 +396,16 @@ export interface DraftEntry {
   content: string;
   reply_to: string | null;
   mention_agents: string[];
+  /** File names the author consulted (via the files() tool) while producing
+   *  this entry. Populated by the real backend at post time; the dummy
+   *  pipeline sets sample values on a couple of fixture entries. */
+  documents_used?: string[];
   is_visible: boolean;
   deleted_at: string | null;
   last_cited_round: number;
   citation_count: number;
   created_at: string;
   children: DraftEntry[];
-  /** Only populated by the dummy pipeline today — the real backend doesn't
-   *  enrich citer identities yet (see plan Task 13 note). Always optional. */
   citers?: Citer[];
 }
 
