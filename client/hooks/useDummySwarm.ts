@@ -1,8 +1,9 @@
 "use client";
 
-import { useCallback, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import { BlackboardState, ConfirmedEntry, DraftEntry } from "@/lib/types";
 import { DummyAgentInfo, DummyEvent, DummyRunFixture } from "@/lib/dummy-swarm";
+import { loadSession, saveSession } from "@/lib/session-persist";
 
 const EMPTY_STATE: BlackboardState = {
   threads: [],
@@ -80,6 +81,22 @@ const INITIAL: DummySwarmState = {
   trustVectors: {},
 };
 
+// Survives a route navigation (e.g. to /statistics and back), which unmounts
+// this hook and would otherwise wipe the board. The setTimeout-driven fixture
+// playback doesn't survive the unmount, so any events that would have fired
+// while unmounted are simply lost — but that's fine, since `active` here isn't
+// "still streaming" (there's no "responding" list on this hook), it's "the
+// dummy pipeline is the board's source of truth" (app.tsx's `blackboardState`
+// selector reads it: `dummy.state.active ? dummy.state.blackboard : swarm...`,
+// and the dummy reducer's own DONE case never resets it either) — so it must
+// be rehydrated as-is, not forced false, or a completed dummy run's board
+// would vanish behind the (empty) swarm state on return.
+const PERSIST_KEY = "swarm.dummyBoard.v1";
+
+function loadPersisted(): DummySwarmState {
+  return loadSession<DummySwarmState>(PERSIST_KEY) ?? INITIAL;
+}
+
 function reducer(state: DummySwarmState, action: Action): DummySwarmState {
   switch (action.type) {
     case "BEGIN":
@@ -152,8 +169,12 @@ export function useDummySwarm(): {
   start: (fixture: DummyRunFixture) => void;
   reset: () => void;
 } {
-  const [state, dispatch] = useReducer(reducer, INITIAL);
+  const [state, dispatch] = useReducer(reducer, undefined, loadPersisted);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
+
+  useEffect(() => {
+    saveSession(PERSIST_KEY, state);
+  }, [state]);
 
   const clearTimers = useCallback(() => {
     timers.current.forEach(clearTimeout);

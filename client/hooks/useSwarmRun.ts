@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 import {
   BlackboardState,
   ConfirmedEntry,
@@ -8,6 +8,7 @@ import {
   ThreadInfo,
 } from "@/lib/types";
 import { useApiKeys, apiKeyHeaders } from "@/lib/api-keys-context";
+import { loadSession, saveSession } from "@/lib/session-persist";
 
 // SSE goes through the Next rewrite proxy by default (relative ""). If that proxy
 // buffers the stream, set NEXT_PUBLIC_API_URL (e.g. http://localhost:8000) to hit
@@ -56,6 +57,18 @@ const IDLE: SwarmRunState = {
   finalAnswer: null,
   error: null,
 };
+
+// Survives a route navigation (e.g. to /statistics and back), which unmounts
+// this hook and would otherwise wipe the board. No live connection survives
+// the unmount either way, so a persisted "active" run is rehydrated as
+// interrupted rather than resumed.
+const PERSIST_KEY = "swarm.board.v1";
+
+function loadPersisted(): SwarmRunState {
+  const persisted = loadSession<SwarmRunState>(PERSIST_KEY);
+  if (!persisted) return IDLE;
+  return { ...persisted, active: false, responding: [] };
+}
 
 type Action =
   | { type: "BEGIN" }
@@ -202,8 +215,12 @@ export function useSwarmRun(): {
   start: (prompt: string) => void;
   reset: () => void;
 } {
-  const [state, dispatch] = useReducer(reducer, IDLE);
+  const [state, dispatch] = useReducer(reducer, undefined, loadPersisted);
   const seqRef = useRef(0);
+
+  useEffect(() => {
+    saveSession(PERSIST_KEY, state);
+  }, [state]);
 
   // BYOK keys are sent as X-LLM-* headers on the run request, mirroring the rest
   // of the API layer (lib/api.ts `request`). Without these, a deployment whose
