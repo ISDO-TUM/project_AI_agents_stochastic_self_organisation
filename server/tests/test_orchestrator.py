@@ -226,6 +226,22 @@ async def test_run_swarm_creates_run_contract_and_thread(db: AsyncConnection) ->
     assert len(threads) == 1
 
 
+async def test_draft_entries_documents_used_defaults_to_empty_list(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    await db.execute(
+        text(
+            "INSERT INTO draft_entries "
+            "(id, run_id, thread_id, round, author_id, entry_type, content) "
+            "VALUES ('e1', 'r1', 't1', 1, 'a1', 'proposal', 'hello')"
+        )
+    )
+    await db.commit()
+    row = (
+        await db.execute(text("SELECT documents_used FROM draft_entries WHERE id = 'e1'"))
+    ).mappings().fetchone()
+    assert row["documents_used"] == "[]"
+
+
 async def test_run_swarm_confirmed_layer_starts_empty(db: AsyncConnection) -> None:
     await _drain(SwarmRunConfig(prompt="Analyze this energy contract"), db)
 

@@ -219,6 +219,7 @@ draft_entries = Table(
     Column("content_embedding", Text),
     Column("reply_to", Text, ForeignKey("draft_entries.id")),
     Column("mention_agents", Text, nullable=False, server_default=text("'[]'")),
+    Column("documents_used", Text, nullable=False, server_default=text("'[]'")),
     Column("is_visible", Boolean, nullable=False, server_default=text("true")),
     Column("deleted_at", DateTime(timezone=True)),
     Column("last_cited_round", Integer, nullable=False, server_default=text("0")),

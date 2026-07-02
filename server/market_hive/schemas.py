@@ -82,6 +82,7 @@ class DraftEntrySchema(BaseModel):
     content: str
     reply_to: str | None = None
     mention_agents: list[str] = []
+    documents_used: list[str] = []
     is_visible: bool = True
     deleted_at: datetime | None = None
     last_cited_round: int = 0
