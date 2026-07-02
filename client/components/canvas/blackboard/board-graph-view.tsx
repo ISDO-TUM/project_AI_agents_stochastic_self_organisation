@@ -198,6 +198,7 @@ export function BoardGraphView({
   const [disabledEntryTypes, setDisabledEntryTypes] = useState<Set<DraftEntry["entry_type"]>>(
     new Set(),
   );
+  const [disabledAgentIds, setDisabledAgentIds] = useState<Set<string>>(new Set());
   const [view, setView] = useState({ x: 40, y: 30, scale: 0.85 });
   const [isPanning, setIsPanning] = useState(false);
 
@@ -352,9 +353,10 @@ export function BoardGraphView({
   const hubOpacity = useCallback(
     (hubId: string) => {
       if (highlight) return highlight.nodeKeys.has(`agent:${hubId}`) ? 1 : 0.15;
+      if (disabledAgentIds.has(hubId)) return 0.15;
       return 1;
     },
-    [highlight],
+    [highlight, disabledAgentIds],
   );
 
   const entryOpacity = useCallback(
@@ -363,14 +365,15 @@ export function BoardGraphView({
       visible: boolean,
       confirmed: boolean,
       entryType: DraftEntry["entry_type"],
+      authorId: string,
     ) => {
       if (highlight) return highlight.nodeKeys.has(`entry:${entryId}`) ? 1 : 0.08;
-      if (disabledEntryTypes.has(entryType)) return 0.2;
+      if (disabledEntryTypes.has(entryType) || disabledAgentIds.has(authorId)) return 0.2;
       if (!visible) return 0.32;
       if (spotlight && !confirmed) return 0.26;
       return 1;
     },
-    [highlight, spotlight, disabledEntryTypes],
+    [highlight, spotlight, disabledEntryTypes, disabledAgentIds],
   );
 
   const edgeStyle = useCallback(
@@ -378,7 +381,8 @@ export function BoardGraphView({
       const isHi = highlight?.edgeIds.has(edge.id) ?? false;
       const baseOpacity =
         edge.kind === "mention" ? 0.55 : edge.kind === "citation" ? 0.85 : 0.75;
-      const filteredOut = disabledKinds.has(edge.kind);
+      const filteredOut =
+        disabledKinds.has(edge.kind) || disabledAgentIds.has(edge.ownerAgentId);
       const opacity = highlight ? (isHi ? 1 : 0.04) : filteredOut ? 0.06 : baseOpacity;
       // Reply/mention edges take the author's own accent (whose thought is
       // whose); citation and vote are recolored to the app's existing
@@ -395,7 +399,7 @@ export function BoardGraphView({
         (edge.kind === "citation" ? 2 : edge.kind === "mention" ? 1.6 : 1.8);
       return { opacity, color, width };
     },
-    [highlight, disabledKinds],
+    [highlight, disabledKinds, disabledAgentIds],
   );
 
   const hasContent = layout.hubs.length > 0;
@@ -644,6 +648,7 @@ export function BoardGraphView({
                   node.entry.is_visible,
                   node.confirmedRound !== null,
                   node.entry.entry_type,
+                  node.entry.author_id,
                 )}
                 selected={selected?.kind === "entry" && selected.id === node.entry.id}
                 threshold={threshold}
@@ -763,6 +768,46 @@ export function BoardGraphView({
                 active={!spotlight}
                 onClick={() => setSpotlight((s) => !s)}
               />
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={legendGroupLabel(t.textDim)}>Agents</div>
+              {layout.hubs.map((hub) => {
+                const hubColor = agentColor(hub.id, agents, promotedAgentIds);
+                const active = !disabledAgentIds.has(hub.id);
+                return (
+                  <button
+                    key={hub.id}
+                    onClick={() =>
+                      setDisabledAgentIds((prev) => toggleMembership(prev, hub.id))
+                    }
+                    title={active ? `Dim ${hub.name}` : `Show ${hub.name}`}
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      background: "none",
+                      border: "none",
+                      padding: 0,
+                      cursor: "pointer",
+                      pointerEvents: "auto",
+                      opacity: active ? 1 : 0.4,
+                      transition: "opacity 0.15s",
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: "50%",
+                        background: hubColor,
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span style={{ fontSize: 9.5, color: t.textSub }}>{hub.name}</span>
+                  </button>
+                );
+              })}
             </div>
           </div>
         )}
