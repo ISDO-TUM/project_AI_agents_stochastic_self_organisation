@@ -302,6 +302,7 @@ export function ConfirmedCard({
                   color: t.textDim,
                   letterSpacing: "0.05em",
                   textTransform: "uppercase",
+                  fontFamily: "'Space Grotesk', system-ui",
                 }}
               >
                 References
