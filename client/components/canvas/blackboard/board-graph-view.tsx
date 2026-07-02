@@ -506,17 +506,6 @@ export function BoardGraphView({
               <X size={12} strokeWidth={2} />
             </button>
           )}
-          <button
-            onClick={() => setSpotlight((s) => !s)}
-            title={
-              spotlight
-                ? "Spotlight: showing only confirmed findings clearly"
-                : "Spotlight confirmed findings"
-            }
-            style={toolBtnStyle(dark, spotlight, "#b5860d")}
-          >
-            <Target size={12} strokeWidth={2} />
-          </button>
           <button onClick={() => zoomBy(0.82)} title="Zoom out" style={toolBtnStyle(dark, false)}>
             <ZoomOut size={12} strokeWidth={2} />
           </button>
@@ -762,6 +751,17 @@ export function BoardGraphView({
                 onClick={() =>
                   setDisabledEntryTypes((prev) => toggleMembership(prev, "system"))
                 }
+              />
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={legendGroupLabel(t.textDim)}>Unconfirmed</div>
+              <LegendRow
+                icon={Target}
+                label="Unconfirmed findings"
+                swatch="#b5860d"
+                active={!spotlight}
+                onClick={() => setSpotlight((s) => !s)}
               />
             </div>
           </div>
