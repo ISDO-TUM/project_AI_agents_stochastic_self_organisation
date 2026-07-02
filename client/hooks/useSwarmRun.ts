@@ -8,6 +8,7 @@ import {
   ThreadInfo,
 } from "@/lib/types";
 import { useApiKeys, apiKeyHeaders } from "@/lib/api-keys-context";
+import { SwarmRunConfig } from "@/components/swarm-config-modal";
 
 // SSE goes through the Next rewrite proxy by default (relative ""). If that proxy
 // buffers the stream, set NEXT_PUBLIC_API_URL (e.g. http://localhost:8000) to hit
@@ -199,7 +200,7 @@ function reducer(state: SwarmRunState, action: Action): SwarmRunState {
  */
 export function useSwarmRun(): {
   state: SwarmRunState;
-  start: (prompt: string) => void;
+  start: (prompt: string, config?: SwarmRunConfig) => void;
   reset: () => void;
 } {
   const [state, dispatch] = useReducer(reducer, IDLE);
@@ -212,7 +213,7 @@ export function useSwarmRun(): {
   const { keys } = useApiKeys();
 
   const start = useCallback(
-    (prompt: string) => {
+    (prompt: string, config?: SwarmRunConfig) => {
       const seq = seqRef.current + 1;
       seqRef.current = seq;
       dispatch({ type: "BEGIN" });
@@ -225,7 +226,21 @@ export function useSwarmRun(): {
               "Content-Type": "application/json",
               ...apiKeyHeaders(keys),
             },
-            body: JSON.stringify({ engine: "swarm", prompt }),
+            body: JSON.stringify({
+              engine: "swarm",
+              prompt,
+              ...(config && {
+                rounds: config.roundsMax,
+                swarm_min_takers: config.takersMin,
+                swarm_max_takers: config.takersMax,
+                swarm_min_rounds: config.roundsMin,
+                swarm_invite_floor: config.inviteFloor,
+                swarm_decay_rounds: config.decayRounds,
+                swarm_token_budget: config.tokenBudget,
+                swarm_max_amendments: config.maxAmendments,
+                swarm_k_attention: config.attentionK,
+              }),
+            }),
           });
           if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
 

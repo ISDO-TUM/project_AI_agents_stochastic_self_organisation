@@ -29,6 +29,10 @@ class SwarmRunConfig(BaseModel):
     epsilon_entropy: int = Field(default=0, ge=0)
     t_initial: float = Field(default=0.0)
     delta_t: float = Field(default=0.1)
+    # When True the LLM self-selection phase is skipped: all invited agents are
+    # made takers immediately. Intended for benchmarks where participation is
+    # guaranteed by construction (e.g. each agent holds part of the evidence).
+    skip_auction: bool = False
 
 
 class ThreadSchema(BaseModel):

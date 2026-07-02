@@ -572,18 +572,34 @@ async def _run_auction(
     contract: ContractSchema,
     agents_by_id: dict[str, dict[str, Any]],
     agent_runner: AgentRunner,
+    skip_auction: bool = False,
 ) -> AsyncIterator[SimulationStep]:
-    """Invite agents, drive self-selection, and select takers (PRD §6.2)."""
+    """Invite agents, drive self-selection, and select takers (PRD §6.2).
+
+    When skip_auction is True the LLM self-selection phase is bypassed: all
+    invited agents are recorded as bidders immediately, so every agent that
+    holds evidence is guaranteed to become a taker.
+    """
     invitations = await auction.invite(run_id=run_id, contract_id=contract.id)
     yield _step("system", f"Auction open. {len(invitations)} agent(s) invited.")
 
-    turns = [
-        _auction_turn(invitation, agent, run_id, contract, agent_runner)
-        for invitation in invitations
-        if (agent := agents_by_id.get(invitation.agent_id)) is not None
-    ]
-    async for step in _run_turns(db, turns):
-        yield step
+    if skip_auction:
+        for inv in invitations:
+            await auction.record_bid(
+                run_id=run_id,
+                agent_id=inv.agent_id,
+                contract_id=contract.id,
+                justification="auto-bid (skip_auction=True)",
+                preliminary_score=inv.preliminary_score,
+            )
+    else:
+        turns = [
+            _auction_turn(invitation, agent, run_id, contract, agent_runner)
+            for invitation in invitations
+            if (agent := agents_by_id.get(invitation.agent_id)) is not None
+        ]
+        async for step in _run_turns(db, turns):
+            yield step
 
     selection = await auction.select_takers(run_id=run_id, contract_id=contract.id)
     if selection.aborted:
@@ -944,7 +960,9 @@ async def run_swarm(
 
     # ── Auction (Market Hive §6.2) ───────────────────────────────────────────
     auction = AuctionEngine.from_config(db, config)
-    async for step in _run_auction(db, auction, run_id, contract, agents_by_id, agent_runner):
+    async for step in _run_auction(
+        db, auction, run_id, contract, agents_by_id, agent_runner, skip_auction=config.skip_auction
+    ):
         yield step
 
     takers = await auction.get_takers(run_id=run_id)

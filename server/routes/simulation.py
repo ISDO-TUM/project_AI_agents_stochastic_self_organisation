@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import AsyncGenerator
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -136,7 +136,24 @@ async def run_simulation(
 
     # ── Swarm (ECSAS) engine: stream the run's events as SSE ──────────────────
     if body.engine == "swarm":
-        config = SwarmRunConfig(prompt=body.prompt)
+        overrides: dict[str, Any] = {
+            k: v
+            for k, v in {
+                "max_rounds": body.rounds,
+                "min_takers": body.swarm_min_takers,
+                "max_takers": body.swarm_max_takers,
+                "min_rounds": body.swarm_min_rounds,
+                "invite_floor": body.swarm_invite_floor,
+                "decay_rounds": body.swarm_decay_rounds,
+                "token_budget": body.swarm_token_budget,
+                "max_amendments": body.swarm_max_amendments,
+                "k_attention": body.swarm_k_attention,
+            }.items()
+            if v is not None
+        }
+        if body.swarm_skip_auction:
+            overrides["skip_auction"] = True
+        config = SwarmRunConfig(prompt=body.prompt, **overrides)
         return StreamingResponse(
             _swarm_event_stream(config, current_credentials()),
             media_type="text/event-stream",

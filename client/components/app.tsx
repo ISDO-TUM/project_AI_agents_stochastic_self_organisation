@@ -277,7 +277,7 @@ export function App({ onModeSelected }: AppProps = {}) {
       if (notificationsSupported() && readNotifyPref() === null) {
         setNotifyConsentOpen(true);
       }
-      swarm.start(pendingSwarmPrompt);
+      swarm.start(pendingSwarmPrompt, config);
     },
     [pendingSwarmPrompt, agents, dummy, swarm],
   );
