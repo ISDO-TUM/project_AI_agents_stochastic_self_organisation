@@ -162,6 +162,13 @@ function edgeDash(kind: GraphEdgeKind): string | undefined {
   return undefined;
 }
 
+function toggleMembership<T>(set: Set<T>, value: T): Set<T> {
+  const next = new Set(set);
+  if (next.has(value)) next.delete(value);
+  else next.add(value);
+  return next;
+}
+
 export function BoardGraphView({
   draft,
   promotedMap,
@@ -184,6 +191,7 @@ export function BoardGraphView({
 
   const [selected, setSelected] = useState<Selected>(null);
   const [spotlight, setSpotlight] = useState(done);
+  const [disabledKinds, setDisabledKinds] = useState<Set<GraphEdgeKind>>(new Set());
   const [view, setView] = useState({ x: 40, y: 30, scale: 0.85 });
   const [isPanning, setIsPanning] = useState(false);
 
@@ -358,7 +366,8 @@ export function BoardGraphView({
       const isHi = highlight?.edgeIds.has(edge.id) ?? false;
       const baseOpacity =
         edge.kind === "mention" ? 0.55 : edge.kind === "citation" ? 0.85 : 0.75;
-      const opacity = highlight ? (isHi ? 1 : 0.04) : baseOpacity;
+      const filteredOut = disabledKinds.has(edge.kind);
+      const opacity = highlight ? (isHi ? 1 : 0.04) : filteredOut ? 0.06 : baseOpacity;
       // Reply/mention edges take the author's own accent (whose thought is
       // whose); citation and vote are recolored to the app's existing
       // "consensus" language (gold = cited toward confirmation, green =
@@ -374,7 +383,7 @@ export function BoardGraphView({
         (edge.kind === "citation" ? 2 : edge.kind === "mention" ? 1.6 : 1.8);
       return { opacity, color, width };
     },
-    [highlight],
+    [highlight, disabledKinds],
   );
 
   const hasContent = layout.hubs.length > 0;
@@ -648,7 +657,7 @@ export function BoardGraphView({
           </div>
         )}
 
-        {/* ── Edge-kind legend ── */}
+        {/* ── Legend / filters ── */}
         {hasContent && (
           <div
             style={{
@@ -657,19 +666,51 @@ export function BoardGraphView({
               bottom: 10,
               display: "flex",
               flexDirection: "column",
-              gap: 4,
+              gap: 8,
               padding: "7px 10px",
               borderRadius: 9,
               background: dark ? "rgba(10,9,16,0.75)" : "rgba(255,255,255,0.8)",
               border: `1px solid ${t.border}`,
               backdropFilter: "blur(8px)",
               pointerEvents: "none",
+              maxHeight: "min(70%, 420px)",
+              overflowY: "auto",
             }}
+            className="no-scrollbar"
           >
-            <LegendRow icon={GitCommitHorizontal} label="Reply" swatch={t.textSub} />
-            <LegendRow icon={Quote} label="Citation flow" swatch="#b5860d" dashed />
-            <LegendRow icon={AtSign} label="Mention" swatch={t.textDim} dotted />
-            <LegendRow icon={ThumbsUp} label="Vote" swatch="#3dba8c" />
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={legendGroupLabel(t.textDim)}>Line types</div>
+              <LegendRow
+                icon={GitCommitHorizontal}
+                label="Reply"
+                swatch={t.textSub}
+                active={!disabledKinds.has("reply")}
+                onClick={() => setDisabledKinds((prev) => toggleMembership(prev, "reply"))}
+              />
+              <LegendRow
+                icon={Quote}
+                label="Citation flow"
+                swatch="#b5860d"
+                dashed
+                active={!disabledKinds.has("citation")}
+                onClick={() => setDisabledKinds((prev) => toggleMembership(prev, "citation"))}
+              />
+              <LegendRow
+                icon={AtSign}
+                label="Mention"
+                swatch={t.textDim}
+                dotted
+                active={!disabledKinds.has("mention")}
+                onClick={() => setDisabledKinds((prev) => toggleMembership(prev, "mention"))}
+              />
+              <LegendRow
+                icon={ThumbsUp}
+                label="Vote"
+                swatch="#3dba8c"
+                active={!disabledKinds.has("vote")}
+                onClick={() => setDisabledKinds((prev) => toggleMembership(prev, "vote"))}
+              />
+            </div>
           </div>
         )}
       </div>
@@ -701,21 +742,51 @@ function toolBtnStyle(
   };
 }
 
+function legendGroupLabel(textDim: string): React.CSSProperties {
+  return {
+    fontSize: 8.5,
+    fontWeight: 800,
+    color: textDim,
+    letterSpacing: "0.08em",
+    textTransform: "uppercase",
+    fontFamily: "'Space Grotesk', system-ui, sans-serif",
+  };
+}
+
 function LegendRow({
   icon: Icon,
   label,
   swatch,
   dashed,
   dotted,
+  active,
+  onClick,
 }: {
   icon: React.ComponentType<{ size?: number; strokeWidth?: number; color?: string }>;
   label: string;
   swatch: string;
   dashed?: boolean;
   dotted?: boolean;
+  active: boolean;
+  onClick: () => void;
 }) {
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+    <button
+      onClick={onClick}
+      title={active ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 6,
+        background: "none",
+        border: "none",
+        padding: 0,
+        cursor: "pointer",
+        pointerEvents: "auto",
+        opacity: active ? 1 : 0.4,
+        transition: "opacity 0.15s",
+      }}
+    >
       <svg width={16} height={8}>
         <line
           x1={0}
@@ -729,6 +800,6 @@ function LegendRow({
       </svg>
       <Icon size={10} strokeWidth={2} color={swatch} />
       <span style={{ fontSize: 9.5, color: swatch }}>{label}</span>
-    </div>
+    </button>
   );
 }
