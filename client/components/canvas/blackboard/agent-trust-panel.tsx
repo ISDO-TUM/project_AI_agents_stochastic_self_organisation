@@ -19,6 +19,9 @@ interface AgentTrustPanelProps {
   citationCount: number;
   concedingTemperature?: number;
   trigger: React.ReactNode;
+  /** Optional passthrough — lets callers (e.g. the board graph view) sync
+   *  external "selected" state to this popover's open state. */
+  onOpenChange?: (open: boolean) => void;
 }
 
 export function AgentTrustPanel({
@@ -28,6 +31,7 @@ export function AgentTrustPanel({
   citationCount,
   concedingTemperature,
   trigger,
+  onOpenChange,
 }: AgentTrustPanelProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -47,7 +51,13 @@ export function AgentTrustPanel({
   }, [agentId, trustVector, loading]);
 
   return (
-    <Popover onOpenChange={(open) => open && loadTrust()}>
+    <Popover
+      onOpenChange={(open) => {
+        if (open) loadTrust();
+        onOpenChange?.(open);
+      }}
+    >
+
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent>
         <div

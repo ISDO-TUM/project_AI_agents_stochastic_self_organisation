@@ -5,11 +5,12 @@ import { createPortal } from "react-dom";
 import { BlackboardState } from "@/lib/types";
 import { useTheme } from "@/lib/theme-context";
 import { getTheme, BURG_LT } from "@/lib/theme";
-import { Layers, Maximize2, X } from "lucide-react";
+import { Layers, Maximize2, Network, Rows3, X } from "lucide-react";
 import { computePromotionThreshold } from "@/lib/blackboard-utils";
 import { ProposalCard } from "./blackboard/proposal-card";
 import { ThreadedEntry } from "./blackboard/reply-thread";
 import { ThreadFilterDropdown } from "./blackboard/thread-filter-dropdown";
+import { BoardGraphView } from "./blackboard/board-graph-view";
 
 interface DraftBoardProps {
   state: BlackboardState;
@@ -116,6 +117,50 @@ function EmptyState({ runId, dark }: { runId: string | null; dark: boolean }) {
   );
 }
 
+/** Small segmented control used in the expanded modal's topbar to switch
+ *  between the linear list and the graph view. */
+function ViewModeButton({
+  active,
+  onClick,
+  icon: Icon,
+  label,
+  dark,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
+  label: string;
+  dark: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={`${label} view`}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "4px 9px",
+        borderRadius: 6,
+        border: "none",
+        background: active
+          ? dark
+            ? "rgba(196,55,79,0.22)"
+            : "rgba(139,26,47,0.12)"
+          : "transparent",
+        color: active ? BURG_LT : dark ? "#6a688a" : "#4e4c68",
+        fontSize: 10.5,
+        fontWeight: 700,
+        fontFamily: "'Space Grotesk', system-ui, sans-serif",
+        cursor: "pointer",
+      }}
+    >
+      <Icon size={11} strokeWidth={2.2} />
+      {label}
+    </button>
+  );
+}
+
 export function DraftBoard({
   state,
   runId,
@@ -133,6 +178,7 @@ export function DraftBoard({
   const t = getTheme(dark);
 
   const [expanded, setExpanded] = useState(false);
+  const [viewMode, setViewMode] = useState<"list" | "graph">("list");
   const bodyRef = useRef<HTMLDivElement>(null);
   const [newCount, setNewCount] = useState(0);
   const prevLengthRef = useRef(0);
@@ -580,8 +626,10 @@ export function DraftBoard({
           >
             <div
               style={{
-                width: "min(860px, 90vw)",
+                width:
+                  viewMode === "graph" ? "min(1240px, 94vw)" : "min(860px, 90vw)",
                 maxHeight: "85vh",
+                height: viewMode === "graph" ? "min(760px, 85vh)" : undefined,
                 display: "flex",
                 flexDirection: "column",
                 background: dark
@@ -591,6 +639,7 @@ export function DraftBoard({
                 borderRadius: 16,
                 overflow: "hidden",
                 boxShadow: "0 28px 90px rgba(0,0,0,0.5)",
+                transition: "width 0.25s ease, height 0.25s ease",
               }}
             >
               <div
@@ -650,125 +699,177 @@ export function DraftBoard({
                     {runId.slice(0, 8)}
                   </span>
                 )}
-                <button
-                  onClick={() => setExpanded(false)}
+
+                <div
                   style={{
                     marginLeft: "auto",
-                    background: "none",
-                    border: "none",
-                    cursor: "pointer",
-                    padding: "4px 6px",
                     display: "flex",
                     alignItems: "center",
-                    color: t.textDim,
-                    borderRadius: 6,
+                    gap: 10,
                   }}
-                  title="Close"
                 >
-                  <X size={15} strokeWidth={2} />
-                </button>
-              </div>
-
-              <div
-                style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}
-                className="pscroll"
-              >
-                {state.loading && visibleDraft.length === 0 && (
-                  <>
-                    <SkeletonCard dark={dark} delay={0} />
-                    <SkeletonCard dark={dark} delay={0.15} />
-                    <SkeletonCard dark={dark} delay={0.3} />
-                  </>
-                )}
-                {state.error && (
                   <div
                     style={{
-                      textAlign: "center",
-                      padding: "24px 0",
-                      color: "#c0392b",
-                      fontSize: 13,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 2,
+                      padding: 2,
+                      borderRadius: 8,
+                      background: dark
+                        ? "rgba(255,255,255,0.05)"
+                        : "rgba(0,0,0,0.04)",
+                      border: `1px solid ${
+                        dark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.07)"
+                      }`,
                     }}
                   >
-                    {state.error}
+                    <ViewModeButton
+                      active={viewMode === "list"}
+                      onClick={() => setViewMode("list")}
+                      icon={Rows3}
+                      label="List"
+                      dark={dark}
+                    />
+                    <ViewModeButton
+                      active={viewMode === "graph"}
+                      onClick={() => setViewMode("graph")}
+                      icon={Network}
+                      label="Graph"
+                      dark={dark}
+                    />
                   </div>
-                )}
-                {!state.loading &&
-                  !state.error &&
-                  visibleDraft.length === 0 && (
-                    <EmptyState runId={runId} dark={dark} />
+                  <button
+                    onClick={() => setExpanded(false)}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      padding: "4px 6px",
+                      display: "flex",
+                      alignItems: "center",
+                      color: t.textDim,
+                      borderRadius: 6,
+                    }}
+                    title="Close"
+                  >
+                    <X size={15} strokeWidth={2} />
+                  </button>
+                </div>
+              </div>
+
+              {viewMode === "graph" ? (
+                <div style={{ flex: 1, minHeight: 0, padding: "8px 12px 12px" }}>
+                  <BoardGraphView
+                    draft={filteredDraft}
+                    promotedMap={promotedMap}
+                    threshold={threshold}
+                    agents={agents}
+                    promotedAgentIds={promotedAgentIds}
+                    done={done}
+                  />
+                </div>
+              ) : (
+                <div
+                  style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}
+                  className="pscroll"
+                >
+                  {state.loading && visibleDraft.length === 0 && (
+                    <>
+                      <SkeletonCard dark={dark} delay={0} />
+                      <SkeletonCard dark={dark} delay={0.15} />
+                      <SkeletonCard dark={dark} delay={0.3} />
+                    </>
                   )}
-                {visibleDraft.length > 0 && !state.error && (
-                  <>
-                    {roundGroups.map((group, gi) => (
-                      <div key={group.round}>
-                        {gi > 0 && (
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 8,
-                              margin: "10px 0 8px",
-                            }}
-                          >
+                  {state.error && (
+                    <div
+                      style={{
+                        textAlign: "center",
+                        padding: "24px 0",
+                        color: "#c0392b",
+                        fontSize: 13,
+                      }}
+                    >
+                      {state.error}
+                    </div>
+                  )}
+                  {!state.loading &&
+                    !state.error &&
+                    visibleDraft.length === 0 && (
+                      <EmptyState runId={runId} dark={dark} />
+                    )}
+                  {visibleDraft.length > 0 && !state.error && (
+                    <>
+                      {roundGroups.map((group, gi) => (
+                        <div key={group.round}>
+                          {gi > 0 && (
                             <div
                               style={{
-                                flex: 1,
-                                height: 1,
-                                background: dark
-                                  ? "rgba(139,26,47,0.18)"
-                                  : "rgba(139,26,47,0.1)",
-                              }}
-                            />
-                            <span
-                              style={{
-                                fontSize: 9.5,
-                                color: dark
-                                  ? "rgba(196,55,79,0.5)"
-                                  : "rgba(139,26,47,0.4)",
-                                fontFamily: "'JetBrains Mono', monospace",
+                                display: "flex",
+                                alignItems: "center",
+                                gap: 8,
+                                margin: "10px 0 8px",
                               }}
                             >
-                              Round {group.round}
-                            </span>
-                            <div
-                              style={{
-                                flex: 1,
-                                height: 1,
-                                background: dark
-                                  ? "rgba(139,26,47,0.18)"
-                                  : "rgba(139,26,47,0.1)",
-                              }}
-                            />
-                          </div>
-                        )}
-                        {group.entries.map((entry) =>
-                          entry.entry_type === "proposal" ? (
-                            <ProposalCard
-                              key={entry.id}
-                              entry={entry}
-                              threshold={threshold}
-                              promotedMap={promotedMap}
-                              agents={agents}
-                              promotedAgentIds={promotedAgentIds}
-                            />
-                          ) : (
-                            <ThreadedEntry
-                              key={entry.id}
-                              entry={entry}
-                              parentContent=""
-                              depth={0}
-                              threshold={threshold}
-                              promotedMap={promotedMap}
-                              agents={agents}
-                              promotedAgentIds={promotedAgentIds}
-                            />
-                          ),
-                        )}
-                      </div>
-                    ))}
-                  </>
-                )}
-              </div>
+                              <div
+                                style={{
+                                  flex: 1,
+                                  height: 1,
+                                  background: dark
+                                    ? "rgba(139,26,47,0.18)"
+                                    : "rgba(139,26,47,0.1)",
+                                }}
+                              />
+                              <span
+                                style={{
+                                  fontSize: 9.5,
+                                  color: dark
+                                    ? "rgba(196,55,79,0.5)"
+                                    : "rgba(139,26,47,0.4)",
+                                  fontFamily: "'JetBrains Mono', monospace",
+                                }}
+                              >
+                                Round {group.round}
+                              </span>
+                              <div
+                                style={{
+                                  flex: 1,
+                                  height: 1,
+                                  background: dark
+                                    ? "rgba(139,26,47,0.18)"
+                                    : "rgba(139,26,47,0.1)",
+                                }}
+                              />
+                            </div>
+                          )}
+                          {group.entries.map((entry) =>
+                            entry.entry_type === "proposal" ? (
+                              <ProposalCard
+                                key={entry.id}
+                                entry={entry}
+                                threshold={threshold}
+                                promotedMap={promotedMap}
+                                agents={agents}
+                                promotedAgentIds={promotedAgentIds}
+                              />
+                            ) : (
+                              <ThreadedEntry
+                                key={entry.id}
+                                entry={entry}
+                                parentContent=""
+                                depth={0}
+                                threshold={threshold}
+                                promotedMap={promotedMap}
+                                agents={agents}
+                                promotedAgentIds={promotedAgentIds}
+                              />
+                            ),
+                          )}
+                        </div>
+                      ))}
+                    </>
+                  )}
+                </div>
+              )}
             </div>
           </div>,
           document.body,
