@@ -299,6 +299,13 @@ export function computeBoardGraphLayout(
       citesGivenByAgent.set(cid, (citesGivenByAgent.get(cid) ?? 0) + 1);
       if (!byAuthor.has(cid)) extraActiveIds.add(cid);
     }
+    // Same reasoning for @mentions: an agent can be mentioned before they've
+    // authored/cited/voted anything of their own (e.g. invited into a thread
+    // mid-discussion) — without a hub for them, buildGraphEdges's mention
+    // loop has nowhere to point the line and silently drops it.
+    for (const mid of e.mention_agents) {
+      if (displayName.has(mid) && !byAuthor.has(mid)) extraActiveIds.add(mid);
+    }
   }
 
   const activeIds = new Set<string>([...byAuthor.keys(), ...extraActiveIds]);
@@ -612,9 +619,18 @@ export function buildGraphEdges(
       if (!citerId || citerId === entry.author_id) continue;
       const hub = layout.hubById.get(citerId);
       if (!hub) continue;
+      // A real vote never gets its own draft_entries row — the backend
+      // records it straight into the votes table, and the frontend learns
+      // about it via the same bb-vote → CITE path as an actual citation (see
+      // useSwarmRun.ts). The only signal that survives to tell them apart is
+      // round: the vote sub-round always tags round=1, and `cite` is never
+      // offered to agents before round 2 (_ROUND1_TOOLS has no `cite`;
+      // _ROUNDS_TOOLS, used from round 2 on, does) — so round 1 here can
+      // only mean a vote, never a real citation.
+      const isVote = citer.round === 1;
       edges.push({
-        id: `cite:${entry.id}:${citerId}:${citer.round}`,
-        kind: "citation",
+        id: `${isVote ? "vote" : "cite"}:${entry.id}:${citerId}:${citer.round}`,
+        kind: isVote ? "vote" : "citation",
         x1: hub.x,
         y1: hub.y,
         x2: selfCenter.x,
