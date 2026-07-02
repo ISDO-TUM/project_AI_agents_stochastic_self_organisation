@@ -19,6 +19,9 @@ import {
   Quote,
   AtSign,
   ThumbsUp,
+  Lightbulb,
+  Reply as ReplyIcon,
+  Settings2,
 } from "lucide-react";
 import { useTheme } from "@/lib/theme-context";
 import { getTheme } from "@/lib/theme";
@@ -192,6 +195,9 @@ export function BoardGraphView({
   const [selected, setSelected] = useState<Selected>(null);
   const [spotlight, setSpotlight] = useState(done);
   const [disabledKinds, setDisabledKinds] = useState<Set<GraphEdgeKind>>(new Set());
+  const [disabledEntryTypes, setDisabledEntryTypes] = useState<Set<DraftEntry["entry_type"]>>(
+    new Set(),
+  );
   const [view, setView] = useState({ x: 40, y: 30, scale: 0.85 });
   const [isPanning, setIsPanning] = useState(false);
 
@@ -352,13 +358,19 @@ export function BoardGraphView({
   );
 
   const entryOpacity = useCallback(
-    (entryId: string, visible: boolean, confirmed: boolean) => {
+    (
+      entryId: string,
+      visible: boolean,
+      confirmed: boolean,
+      entryType: DraftEntry["entry_type"],
+    ) => {
       if (highlight) return highlight.nodeKeys.has(`entry:${entryId}`) ? 1 : 0.08;
+      if (disabledEntryTypes.has(entryType)) return 0.2;
       if (!visible) return 0.32;
       if (spotlight && !confirmed) return 0.26;
       return 1;
     },
-    [highlight, spotlight],
+    [highlight, spotlight, disabledEntryTypes],
   );
 
   const edgeStyle = useCallback(
@@ -642,6 +654,7 @@ export function BoardGraphView({
                   node.entry.id,
                   node.entry.is_visible,
                   node.confirmedRound !== null,
+                  node.entry.entry_type,
                 )}
                 selected={selected?.kind === "entry" && selected.id === node.entry.id}
                 threshold={threshold}
@@ -709,6 +722,46 @@ export function BoardGraphView({
                 swatch="#3dba8c"
                 active={!disabledKinds.has("vote")}
                 onClick={() => setDisabledKinds((prev) => toggleMembership(prev, "vote"))}
+              />
+            </div>
+
+            <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+              <div style={legendGroupLabel(t.textDim)}>Contributions</div>
+              <LegendRow
+                icon={Lightbulb}
+                label="Proposal"
+                swatch={t.textSub}
+                active={!disabledEntryTypes.has("proposal")}
+                onClick={() =>
+                  setDisabledEntryTypes((prev) => toggleMembership(prev, "proposal"))
+                }
+              />
+              <LegendRow
+                icon={ReplyIcon}
+                label="Reply"
+                swatch={t.textDim}
+                active={!disabledEntryTypes.has("reply")}
+                onClick={() =>
+                  setDisabledEntryTypes((prev) => toggleMembership(prev, "reply"))
+                }
+              />
+              <LegendRow
+                icon={ThumbsUp}
+                label="Vote"
+                swatch="#3dba8c"
+                active={!disabledEntryTypes.has("vote")}
+                onClick={() =>
+                  setDisabledEntryTypes((prev) => toggleMembership(prev, "vote"))
+                }
+              />
+              <LegendRow
+                icon={Settings2}
+                label="System"
+                swatch="#7b9ec0"
+                active={!disabledEntryTypes.has("system")}
+                onClick={() =>
+                  setDisabledEntryTypes((prev) => toggleMembership(prev, "system"))
+                }
               />
             </div>
           </div>
