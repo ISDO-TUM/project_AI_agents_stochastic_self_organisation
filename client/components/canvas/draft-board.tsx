@@ -11,6 +11,7 @@ import { ProposalCard } from "./blackboard/proposal-card";
 import { ThreadedEntry } from "./blackboard/reply-thread";
 import { ThreadFilterDropdown } from "./blackboard/thread-filter-dropdown";
 import { BoardGraphView } from "./blackboard/board-graph-view";
+import { PromptBrief } from "./blackboard/prompt-brief";
 
 interface DraftBoardProps {
   state: BlackboardState;
@@ -462,6 +463,8 @@ export function DraftBoard({
         }}
         className="pscroll"
       >
+        {activeThread && <PromptBrief text={activeThread.description} />}
+
         {/* Skeleton: run active but no entries yet */}
         {state.loading && visibleDraft.length === 0 && (
           <>
@@ -773,6 +776,10 @@ export function DraftBoard({
                   style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}
                   className="pscroll"
                 >
+                  {activeThread && (
+                    <PromptBrief text={activeThread.description} />
+                  )}
+
                   {state.loading && visibleDraft.length === 0 && (
                     <>
                       <SkeletonCard dark={dark} delay={0} />

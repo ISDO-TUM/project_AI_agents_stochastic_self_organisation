@@ -165,6 +165,7 @@ export function generateDummyRun(
         | "content"
         | "round"
         | "thread_id"
+        | "documents_used"
       >,
   ): DraftEntry {
     counter += 1;
@@ -192,6 +193,8 @@ export function generateDummyRun(
       content: PROPOSALS[i % PROPOSALS.length],
       round: 1,
       thread_id: threadIds[i % threadIds.length],
+      documents_used:
+        i === 0 ? ["master-services-agreement.pdf", "sla-appendix.pdf"] : undefined,
     });
     proposalIds.push(entry.id);
     events.push({ kind: "post", delay: t, entry });

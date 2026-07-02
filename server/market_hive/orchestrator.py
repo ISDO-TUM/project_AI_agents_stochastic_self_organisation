@@ -416,7 +416,7 @@ async def _draft_entry_payload(db: AsyncConnection, entry_id: str) -> dict[str, 
                     SELECT de.id, de.run_id, de.thread_id, de.round, de.author_id,
                            COALESCE(a.name, de.author_id) AS author_name,
                            de.entry_type, de.content, de.reply_to, de.mention_agents,
-                           de.is_visible, de.last_cited_round, de.created_at
+                           de.documents_used, de.is_visible, de.last_cited_round, de.created_at
                     FROM draft_entries de
                     LEFT JOIN agents a ON a.id = de.author_id
                     WHERE de.id = :id
@@ -441,6 +441,7 @@ async def _draft_entry_payload(db: AsyncConnection, entry_id: str) -> dict[str, 
         "content": row["content"],
         "reply_to": row["reply_to"],
         "mention_agents": json.loads(row["mention_agents"] or "[]"),
+        "documents_used": json.loads(row["documents_used"] or "[]"),
         "is_visible": bool(row["is_visible"]),
         "deleted_at": None,
         "last_cited_round": row["last_cited_round"],
@@ -459,12 +460,31 @@ async def _board_events(
     bb-post carries the whole entry, bb-cite/bb-vote the cited id + citer.
     """
     steps: list[SimulationStep] = []
+
+    # Files the agent actually read this turn (order-preserving, deduped) — any
+    # post_to_blackboard call in this same turn is attributed to having consulted
+    # them, since a turn is one LLM call's worth of sequential tool use.
+    documents_read: list[str] = []
+    for call in tools_used:
+        if call.name != "files" or call.input.get("action") != "read":
+            continue
+        file_name = call.input.get("file_name")
+        if file_name and file_name not in documents_read:
+            documents_read.append(file_name)
+
     for call in tools_used:
         if call.name == "post_to_blackboard":
             entry_id = _parse_entry_id(call.output)
             payload = await _draft_entry_payload(db, entry_id) if entry_id else None
             if payload is None:
                 continue
+            if documents_read:
+                await db.execute(
+                    text("UPDATE draft_entries SET documents_used = :d WHERE id = :id"),
+                    {"d": json.dumps(documents_read), "id": entry_id},
+                )
+                await db.commit()
+                payload["documents_used"] = documents_read
             steps.append(
                 _step(
                     "bb-post",

@@ -8,6 +8,7 @@ import { getTheme } from "@/lib/theme";
 import { CheckCircle2, Maximize2, Sparkles, X } from "lucide-react";
 import { ConfirmedCard } from "./blackboard/confirmed-card";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
+import { findDraftEntry } from "@/lib/blackboard-utils";
 
 const GOLD = "#b5860d";
 
@@ -102,6 +103,10 @@ interface ConfirmedBoardProps {
   finalAnswer?: string | null;
   /** Re-opens the prominent completion overlay from the in-board answer card. */
   onShowFinalAnswer?: () => void;
+  /** Canvas agents list — used to resolve each card's author avatar color. */
+  agents?: { id: string }[];
+  /** Agents with a promoted contribution — always rendered gold. */
+  promotedAgentIds?: Set<string>;
 }
 
 export function ConfirmedBoard({
@@ -114,6 +119,8 @@ export function ConfirmedBoard({
   done = false,
   finalAnswer = null,
   onShowFinalAnswer,
+  agents = [],
+  promotedAgentIds,
 }: ConfirmedBoardProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -423,7 +430,18 @@ export function ConfirmedBoard({
               </div>
             ) : (
               filteredConfirmed.map((entry) => (
-                <ConfirmedCard key={entry.id} entry={entry} />
+                <ConfirmedCard
+                  key={entry.id}
+                  entry={entry}
+                  source={
+                    entry.source_draft_id
+                      ? (findDraftEntry(state.draft, entry.source_draft_id) ??
+                        undefined)
+                      : undefined
+                  }
+                  agents={agents}
+                  promotedAgentIds={promotedAgentIds}
+                />
               ))
             )}
           </>
@@ -577,7 +595,20 @@ export function ConfirmedBoard({
                       </div>
                     ) : (
                       filteredConfirmed.map((entry) => (
-                        <ConfirmedCard key={entry.id} entry={entry} />
+                        <ConfirmedCard
+                          key={entry.id}
+                          entry={entry}
+                          source={
+                            entry.source_draft_id
+                              ? (findDraftEntry(
+                                  state.draft,
+                                  entry.source_draft_id,
+                                ) ?? undefined)
+                              : undefined
+                          }
+                          agents={agents}
+                          promotedAgentIds={promotedAgentIds}
+                        />
                       ))
                     )}
                   </>

@@ -226,6 +226,22 @@ async def test_run_swarm_creates_run_contract_and_thread(db: AsyncConnection) ->
     assert len(threads) == 1
 
 
+async def test_draft_entries_documents_used_defaults_to_empty_list(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    await db.execute(
+        text(
+            "INSERT INTO draft_entries "
+            "(id, run_id, thread_id, round, author_id, entry_type, content) "
+            "VALUES ('e1', 'r1', 't1', 1, 'a1', 'proposal', 'hello')"
+        )
+    )
+    await db.commit()
+    row = (
+        await db.execute(text("SELECT documents_used FROM draft_entries WHERE id = 'e1'"))
+    ).mappings().fetchone()
+    assert row["documents_used"] == "[]"
+
+
 async def test_run_swarm_confirmed_layer_starts_empty(db: AsyncConnection) -> None:
     await _drain(SwarmRunConfig(prompt="Analyze this energy contract"), db)
 
@@ -328,6 +344,80 @@ async def test_round_one_posts_one_proposal_per_taker(db: AsyncConnection) -> No
         )
     ).scalar_one()
     assert proposals == 2
+
+
+async def test_documents_used_captured_from_files_tool_calls(db: AsyncConnection) -> None:
+    """When an agent's turn includes a files(action='read', ...) call before
+    post_to_blackboard, the resulting entry's documents_used carries the file
+    name — both on the emitted bb-post step and in the persisted row."""
+    await _insert_agent(db, "a1", "Alpha")
+
+    async def runner(
+        agent: dict[str, Any],
+        *,
+        user_prompt: str,
+        system_suffix: str,
+        tool_names: list[str],
+        tool_context: dict[str, Any],
+    ) -> tuple[str, list[ToolCall]]:
+        if "submit_bid" in tool_names:
+            engine = AuctionEngine(tool_context["db"])
+            await engine.record_bid(
+                run_id=tool_context["run_id"],
+                agent_id=tool_context["agent_id"],
+                contract_id=tool_context["contract_id"],
+                justification="I can contribute",
+                preliminary_score=tool_context["preliminary_score"],
+            )
+            return "", [ToolCall(name="submit_bid", input={"justification": "yes"}, output="{}")]
+        # Discussion rounds (round 2+) offer post_to_blackboard alongside cite; this
+        # test only cares about the round-1 opening proposal, so no-op there.
+        if "cite" in tool_names:
+            return "", []
+        if "post_to_blackboard" in tool_names:
+            entry_id = await Blackboard(tool_context["db"]).post(
+                run_id=tool_context["run_id"],
+                thread_id=tool_context["thread_id"],
+                author_id=tool_context["agent_id"],
+                content="Alpha proposal",
+                entry_type="proposal",
+                round=tool_context["round"],
+            )
+            return "", [
+                ToolCall(
+                    name="files",
+                    input={"action": "list"},
+                    output="Available files:\n- contract.txt",
+                ),
+                ToolCall(
+                    name="files",
+                    input={"action": "read", "file_name": "contract.txt"},
+                    output="clause text...",
+                ),
+                ToolCall(
+                    name="post_to_blackboard",
+                    input={"entry_type": "proposal", "thread_id": tool_context["thread_id"]},
+                    output=json.dumps({"entry_id": entry_id}),
+                ),
+            ]
+        return "", []
+
+    steps = await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2),
+        db,
+        agent_runner=runner,
+    )
+
+    post_steps = [s for s in steps if s.type == "bb-post"]
+    assert len(post_steps) == 1
+    assert post_steps[0].data["documents_used"] == ["contract.txt"]
+
+    row = (
+        await db.execute(
+            text("SELECT documents_used FROM draft_entries WHERE entry_type = 'proposal'")
+        )
+    ).mappings().fetchone()
+    assert json.loads(row["documents_used"]) == ["contract.txt"]
 
 
 async def test_vote_subround_records_votes_and_confidence(db: AsyncConnection) -> None:

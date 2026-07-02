@@ -219,6 +219,9 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             "ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_to_agent_id_fkey",
             # ECSAS: synthesised final answer persisted at run completion
             "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS final_answer TEXT",
+            # ECSAS: documents an agent consulted (via files()) while producing a post
+            "ALTER TABLE draft_entries ADD COLUMN IF NOT EXISTS"
+            " documents_used TEXT NOT NULL DEFAULT '[]'",
         ):
             await conn.execute(text(stmt))
     elif dialect == "sqlite":
@@ -250,6 +253,7 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             ("messages", "from_agent_name", "TEXT"),
             ("messages", "to_agent_name", "TEXT"),
             ("swarm_runs", "final_answer", "TEXT"),
+            ("draft_entries", "documents_used", "TEXT NOT NULL DEFAULT '[]'"),
         ):
             result = await conn.execute(text(f"PRAGMA table_info({table})"))
             if col not in {row[1] for row in result.fetchall()}:
