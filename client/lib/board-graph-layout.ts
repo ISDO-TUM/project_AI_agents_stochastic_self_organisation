@@ -536,6 +536,13 @@ export interface GraphEdge {
   color: string;
   fromKey: string;
   toKey: string;
+  /** Whichever agent's color drives this edge — the poster for reply/vote-
+   *  as-reply edges, the *mentioned* agent for mention edges (mention edges
+   *  are colored via agentColor(mid, ...), not the poster's color), and the
+   *  citer/voter for citation/vote-as-citer edges. Toggling that agent off
+   *  in the legend's Agents group dims this edge along with their hub and
+   *  authored entries. */
+  ownerAgentId: string;
 }
 
 function nodeCenter(
@@ -592,6 +599,7 @@ export function buildGraphEdges(
           x2: parentCenter.x,
           y2: parentCenter.y,
           color: agentColor(entry.author_id, agents),
+          ownerAgentId: entry.author_id,
           fromKey: `entry:${entry.id}`,
           toKey: `entry:${entry.parentId}`,
         });
@@ -609,6 +617,7 @@ export function buildGraphEdges(
         x2: hub.x,
         y2: hub.y,
         color: agentColor(mid, agents),
+        ownerAgentId: mid,
         fromKey: `entry:${entry.id}`,
         toKey: `agent:${mid}`,
       });
@@ -636,6 +645,7 @@ export function buildGraphEdges(
         x2: selfCenter.x,
         y2: selfCenter.y,
         color: agentColor(citerId, agents, promotedAgentIds),
+        ownerAgentId: citerId,
         fromKey: `agent:${citerId}`,
         toKey: `entry:${entry.id}`,
       });
