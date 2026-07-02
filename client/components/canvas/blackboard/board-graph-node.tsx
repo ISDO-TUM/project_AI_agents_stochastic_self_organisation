@@ -1,6 +1,5 @@
 "use client";
 
-import { useState } from "react";
 import { motion } from "framer-motion";
 import {
   Lightbulb,
@@ -175,7 +174,6 @@ export function GraphEntryCard({
   const { dark } = useTheme();
   const t = getTheme(dark);
   const { entry } = node;
-  const [expandOpen, setExpandOpen] = useState(false);
 
   const baseStyle: React.CSSProperties = {
     position: "absolute",
@@ -372,28 +370,30 @@ export function GraphEntryCard({
         {!entry.is_visible && (
           <EyeOff size={10} strokeWidth={2} color={t.textDim} style={{ flexShrink: 0 }} />
         )}
-        <Popover open={expandOpen} onOpenChange={setExpandOpen}>
+        <Popover>
           <PopoverTrigger asChild>
             <button
               onMouseDown={(e) => e.stopPropagation()}
               onClick={(e) => {
-                // Radix's own Trigger composes its click handler as
-                // `composeEventHandlers(ourOnClick, context.onOpenToggle)`
-                // — i.e. it *also* toggles `open` right after ours runs.
-                // Without preventDefault() that's a double-toggle (ours +
-                // Radix's cancel out, so the popover visually never opens).
-                // preventDefault() short-circuits Radix's half, leaving our
-                // explicit toggle below as the single source of truth.
-                e.preventDefault();
+                // Only block this click from bubbling up to the card's own
+                // onClick (which toggles *selection* — a different thing).
+                // Radix's Trigger already composes its own open/close
+                // toggle onto this same onClick internally — that's the
+                // exact same uncontrolled pattern the agent-hub trigger
+                // above uses (and it works there), so we let Radix own the
+                // open state instead of shadowing it with our own local
+                // state. The previous controlled `open`/`onOpenChange` +
+                // preventDefault() dance duplicated that toggle and was
+                // the actual source of "expand does nothing".
                 e.stopPropagation();
-                setExpandOpen((o) => !o);
               }}
               title="Expand full content"
               style={{
                 background: "none",
                 border: "none",
                 cursor: "pointer",
-                padding: 1,
+                padding: 3,
+                margin: -3,
                 display: "flex",
                 color: t.textDim,
                 flexShrink: 0,

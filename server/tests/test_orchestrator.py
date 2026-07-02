@@ -24,6 +24,7 @@ from server.market_hive.auction import AuctionEngine
 from server.market_hive.blackboard import Blackboard
 from server.market_hive.orchestrator import AgentRunner, _default_agent_runner, run_swarm
 from server.market_hive.schemas import SimulationStep, SwarmRunConfig
+from server.market_hive.tools import PostToBlackboardInput, PostToBlackboardTool
 from server.schemas import ToolCall
 
 
@@ -344,6 +345,42 @@ async def test_round_one_posts_one_proposal_per_taker(db: AsyncConnection) -> No
         )
     ).scalar_one()
     assert proposals == 2
+
+
+async def test_reply_without_reply_to_is_rejected(db: AsyncConnection) -> None:
+    """A 'reply' post with no reply_to has nothing to thread under — the Draft
+    board's nesting and the graph view's reply edges both key off reply_to, so
+    a missing one would silently orphan the post. The tool should reject it
+    (as a tool-result error string, not a raised exception) instead of persisting."""
+    await _insert_agent(db, "a1", "Alpha")
+    tool = PostToBlackboardTool()
+
+    result = await tool.execute(
+        PostToBlackboardInput(content="a reply with no target", entry_type="reply", thread_id="t1"),
+        {"db": db, "run_id": "r1", "agent_id": "a1", "round": 2},
+    )
+
+    assert "error" in result
+    count = (await db.execute(text("SELECT COUNT(*) FROM draft_entries"))).scalar_one()
+    assert count == 0
+
+
+async def test_reply_with_reply_to_still_posts(db: AsyncConnection) -> None:
+    """The new reply_to check must not reject legitimate replies."""
+    await _insert_agent(db, "a1", "Alpha")
+    tool = PostToBlackboardTool()
+
+    result = await tool.execute(
+        PostToBlackboardInput(
+            content="a reply", entry_type="reply", thread_id="t1", reply_to="some-entry-id"
+        ),
+        {"db": db, "run_id": "r1", "agent_id": "a1", "round": 2},
+    )
+
+    assert "error" not in result
+    assert "entry_id" in result
+    count = (await db.execute(text("SELECT COUNT(*) FROM draft_entries"))).scalar_one()
+    assert count == 1
 
 
 async def test_documents_used_captured_from_files_tool_calls(db: AsyncConnection) -> None:

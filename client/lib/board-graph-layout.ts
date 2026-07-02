@@ -206,6 +206,52 @@ function relaxCollisions(nodes: GraphEntryNode[], hubs: GraphAgentHub[]): void {
 }
 
 /**
+ * Post-clamp mop-up: pushes any two cards from the *same* agent further
+ * apart along their own current radius (never sideways) if they still
+ * overlap. Only needed because the angular-containment clamp in
+ * `computeBoardGraphLayout` can occasionally re-introduce an overlap that
+ * `relaxCollisions` had resolved mostly by moving a card sideways — since
+ * this only ever increases radius, a card can never escape the wedge the
+ * clamp just enforced.
+ */
+function relaxSameAuthorRadially(nodes: GraphEntryNode[]): void {
+  const n = nodes.length;
+  if (n === 0 || n > MAX_RELAX_ENTRIES) return;
+  const padding = 10;
+
+  for (let iter = 0; iter < 20; iter++) {
+    let moved = false;
+    for (let i = 0; i < n; i++) {
+      for (let j = i + 1; j < n; j++) {
+        const a = nodes[i];
+        const b = nodes[j];
+        if (a.entry.author_id !== b.entry.author_id) continue;
+        const overlapX =
+          Math.min(a.x + a.w + padding / 2, b.x + b.w + padding / 2) -
+          Math.max(a.x - padding / 2, b.x - padding / 2);
+        const overlapY =
+          Math.min(a.y + a.h + padding / 2, b.y + b.h + padding / 2) -
+          Math.max(a.y - padding / 2, b.y - padding / 2);
+        if (overlapX > 0 && overlapY > 0) {
+          moved = true;
+          const push = Math.min(overlapX, overlapY) / 2 + 3;
+          for (const node of [a, b]) {
+            const cx = node.x + node.w / 2;
+            const cy = node.y + node.h / 2;
+            const r = Math.hypot(cx, cy) || 0.001;
+            const ang = Math.atan2(cy, cx);
+            const nr = r + push;
+            node.x = nr * Math.cos(ang) - node.w / 2;
+            node.y = nr * Math.sin(ang) - node.h / 2;
+          }
+        }
+      }
+    }
+    if (!moved) break;
+  }
+}
+
+/**
  * Computes the full "orbit" layout for a (possibly thread-filtered) draft
  * tree. `agentOrder` should be the canvas agents list (for stable hub
  * ordering + color parity with the rest of the app); any author id not
@@ -311,7 +357,12 @@ export function computeBoardGraphLayout(
   for (let i = 0; i < N; i++) {
     const sliceAngle = (weights[i] / totalWeight) * 2 * Math.PI;
     centerAngle.push(-Math.PI / 2 + cursor + sliceAngle / 2);
-    wedgeHalfFor.push(Math.min(1.48, sliceAngle * 0.42));
+    // Cards spiral out inside ±wedgeHalf of their agent's own slice —
+    // kept meaningfully narrower than the full slice (and, further down,
+    // hard-clamped to it even after collision relaxation nudges things
+    // around) so two neighboring agents' clusters can never visually cross
+    // into each other's territory.
+    wedgeHalfFor.push(Math.min(1.3, sliceAngle * 0.36));
     cursor += sliceAngle;
   }
 
@@ -378,6 +429,38 @@ export function computeBoardGraphLayout(
   });
 
   relaxCollisions(nodes, hubs);
+
+  // ── Angular containment ────────────────────────────────────────────────
+  // relaxCollisions above works in raw cartesian space: resolving a local
+  // overlap can push a card sideways far enough to visually drift into a
+  // neighboring agent's wedge — which reads as "whose card is this?"
+  // confusion between agents. Re-clamp every card's angle (around the
+  // shared origin) back into its own agent's allocated wedge, preserving
+  // whatever radius the collision pass settled on — this guarantees zero
+  // cross-agent overlap no matter how far the cartesian push moved a card.
+  const wedgeByAuthor = new Map<string, { angle: number; half: number }>();
+  ids.forEach((id, i) => {
+    wedgeByAuthor.set(id, { angle: centerAngle[i], half: wedgeHalfFor[i] });
+  });
+  for (const node of nodes) {
+    const wedge = wedgeByAuthor.get(node.entry.author_id);
+    if (!wedge) continue;
+    const cx = node.x + node.w / 2;
+    const cy = node.y + node.h / 2;
+    const r = Math.hypot(cx, cy) || 0.001;
+    const a = Math.atan2(cy, cx);
+    const delta = Math.atan2(Math.sin(a - wedge.angle), Math.cos(a - wedge.angle));
+    const limit = wedge.half * 0.94;
+    const clampedDelta = Math.min(limit, Math.max(-limit, delta));
+    const clamped = wedge.angle + clampedDelta;
+    node.x = r * Math.cos(clamped) - node.w / 2;
+    node.y = r * Math.sin(clamped) - node.h / 2;
+  }
+  // The clamp above can occasionally re-touch two cards from the *same*
+  // agent that the collision pass had separated mostly angularly — mop
+  // those up by pushing them further apart along their own radius only
+  // (never sideways), so they still can't escape the wedge just clamped.
+  relaxSameAuthorRadially(nodes);
 
   let minX = Infinity;
   let minY = Infinity;
@@ -467,6 +550,16 @@ function nodeCenter(
  *    via `layout.nameToId` (built from the full agent roster), so this
  *    works even for agents who only ever cited/voted and never authored
  *    an entry of their own.
+ *
+ * Reply/mention edges intentionally color themselves from `agentColor()`
+ * *without* passing `promotedAgentIds` — the citation edge (and the
+ * "Citation flow" legend entry) already owns gold as *the* one meaning
+ * "toward confirmation" on this canvas. If a reply/mention edge also went
+ * gold whenever its author happened to be a promoted agent, a solid gold
+ * line and a dashed gold line would show up side by side with no way to
+ * tell them apart at a glance. Hub avatars/card borders still turn gold
+ * for promoted agents elsewhere (that's a node style, not a line, so no
+ * ambiguity there).
  */
 export function buildGraphEdges(
   layout: GraphLayout,
@@ -491,7 +584,7 @@ export function buildGraphEdges(
           y1: selfCenter.y,
           x2: parentCenter.x,
           y2: parentCenter.y,
-          color: agentColor(entry.author_id, agents, promotedAgentIds),
+          color: agentColor(entry.author_id, agents),
           fromKey: `entry:${entry.id}`,
           toKey: `entry:${entry.parentId}`,
         });
@@ -508,7 +601,7 @@ export function buildGraphEdges(
         y1: selfCenter.y,
         x2: hub.x,
         y2: hub.y,
-        color: agentColor(mid, agents, promotedAgentIds),
+        color: agentColor(mid, agents),
         fromKey: `entry:${entry.id}`,
         toKey: `agent:${mid}`,
       });

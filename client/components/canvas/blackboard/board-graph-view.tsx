@@ -30,6 +30,8 @@ import {
   buildGraphEdges,
   GraphEdge,
   GraphEdgeKind,
+  GraphLayout,
+  HUB_RADIUS,
 } from "@/lib/board-graph-layout";
 import { GraphHubNode, GraphEntryCard } from "./board-graph-node";
 
@@ -64,23 +66,70 @@ function edgeLateralOffset(id: string): number {
   return ((hash % 5) - 2) * 2.2;
 }
 
-function straightPath(
-  x1: number,
-  y1: number,
-  x2: number,
-  y2: number,
-  offset: number,
-): { d: string; ax1: number; ay1: number; ax2: number; ay2: number } {
-  const dx = x2 - x1;
-  const dy = y2 - y1;
+/** What an edge endpoint key refers to, for boundary clipping — either a
+ *  circular agent hub (fixed HUB_RADIUS) or a rectangular entry card (its
+ *  actual on-screen w/h from the layout). */
+function endpointShape(
+  key: string,
+  layout: GraphLayout,
+): { hub: true } | { hub: false; w: number; h: number } {
+  if (key.startsWith("entry:")) {
+    const node = layout.nodeById.get(key.slice("entry:".length));
+    if (node) return { hub: false, w: node.w, h: node.h };
+  }
+  return { hub: true };
+}
+
+/** Point where a ray from (cx,cy) toward unit direction (ux,uy) exits the
+ *  node's own visual shape (circle for hubs, rectangle for cards) plus a
+ *  small gap — i.e. where an edge should visually *stop*, instead of
+ *  plunging into (and, through translucent backgrounds, visibly bleeding
+ *  through) the node it's connecting to. */
+function clipToBoundary(
+  cx: number,
+  cy: number,
+  ux: number,
+  uy: number,
+  shape: { hub: true } | { hub: false; w: number; h: number },
+  gap: number,
+): { x: number; y: number } {
+  if (shape.hub) {
+    const r = HUB_RADIUS + gap;
+    return { x: cx + ux * r, y: cy + uy * r };
+  }
+  const hw = shape.w / 2 + gap;
+  const hh = shape.h / 2 + gap;
+  const tx = ux !== 0 ? hw / Math.abs(ux) : Infinity;
+  const ty = uy !== 0 ? hh / Math.abs(uy) : Infinity;
+  const t = Math.min(tx, ty);
+  return { x: cx + ux * t, y: cy + uy * t };
+}
+
+/**
+ * Full drawable geometry for one edge: both ends pulled back to sit right
+ * at the boundary of whichever node they touch (never crossing into it),
+ * then nudged apart perpendicular to the line so multiple edges sharing
+ * the same pair of nodes fan out instead of drawing on top of each other.
+ * The perpendicular nudge is uniform along the whole segment, so the
+ * arrowhead direction always matches the rendered line exactly.
+ */
+function edgeGeometry(
+  edge: GraphEdge,
+  layout: GraphLayout,
+): { x1: number; y1: number; x2: number; y2: number } {
+  const dx = edge.x2 - edge.x1;
+  const dy = edge.y2 - edge.y1;
   const dist = Math.hypot(dx, dy) || 1;
-  const nx = (-dy / dist) * offset;
-  const ny = (dx / dist) * offset;
-  const ax1 = x1 + nx;
-  const ay1 = y1 + ny;
-  const ax2 = x2 + nx;
-  const ay2 = y2 + ny;
-  return { d: `M ${ax1} ${ay1} L ${ax2} ${ay2}`, ax1, ay1, ax2, ay2 };
+  const ux = dx / dist;
+  const uy = dy / dist;
+
+  const p1 = clipToBoundary(edge.x1, edge.y1, ux, uy, endpointShape(edge.fromKey, layout), 4);
+  const p2 = clipToBoundary(edge.x2, edge.y2, -ux, -uy, endpointShape(edge.toKey, layout), 7);
+
+  const offset = edgeLateralOffset(edge.id);
+  const nx = -uy * offset;
+  const ny = ux * offset;
+  return { x1: p1.x + nx, y1: p1.y + ny, x2: p2.x + nx, y2: p2.y + ny };
 }
 
 function arrowPolygon(
@@ -88,7 +137,7 @@ function arrowPolygon(
   y1: number,
   x2: number,
   y2: number,
-  pullBack = 15,
+  pullBack = 2,
   size = 5,
 ): string {
   const dx = x2 - x1;
@@ -505,6 +554,11 @@ export function BoardGraphView({
               height: layout.maxY,
               transformOrigin: "0 0",
               transform: `translate(${view.x}px, ${view.y}px) scale(${view.scale})`,
+              // Its own self-contained stacking context — makes the
+              // svg-below-nodes ordering right below unambiguous regardless
+              // of anything going on further up the tree (e.g. the modal
+              // that hosts this view).
+              isolation: "isolate",
             }}
           >
             <svg
@@ -515,18 +569,16 @@ export function BoardGraphView({
                 height: "100%",
                 overflow: "visible",
                 pointerEvents: "none",
+                // Always below hub/entry nodes (zIndex 3+) — see
+                // edgeGeometry() above, which also clips each edge to stop
+                // right at a node's boundary instead of drawing into it,
+                // so lines never visually "collide" with what they connect.
                 zIndex: 1,
               }}
             >
               {edges.map((edge) => {
-                const offset = edgeLateralOffset(edge.id);
-                const { d, ax1, ay1, ax2, ay2 } = straightPath(
-                  edge.x1,
-                  edge.y1,
-                  edge.x2,
-                  edge.y2,
-                  offset,
-                );
+                const { x1, y1, x2, y2 } = edgeGeometry(edge, layout);
+                const d = `M ${x1} ${y1} L ${x2} ${y2}`;
                 const { opacity, color, width } = edgeStyle(edge);
                 const showArrow = edge.kind !== "mention";
                 return (
@@ -541,7 +593,7 @@ export function BoardGraphView({
                     />
                     {showArrow && (
                       <polygon
-                        points={arrowPolygon(ax1, ay1, ax2, ay2)}
+                        points={arrowPolygon(x1, y1, x2, y2)}
                         fill={color}
                       />
                     )}

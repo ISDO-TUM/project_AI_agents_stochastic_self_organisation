@@ -116,6 +116,17 @@ class PostToBlackboardTool(Tool):
         # argument, which may be a mangled/hallucinated id and would FK-violate.
         thread_id: str = ctx.get("thread_id") or validated_input.thread_id
 
+        # A "reply" with no reply_to has nothing to thread under — the Draft
+        # board's nesting and the graph view's reply edges both key off this,
+        # so a missing one silently orphans the post instead of failing loudly.
+        # Returned as a tool result (not raised) so the agent can see it and
+        # retry with reply_to set, same as FilesTool's not-found message.
+        if validated_input.entry_type == "reply" and not validated_input.reply_to:
+            return (
+                '{"error": "reply_to is required when entry_type is \'reply\' — '
+                'specify the entry_id you are responding to."}'
+            )
+
         bb = Blackboard(db)
         entry_id = await bb.post(
             run_id=run_id,
