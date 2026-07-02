@@ -77,6 +77,10 @@ export interface GraphAgentHub {
   visibleCount: number;
   citationTotal: number;
   confirmedCount: number;
+  /** Citations this agent gave to *other* agents' entries — the only
+   *  signal available for agents who never authored anything themselves
+   *  (pure voters/citers), so they still register as participants. */
+  citesGiven: number;
 }
 
 export interface GraphEntryNode {
@@ -94,6 +98,10 @@ export interface GraphLayout {
   nodes: GraphEntryNode[];
   nodeById: Map<string, GraphEntryNode>;
   hubById: Map<string, GraphAgentHub>;
+  /** Resolves a citer's display name back to an agent id — built once from
+   *  the full agent roster so it works even for agents with zero authored
+   *  entries. Reused by `buildGraphEdges` instead of re-derived. */
+  nameToId: Map<string, string>;
   minX: number;
   minY: number;
   maxX: number;
@@ -105,10 +113,15 @@ export const HUB_RADIUS = 28;
 const LANE_W = 230;
 const LANE_GUTTER = 54;
 const START_GAP = 70;
-const SPACING_R = 44;
+const SPACING_R = 40;
+/** Every agent's angular wedge is proportional to `max(entryCount, MIN_WEIGHT)`
+ *  out of the shared 2π ring — prolific agents get a wide slice to spiral
+ *  in, quiet/citer-only agents still get a small, non-crowded sliver. */
+const MIN_WEIGHT = 2.2;
 const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 const MAX_RELAX_ENTRIES = 320;
-const MAX_RELAX_ITERATIONS = 44;
+const MAX_RELAX_ITERATIONS = 60;
+
 
 function estimateCardSize(entry: FlatEntry): { w: number; h: number } {
   if (entry.entry_type === "vote") return { w: 160, h: 36 };
@@ -201,7 +214,7 @@ function relaxCollisions(nodes: GraphEntryNode[], hubs: GraphAgentHub[]): void {
  */
 export function computeBoardGraphLayout(
   draft: DraftEntry[],
-  agentOrder: string[],
+  agents: { id: string; name?: string }[],
   promotedMap: Map<string, number>,
 ): GraphLayout {
   const flat = flattenDraftEntries(draft).sort((a, b) => {
@@ -216,15 +229,42 @@ export function computeBoardGraphLayout(
     else byAuthor.set(e.author_id, [e]);
   }
 
-  const ids: string[] = [];
-  const seen = new Set<string>();
-  for (const id of agentOrder) {
-    if (byAuthor.has(id) && !seen.has(id)) {
-      ids.push(id);
-      seen.add(id);
+  // Full-roster display names, so agents who never authored anything (pure
+  // voters/citers) can still get a proper hub label instead of a raw id —
+  // and so citer names on *other* agents' entries resolve back to an id.
+  const displayName = new Map<string, string>();
+  for (const a of agents) if (a.name) displayName.set(a.id, a.name);
+  for (const e of flat) {
+    if (!displayName.has(e.author_id)) displayName.set(e.author_id, e.author_name);
+  }
+  const nameToId = new Map<string, string>();
+  for (const [id, name] of displayName) if (!nameToId.has(name)) nameToId.set(name, id);
+
+  // Agents who only cited/voted on someone else's entry (never authored
+  // their own) would otherwise be entirely invisible — surface them as
+  // zero-entry hubs so "voted but didn't contribute" is still shown, and
+  // so citation edges sourced from them have somewhere to originate.
+  const citesGivenByAgent = new Map<string, number>();
+  const extraActiveIds = new Set<string>();
+  for (const e of flat) {
+    for (const citer of e.citers ?? []) {
+      const cid = nameToId.get(citer.agentName);
+      if (!cid) continue;
+      citesGivenByAgent.set(cid, (citesGivenByAgent.get(cid) ?? 0) + 1);
+      if (!byAuthor.has(cid)) extraActiveIds.add(cid);
     }
   }
-  for (const id of byAuthor.keys()) {
+
+  const activeIds = new Set<string>([...byAuthor.keys(), ...extraActiveIds]);
+  const ids: string[] = [];
+  const seen = new Set<string>();
+  for (const a of agents) {
+    if (activeIds.has(a.id) && !seen.has(a.id)) {
+      ids.push(a.id);
+      seen.add(a.id);
+    }
+  }
+  for (const id of activeIds) {
     if (!seen.has(id)) {
       ids.push(id);
       seen.add(id);
@@ -238,6 +278,7 @@ export function computeBoardGraphLayout(
       nodes: [],
       nodeById: new Map(),
       hubById: new Map(),
+      nameToId,
       minX: 0,
       minY: 0,
       maxX: 400,
@@ -245,18 +286,50 @@ export function computeBoardGraphLayout(
     };
   }
 
-  const hubR = Math.max(190, ((LANE_W + LANE_GUTTER) * N) / (2 * Math.PI));
-  const wedgeHalf = Math.min(1.3, (Math.PI / N) * 0.82);
-  const startR = hubR + START_GAP;
+  const counts = ids.map((id) => (byAuthor.get(id) ?? []).length);
+  const maxCount = Math.max(1, ...counts);
+  const weights = counts.map((c) => Math.max(c, MIN_WEIGHT));
+  const totalWeight = weights.reduce((a, b) => a + b, 0);
+
+  // Ring radius: enough circumference for N evenly-weighted hubs, but also
+  // enough raw room for whichever agent contributed the most — otherwise a
+  // single prolific agent's own cards cram into each other close to their
+  // hub regardless of how wide their wedge is.
+  const hubR = Math.max(
+    210,
+    ((LANE_W + LANE_GUTTER) * N) / (2 * Math.PI),
+    maxCount * 27,
+  );
+
+  // Sunburst wedge allocation — each agent's angular slice is proportional
+  // to their own share of total weighted output, so a heavy contributor
+  // gets a proportionally wide slice to spiral their cards into instead of
+  // being squeezed into the same fixed wedge as everyone else.
+  let cursor = 0;
+  const centerAngle: number[] = [];
+  const wedgeHalfFor: number[] = [];
+  for (let i = 0; i < N; i++) {
+    const sliceAngle = (weights[i] / totalWeight) * 2 * Math.PI;
+    centerAngle.push(-Math.PI / 2 + cursor + sliceAngle / 2);
+    wedgeHalfFor.push(Math.min(1.48, sliceAngle * 0.42));
+    cursor += sliceAngle;
+  }
 
   const hubs: GraphAgentHub[] = [];
   const nodes: GraphEntryNode[] = [];
 
   ids.forEach((id, i) => {
-    const angle = -Math.PI / 2 + (2 * Math.PI * i) / N;
+    const angle = centerAngle[i];
+    const wedgeHalf = wedgeHalfFor[i];
     const hx = hubR * Math.cos(angle);
     const hy = hubR * Math.sin(angle);
     const entries = byAuthor.get(id) ?? [];
+    const count = entries.length;
+    // Prolific agents get a bit more radial breathing room per card, so
+    // their cluster expands outward rather than packing tighter and
+    // tighter close to the hub as more cards are added.
+    const spacingR = SPACING_R * (1 + Math.min(count, 30) / 30);
+    const startR = hubR + START_GAP + Math.min(count, 24) * 2.4;
     let citationTotal = 0;
     let confirmedCount = 0;
     let visibleCount = 0;
@@ -274,7 +347,7 @@ export function computeBoardGraphLayout(
       else if (entry.citation_count > 0) {
         pull = 1 - Math.min(entry.citation_count, 5) * 0.035;
       }
-      const r = (startR + SPACING_R * Math.sqrt(t)) * pull;
+      const r = (startR + spacingR * Math.sqrt(t)) * pull;
       const wedgeOffset = wedgeHalf * Math.sin(t * GOLDEN_ANGLE);
       const a = angle + wedgeOffset;
       const cx = r * Math.cos(a);
@@ -292,7 +365,7 @@ export function computeBoardGraphLayout(
 
     hubs.push({
       id,
-      name: entries[0]?.author_name ?? id,
+      name: entries[0]?.author_name ?? displayName.get(id) ?? id,
       x: hx,
       y: hy,
       angle,
@@ -300,6 +373,7 @@ export function computeBoardGraphLayout(
       visibleCount,
       citationTotal,
       confirmedCount,
+      citesGiven: citesGivenByAgent.get(id) ?? 0,
     });
   });
 
@@ -350,6 +424,7 @@ export function computeBoardGraphLayout(
     nodes,
     nodeById: new Map(nodes.map((nd) => [nd.entry.id, nd])),
     hubById: new Map(hubs.map((h) => [h.id, h])),
+    nameToId,
     minX: 0,
     minY: 0,
     maxX: width,
@@ -388,9 +463,10 @@ function nodeCenter(
  * Builds every relationship the board tracks as a drawable edge:
  *  - reply / vote → the entry being replied to or voted on
  *  - mention → the mentioned agent's hub
- *  - citation → from the citing agent's hub into the cited entry (the
- *    board only records citer *names*, so we resolve back to an id via
- *    the authors already present in the graph)
+ *  - citation → from the citing agent's hub into the cited entry. Resolved
+ *    via `layout.nameToId` (built from the full agent roster), so this
+ *    works even for agents who only ever cited/voted and never authored
+ *    an entry of their own.
  */
 export function buildGraphEdges(
   layout: GraphLayout,
@@ -398,12 +474,7 @@ export function buildGraphEdges(
   promotedAgentIds: Set<string> | undefined,
 ): GraphEdge[] {
   const edges: GraphEdge[] = [];
-  const nameToId = new Map<string, string>();
-  for (const n of layout.nodes) {
-    if (!nameToId.has(n.entry.author_name)) {
-      nameToId.set(n.entry.author_name, n.entry.author_id);
-    }
-  }
+  const { nameToId } = layout;
 
   for (const node of layout.nodes) {
     const entry = node.entry;

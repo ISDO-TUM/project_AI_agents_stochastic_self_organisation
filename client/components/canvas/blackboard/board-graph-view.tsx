@@ -40,7 +40,9 @@ interface BoardGraphViewProps {
   draft: DraftEntry[];
   promotedMap: Map<string, number>;
   threshold: number;
-  agents?: { id: string }[];
+  /** Full canvas roster incl. display names — needed so agents who only
+   *  cite/vote (never author an entry) can still be resolved to a hub. */
+  agents?: { id: string; name?: string }[];
   promotedAgentIds?: Set<string>;
   done?: boolean;
 }
@@ -50,29 +52,35 @@ type Selected = { kind: "agent" | "entry"; id: string } | null;
 const MIN_SCALE = 0.32;
 const MAX_SCALE = 2.4;
 
-function curvedPath(
+/** Small constant perpendicular shift applied to *both* endpoints of an edge
+ *  (not a mid-point bend) — keeps the line perfectly straight while still
+ *  nudging apart edges that would otherwise draw exactly on top of each
+ *  other (e.g. two citations between the same pair of nodes). Because the
+ *  shift is uniform along the whole segment, the arrowhead's direction
+ *  still matches the line's direction exactly — no more skewed arrows. */
+function edgeLateralOffset(id: string): number {
+  let hash = 0;
+  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+  return ((hash % 5) - 2) * 2.2;
+}
+
+function straightPath(
   x1: number,
   y1: number,
   x2: number,
   y2: number,
-  bend: number,
-): string {
+  offset: number,
+): { d: string; ax1: number; ay1: number; ax2: number; ay2: number } {
   const dx = x2 - x1;
   const dy = y2 - y1;
   const dist = Math.hypot(dx, dy) || 1;
-  const mx = (x1 + x2) / 2;
-  const my = (y1 + y2) / 2;
-  const nx = -dy / dist;
-  const ny = dx / dist;
-  const cx = mx + nx * dist * bend;
-  const cy = my + ny * dist * bend;
-  return `M ${x1} ${y1} Q ${cx} ${cy} ${x2} ${y2}`;
-}
-
-function edgeBend(id: string): number {
-  let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
-  return (hash % 2 === 0 ? 1 : -1) * 0.14;
+  const nx = (-dy / dist) * offset;
+  const ny = (dx / dist) * offset;
+  const ax1 = x1 + nx;
+  const ay1 = y1 + ny;
+  const ax2 = x2 + nx;
+  const ay2 = y2 + ny;
+  return { d: `M ${ax1} ${ay1} L ${ax2} ${ay2}`, ax1, ay1, ax2, ay2 };
 }
 
 function arrowPolygon(
@@ -100,8 +108,8 @@ function arrowPolygon(
 }
 
 function edgeDash(kind: GraphEdgeKind): string | undefined {
-  if (kind === "citation") return "1,5";
-  if (kind === "mention") return "3,4";
+  if (kind === "citation") return "7,5";
+  if (kind === "mention") return "0.1,7";
   return undefined;
 }
 
@@ -116,10 +124,9 @@ export function BoardGraphView({
   const { dark } = useTheme();
   const t = getTheme(dark);
 
-  const agentIds = useMemo(() => agents.map((a) => a.id), [agents]);
   const layout = useMemo(
-    () => computeBoardGraphLayout(draft, agentIds, promotedMap),
-    [draft, agentIds, promotedMap],
+    () => computeBoardGraphLayout(draft, agents, promotedMap),
+    [draft, agents, promotedMap],
   );
   const edges = useMemo(
     () => buildGraphEdges(layout, agents, promotedAgentIds),
@@ -301,7 +308,7 @@ export function BoardGraphView({
     (edge: GraphEdge) => {
       const isHi = highlight?.edgeIds.has(edge.id) ?? false;
       const baseOpacity =
-        edge.kind === "mention" ? 0.4 : edge.kind === "citation" ? 0.7 : 0.62;
+        edge.kind === "mention" ? 0.55 : edge.kind === "citation" ? 0.85 : 0.75;
       const opacity = highlight ? (isHi ? 1 : 0.04) : baseOpacity;
       // Reply/mention edges take the author's own accent (whose thought is
       // whose); citation and vote are recolored to the app's existing
@@ -313,7 +320,9 @@ export function BoardGraphView({
           : edge.kind === "citation"
             ? "#b5860d"
             : edge.color;
-      const width = (isHi ? 1.5 : 1) * (edge.kind === "citation" ? 1.7 : edge.kind === "mention" ? 1 : 1.5);
+      const width =
+        (isHi ? 1.6 : 1) *
+        (edge.kind === "citation" ? 2 : edge.kind === "mention" ? 1.6 : 1.8);
       return { opacity, color, width };
     },
     [highlight],
@@ -384,15 +393,34 @@ export function BoardGraphView({
                 <span style={{ fontSize: 10.5, fontWeight: 700, color: t.text }}>
                   {hub.name}
                 </span>
-                <span
-                  style={{
-                    fontSize: 9,
-                    color: t.textDim,
-                    fontFamily: "'JetBrains Mono', monospace",
-                  }}
-                >
-                  {hub.entryCount}
-                </span>
+                {hub.entryCount > 0 ? (
+                  <span
+                    style={{
+                      fontSize: 9,
+                      color: t.textDim,
+                      fontFamily: "'JetBrains Mono', monospace",
+                    }}
+                  >
+                    {hub.entryCount}
+                  </span>
+                ) : (
+                  hub.citesGiven > 0 && (
+                    <span
+                      title={`Cited/voted ${hub.citesGiven}× without posting own contributions`}
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 2,
+                        fontSize: 9,
+                        color: t.textDim,
+                        fontFamily: "'JetBrains Mono', monospace",
+                      }}
+                    >
+                      <ThumbsUp size={8} strokeWidth={2} />
+                      {hub.citesGiven}
+                    </span>
+                  )
+                )}
               </button>
             );
           })}
@@ -491,14 +519,20 @@ export function BoardGraphView({
               }}
             >
               {edges.map((edge) => {
-                const bend = edgeBend(edge.id);
-                const path = curvedPath(edge.x1, edge.y1, edge.x2, edge.y2, bend);
+                const offset = edgeLateralOffset(edge.id);
+                const { d, ax1, ay1, ax2, ay2 } = straightPath(
+                  edge.x1,
+                  edge.y1,
+                  edge.x2,
+                  edge.y2,
+                  offset,
+                );
                 const { opacity, color, width } = edgeStyle(edge);
                 const showArrow = edge.kind !== "mention";
                 return (
                   <g key={edge.id} style={{ opacity, transition: "opacity 0.15s" }}>
                     <path
-                      d={path}
+                      d={d}
                       fill="none"
                       stroke={color}
                       strokeWidth={width}
@@ -507,16 +541,16 @@ export function BoardGraphView({
                     />
                     {showArrow && (
                       <polygon
-                        points={arrowPolygon(edge.x1, edge.y1, edge.x2, edge.y2)}
+                        points={arrowPolygon(ax1, ay1, ax2, ay2)}
                         fill={color}
                       />
                     )}
                     {edge.kind === "citation" && (
-                      <circle r={2.6} fill={color}>
+                      <circle r={2.8} fill={color}>
                         <animateMotion
                           dur="2.1s"
                           repeatCount="indefinite"
-                          path={path}
+                          path={d}
                         />
                       </circle>
                     )}

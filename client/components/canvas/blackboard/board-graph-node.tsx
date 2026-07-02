@@ -72,9 +72,15 @@ export function GraphHubNode({
         onOpenChange={onOpenChange}
         trigger={
           <button
-            title={`${hub.name} — ${hub.entryCount} contribution${
-              hub.entryCount === 1 ? "" : "s"
-            }`}
+            title={
+              hub.entryCount > 0
+                ? `${hub.name} — ${hub.entryCount} contribution${
+                    hub.entryCount === 1 ? "" : "s"
+                  }`
+                : hub.citesGiven > 0
+                  ? `${hub.name} — voted/cited ${hub.citesGiven}× without posting own contributions`
+                  : hub.name
+            }
             style={{
               width: "100%",
               height: "100%",
@@ -369,7 +375,19 @@ export function GraphEntryCard({
         <Popover open={expandOpen} onOpenChange={setExpandOpen}>
           <PopoverTrigger asChild>
             <button
-              onClick={(e) => e.stopPropagation()}
+              onMouseDown={(e) => e.stopPropagation()}
+              onClick={(e) => {
+                // Radix's own Trigger composes its click handler as
+                // `composeEventHandlers(ourOnClick, context.onOpenToggle)`
+                // — i.e. it *also* toggles `open` right after ours runs.
+                // Without preventDefault() that's a double-toggle (ours +
+                // Radix's cancel out, so the popover visually never opens).
+                // preventDefault() short-circuits Radix's half, leaving our
+                // explicit toggle below as the single source of truth.
+                e.preventDefault();
+                e.stopPropagation();
+                setExpandOpen((o) => !o);
+              }}
               title="Expand full content"
               style={{
                 background: "none",
@@ -385,6 +403,7 @@ export function GraphEntryCard({
             </button>
           </PopoverTrigger>
           <PopoverContent
+            onMouseDown={(e) => e.stopPropagation()}
             onClick={(e) => e.stopPropagation()}
             style={{ maxWidth: 340 }}
           >
