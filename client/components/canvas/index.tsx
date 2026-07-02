@@ -610,6 +610,8 @@ export function Canvas({
             done={swarmDone}
             finalAnswer={swarmFinalAnswer}
             onShowFinalAnswer={onShowFinalAnswer}
+            agents={agents}
+            promotedAgentIds={promotedAgentIds}
           />
         </>
       )}
