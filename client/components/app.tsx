@@ -574,11 +574,14 @@ export function App({ onModeSelected }: AppProps = {}) {
   const onClear = useCallback(async () => {
     await clearAll().catch(() => {});
     dispatch({ type: "CLEAR" });
-    // Also wipe the swarm run state and boards so the canvas starts fresh.
+    // Also wipe both swarm run states and boards so the canvas starts fresh —
+    // blackboardState falls back to `swarm` whenever `dummy` isn't active, so
+    // leaving swarm unreset left its draft/confirmed entries on screen.
     dummy.reset();
+    swarm.reset();
     setRunId(null);
     stopSim();
-  }, [dispatch, dummy, stopSim]);
+  }, [dispatch, dummy, swarm, stopSim]);
   const onAutoLayout = useCallback(
     () => dispatch({ type: "AUTO_LAYOUT" }),
     [dispatch],
