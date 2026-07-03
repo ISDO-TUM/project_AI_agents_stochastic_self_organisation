@@ -9,6 +9,9 @@ Usage (from repo root, with the server running):
     uv run python -m server.topology.benchmarks.fanoutqa_run
     uv run python -m server.topology.benchmarks.fanoutqa_run --questions 10 --rounds 5
     uv run python -m server.topology.benchmarks.fanoutqa_run --questions 3 --log
+    uv run python -m server.topology.benchmarks.fanoutqa_run --start 10 --questions 11
+    uv run python -m server.topology.benchmarks.fanoutqa_run \
+        --start 10 --questions 11 --results-file results.json
 
 Agent count is derived per question:
     n_agents = clamp(ceil(total_pages / max_pages_per_agent), 2, 8)
@@ -19,6 +22,10 @@ filters takers naturally — not all agents are guaranteed to post.
 
 Agents and files are created fresh per question and torn down afterwards, so the
 canvas is left clean regardless of success or failure.
+
+Task indices are always stable (1-based, matching the FanOutQA dev-set order).
+--results-file writes per-task scores to JSON and re-computes the summary on each
+run; re-running overlapping ranges merges by task index (later run wins).
 """
 
 from __future__ import annotations
@@ -38,7 +45,7 @@ from rouge_score.rouge_scorer import RougeScorer as _RougeScorer
 
 DEFAULT_BASE_URL = "http://localhost:8000"
 _MAX_PAGES_PER_AGENT = 5
-_MIN_AGENTS = 2
+_MIN_AGENTS = 4
 _MAX_AGENTS = 8
 _MAX_CONTENT = 490_000  # just under the 500 KB schema limit
 
@@ -261,23 +268,28 @@ def _run_swarm(
 
 
 def _load_questions_and_evidence(
-    n_questions: int,
+    start: int,
+    end: int,
 ) -> list[tuple[Any, list[str]]]:
     """Load FanOutQA dev questions and fetch their evidence pages.
 
     Returns [(question_obj, [page_markdown, ...])].
 
+    start/end are 0-based indices into the dev set (end is exclusive).
     Questions are loaded from the JSON file bundled with the fanoutqa package
     (no network). Evidence pages are fetched via Wikipedia's Revisions API
     (pinned to the Nov 20 2023 dataset epoch) and cached to
     ~/.cache/fanoutqa/ — so only the first run for each page hits the network.
+
+    The dev-set JSON is loaded in a fixed order so task indices are stable
+    across runs; no randomness is involved.
     """
     try:
         from fanoutqa import load_dev, wiki_content
     except ImportError as exc:
         raise SystemExit("fanoutqa is not installed. Run: uv add fanoutqa") from exc
 
-    questions = load_dev()[:n_questions]
+    questions = load_dev()[start:end]
     result: list[tuple[Any, list[str]]] = []
     for q in questions:
         pages: list[str] = []
@@ -436,30 +448,72 @@ def _run_trial(
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 
+def _compute_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    if not rows:
+        return {}
+    rouge1_vals = [r["rouge1"] for r in rows if r.get("rouge1") is not None]
+    rouge2_vals = [r["rouge2"] for r in rows if r.get("rouge2") is not None]
+    rougel_vals = [r["rougeL"] for r in rows if r.get("rougeL") is not None]
+    return {
+        "n_questions": len(rows),
+        "accuracy_loose": statistics.mean(r["accuracy_loose"] for r in rows),
+        "accuracy_strict": sum(1 for r in rows if r["accuracy_strict"]) / len(rows),
+        "avg_rounds": statistics.mean(r["termination_round"] or 0 for r in rows),
+        "avg_agents": statistics.mean(r["n_agents"] for r in rows),
+        "avg_sources": statistics.mean(r["n_pages"] for r in rows),
+        "avg_time_s": statistics.mean(r["elapsed_s"] for r in rows),
+        "rouge1": statistics.mean(rouge1_vals) if rouge1_vals else None,
+        "rouge2": statistics.mean(rouge2_vals) if rouge2_vals else None,
+        "rougeL": statistics.mean(rougel_vals) if rougel_vals else None,
+    }
+
+
 def _summarise(rows: list[dict[str, Any]], out: _Tee) -> None:
     out("\n── Summary ──────────────────────────────────────────────────")
     if not rows:
         return
+    s = _compute_summary(rows)
     out(f"{'metric':22s}  {'value':>10s}")
-    loose_acc = statistics.mean(r["accuracy_loose"] for r in rows)
-    strict_acc = sum(1 for r in rows if r["accuracy_strict"]) / len(rows)
-    avg_rounds = statistics.mean(r["termination_round"] or 0 for r in rows)
-    avg_time = statistics.mean(r["elapsed_s"] for r in rows)
-    avg_agents = statistics.mean(r["n_agents"] for r in rows)
-    rouge1_vals = [r["rouge1"] for r in rows if r["rouge1"] is not None]
-    rouge2_vals = [r["rouge2"] for r in rows if r["rouge2"] is not None]
-    rougel_vals = [r["rougeL"] for r in rows if r["rougeL"] is not None]
-    out(f"{'accuracy (loose)':22s}  {loose_acc * 100:>9.1f}%")
-    out(f"{'accuracy (strict)':22s}  {strict_acc * 100:>9.1f}%")
-    out(f"{'avg rounds':22s}  {avg_rounds:>10.2f}")
-    out(f"{'avg agents/question':22s}  {avg_agents:>10.2f}")
-    out(f"{'avg time':22s}  {avg_time:>9.1f}s")
-    if rouge1_vals:
-        out(f"{'ROUGE-1':22s}  {statistics.mean(rouge1_vals):>10.3f}")
-    if rouge2_vals:
-        out(f"{'ROUGE-2':22s}  {statistics.mean(rouge2_vals):>10.3f}")
-    if rougel_vals:
-        out(f"{'ROUGE-L':22s}  {statistics.mean(rougel_vals):>10.3f}")
+    out(f"{'accuracy (loose)':22s}  {s['accuracy_loose'] * 100:>9.1f}%")
+    out(f"{'accuracy (strict)':22s}  {s['accuracy_strict'] * 100:>9.1f}%")
+    out(f"{'avg rounds':22s}  {s['avg_rounds']:>10.2f}")
+    out(f"{'avg agents/question':22s}  {s['avg_agents']:>10.2f}")
+    out(f"{'avg sources/question':22s}  {s['avg_sources']:>10.2f}")
+    out(f"{'avg time':22s}  {s['avg_time_s']:>9.1f}s")
+    if s.get("rouge1") is not None:
+        out(f"{'ROUGE-1':22s}  {s['rouge1']:>10.3f}")
+    if s.get("rouge2") is not None:
+        out(f"{'ROUGE-2':22s}  {s['rouge2']:>10.3f}")
+    if s.get("rougeL") is not None:
+        out(f"{'ROUGE-L':22s}  {s['rougeL']:>10.3f}")
+
+
+# ── Results file ──────────────────────────────────────────────────────────────
+
+
+def _update_results_file(path: Path, new_rows: list[dict[str, Any]]) -> None:
+    """Merge new_rows into path (JSON), keyed by trial index, then rewrite summary."""
+    existing: list[dict[str, Any]] = []
+    if path.exists():
+        try:
+            data = json.loads(path.read_text(encoding="utf-8"))
+            existing = data.get("results", [])
+        except (json.JSONDecodeError, KeyError, OSError):
+            pass
+
+    by_trial: dict[int, dict[str, Any]] = {r["trial"]: r for r in existing}
+    for row in new_rows:
+        by_trial[row["trial"]] = row
+    merged = sorted(by_trial.values(), key=lambda r: r["trial"])
+
+    path.write_text(
+        json.dumps(
+            {"results": merged, "summary": _compute_summary(merged)},
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
@@ -468,6 +522,12 @@ def _summarise(rows: list[dict[str, Any]], out: _Tee) -> None:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(
         description="Run the FanOutQA evidence-provided benchmark against the ECSAS swarm."
+    )
+    parser.add_argument(
+        "--start",
+        type=int,
+        default=1,
+        help="1-based index of the first task to run (default: 1).",
     )
     parser.add_argument(
         "--questions",
@@ -506,7 +566,24 @@ def main(argv: list[str] | None = None) -> int:
             "./fanoutqa-benchmark-YYYYMMDD-HHMM.log."
         ),
     )
+    parser.add_argument(
+        "--results-file",
+        default=None,
+        metavar="PATH",
+        help=(
+            "JSON file to write per-task scores and summary. "
+            "If the file already exists, new results are merged by task index "
+            "and the summary is recalculated."
+        ),
+    )
     args = parser.parse_args(argv)
+
+    if args.start < 1:
+        parser.error("--start must be >= 1")
+
+    # Convert 1-based --start to 0-based slice indices.
+    q_start = args.start - 1
+    q_end = q_start + args.questions
 
     log_path = _resolve_log_path(args.log)
     log_file = log_path.open("w", encoding="utf-8") if log_path else None
@@ -515,8 +592,11 @@ def main(argv: list[str] | None = None) -> int:
         out(f"# Logging to {log_path}")
 
     try:
-        out(f"Loading {args.questions} FanOutQA dev question(s) with evidence…")
-        qa_pairs = _load_questions_and_evidence(args.questions)
+        out(
+            f"Loading FanOutQA dev question(s) {args.start}-{args.start + args.questions - 1} "
+            f"with evidence…"
+        )
+        qa_pairs = _load_questions_and_evidence(q_start, q_end)
         out(
             f"Loaded {len(qa_pairs)} question(s).  "
             f"max_pages_per_agent={args.max_pages}  rounds={args.rounds}  "
@@ -525,7 +605,7 @@ def main(argv: list[str] | None = None) -> int:
 
         all_rows: list[dict[str, Any]] = []
         with httpx.Client(base_url=args.base_url, timeout=60.0) as client:
-            for i, (question, pages) in enumerate(qa_pairs, start=1):
+            for trial_idx, (question, pages) in enumerate(qa_pairs, start=args.start):
                 try:
                     row = _run_trial(
                         client,
@@ -533,15 +613,20 @@ def main(argv: list[str] | None = None) -> int:
                         pages,
                         max_pages_per_agent=args.max_pages,
                         rounds=args.rounds,
-                        trial_idx=i,
+                        trial_idx=trial_idx,
                         out=out,
                     )
                     all_rows.append(row)
                 except httpx.HTTPError as exc:
-                    print(f"Question {i} failed: {exc}", file=sys.stderr)
+                    print(f"Question {trial_idx} failed: {exc}", file=sys.stderr)
 
         if all_rows:
             _summarise(all_rows, out)
+
+        if all_rows and args.results_file is not None:
+            results_path = Path(args.results_file).expanduser()
+            _update_results_file(results_path, all_rows)
+            out(f"\nResults written to {results_path}")
     finally:
         if log_file is not None:
             log_file.close()
