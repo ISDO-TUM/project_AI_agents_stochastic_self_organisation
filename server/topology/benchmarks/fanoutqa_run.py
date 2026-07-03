@@ -26,6 +26,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import statistics
 import sys
 import time
@@ -34,6 +35,7 @@ from pathlib import Path
 from typing import Any, TextIO
 
 import httpx
+from rouge_score.rouge_scorer import RougeScorer as _RougeScorer
 
 DEFAULT_BASE_URL = "http://localhost:8000"
 _MAX_PAGES_PER_AGENT = 5
@@ -290,27 +292,56 @@ def _load_questions_and_evidence(
 
 # ── Evaluation ────────────────────────────────────────────────────────────────
 
+_ROUGE = _RougeScorer(["rouge1", "rougeL"], use_stemmer=True)
+
+
+def _normalize_str(text: str) -> str:
+    text = str(text).lower()
+    text = re.sub(r"[^\w\s]", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _answer_in_text(reference: Any, candidate: str) -> float:
+    """Proportion of reference items found in candidate (word-boundary match)."""
+    if isinstance(reference, list):
+        scores = [_answer_in_text(a, candidate) for a in reference]
+        return sum(scores) / len(scores) if scores else 0.0
+    if isinstance(reference, dict):
+        items = list(reference.keys()) + list(reference.values())
+        scores = [_answer_in_text(a, candidate) for a in items]
+        return sum(scores) / len(scores) if scores else 0.0
+    if isinstance(reference, bool):
+        reference = "yes" if reference else "no"
+    norm_ref = _normalize_str(str(reference))
+    norm_cand = _normalize_str(candidate)
+    return 1.0 if re.search(rf"\b{re.escape(norm_ref)}\b", norm_cand) else 0.0
+
+
+def _str_answer(ans: Any) -> str:
+    if isinstance(ans, list):
+        return "\n".join(_str_answer(a) for a in ans)
+    if isinstance(ans, dict):
+        return "\n".join(f"{k} - {_str_answer(v)}" for k, v in ans.items())
+    if isinstance(ans, bool):
+        return "yes" if ans else "no"
+    if ans is None:
+        return ""
+    return str(ans)
+
 
 def _evaluate_answer(
     question: Any,
     generated_answer: str,
 ) -> dict[str, Any]:
-    """Score a generated answer using fanoutqa's built-in Scorer."""
+    """Score a generated answer using accuracy (substring match) and ROUGE."""
     try:
-        from fanoutqa.eval.scorer import Scorer
-    except ImportError:
-        return {"error": "fanoutqa.eval not available"}
-
-    try:
-        scorer = Scorer([question], [{"id": question.id, "answer": generated_answer}])
-        acc, _ = scorer.score_accuracy()
-        rouge, _ = scorer.score_rouge()
+        accuracy = _answer_in_text(question.answer, generated_answer)
+        rouge = _ROUGE.score(_str_answer(question.answer), _str_answer(generated_answer))
         return {
-            "answer_correct": acc.loose > 0,
-            "accuracy_loose": acc.loose,
-            "accuracy_strict": acc.strict,
-            "rouge1": rouge.rouge1.fscore,
-            "rougeL": rouge.rougeL.fscore,
+            "answer_correct": accuracy > 0,
+            "accuracy_loose": accuracy,
+            "rouge1": rouge["rouge1"].fmeasure,
+            "rougeL": rouge["rougeL"].fmeasure,
         }
     except Exception as exc:
         return {"error": str(exc)}
@@ -341,6 +372,7 @@ def _run_trial(
 
     out(f"\n── Question {trial_idx} ─────────────────────────────────────────")
     out(f"Question      : {question.question}")
+    out(f"Expected      : {question.answer}")
     out(f"Evidence pages: {len(pages)}  →  {n_agents} agents ({max_pages_per_agent} max/agent)")
 
     agents = _create_bench_agents(client, n_agents)
