@@ -26,7 +26,6 @@ from __future__ import annotations
 import argparse
 import json
 import math
-import re
 import statistics
 import sys
 import time
@@ -292,29 +291,7 @@ def _load_questions_and_evidence(
 
 # ── Evaluation ────────────────────────────────────────────────────────────────
 
-_ROUGE = _RougeScorer(["rouge1", "rougeL"], use_stemmer=True)
-
-
-def _normalize_str(text: str) -> str:
-    text = str(text).lower()
-    text = re.sub(r"[^\w\s]", " ", text)
-    return re.sub(r"\s+", " ", text).strip()
-
-
-def _answer_in_text(reference: Any, candidate: str) -> float:
-    """Proportion of reference items found in candidate (word-boundary match)."""
-    if isinstance(reference, list):
-        scores = [_answer_in_text(a, candidate) for a in reference]
-        return sum(scores) / len(scores) if scores else 0.0
-    if isinstance(reference, dict):
-        items = list(reference.keys()) + list(reference.values())
-        scores = [_answer_in_text(a, candidate) for a in items]
-        return sum(scores) / len(scores) if scores else 0.0
-    if isinstance(reference, bool):
-        reference = "yes" if reference else "no"
-    norm_ref = _normalize_str(str(reference))
-    norm_cand = _normalize_str(candidate)
-    return 1.0 if re.search(rf"\b{re.escape(norm_ref)}\b", norm_cand) else 0.0
+_ROUGE = _RougeScorer(["rouge1", "rouge2", "rougeL"], use_stemmer=True)
 
 
 def _str_answer(ans: Any) -> str:
@@ -333,14 +310,48 @@ def _evaluate_answer(
     question: Any,
     generated_answer: str,
 ) -> dict[str, Any]:
-    """Score a generated answer using accuracy (substring match) and ROUGE."""
+    """Score using fanoutqa's official accuracy (loose + strict) and ROUGE-1/2/L."""
     try:
-        accuracy = _answer_in_text(question.answer, generated_answer)
+        from fanoutqa.eval.string import answer_in_text
+    except ImportError:
+        answer_in_text = None
+
+    try:
+        if answer_in_text is not None:
+            result = answer_in_text(question.answer, generated_answer)
+            accuracy_loose = result.score
+            accuracy_strict = float(result.found)
+        else:
+            # fallback: simple substring
+            import re as _re
+
+            def _norm(t: str) -> str:
+                t = str(t).lower()
+                t = _re.sub(r"[^\w\s]", " ", t)
+                return _re.sub(r"\s+", " ", t).strip()
+
+            def _in_text(ref: Any, cand: str) -> float:
+                if isinstance(ref, list):
+                    scores = [_in_text(a, cand) for a in ref]
+                    return sum(scores) / len(scores) if scores else 0.0
+                if isinstance(ref, dict):
+                    items = list(ref.keys()) + list(ref.values())
+                    scores = [_in_text(a, cand) for a in items]
+                    return sum(scores) / len(scores) if scores else 0.0
+                if isinstance(ref, bool):
+                    ref = "yes" if ref else "no"
+                nr, nc = _norm(str(ref)), _norm(cand)
+                return 1.0 if _re.search(rf"\b{_re.escape(nr)}\b", nc) else 0.0
+
+            accuracy_loose = _in_text(question.answer, generated_answer)
+            accuracy_strict = 1.0 if accuracy_loose == 1.0 else 0.0
+
         rouge = _ROUGE.score(_str_answer(question.answer), _str_answer(generated_answer))
         return {
-            "answer_correct": accuracy > 0,
-            "accuracy_loose": accuracy,
+            "accuracy_loose": accuracy_loose,
+            "accuracy_strict": accuracy_strict,
             "rouge1": rouge["rouge1"].fmeasure,
+            "rouge2": rouge["rouge2"].fmeasure,
             "rougeL": rouge["rougeL"].fmeasure,
         }
     except Exception as exc:
@@ -388,10 +399,11 @@ def _run_trial(
         _delete_bench_agents(client, agents)
 
     scores = _evaluate_answer(question, sim["final_answer"])
-    answer_correct = bool(scores.get("answer_correct") or scores.get("accuracy"))
+    accuracy_loose = scores.get("accuracy_loose", 0.0)
+    accuracy_strict = bool(scores.get("accuracy_strict", 0.0))
 
     out(
-        f"  answer {_ok(answer_correct)}  "
+        f"  strict {_ok(accuracy_strict)}  loose={accuracy_loose:.2f}  "
         f"rounds={sim['termination_round']}  "
         f"reason={sim['termination_reason']}  "
         f"{elapsed:5.1f}s"
@@ -399,17 +411,23 @@ def _run_trial(
     out(f"  Generated : {(sim['final_answer'] or '(none)').strip()}")
     out(f"  Reference : {question.answer}")
     if "rouge1" in scores:
-        out(f"  ROUGE-1={scores['rouge1']:.3f}  ROUGE-L={scores.get('rougeL', 0):.3f}")
+        out(
+            f"  ROUGE-1={scores['rouge1']:.3f}"
+            f"  ROUGE-2={scores.get('rouge2', 0):.3f}"
+            f"  ROUGE-L={scores.get('rougeL', 0):.3f}"
+        )
 
     return {
         "trial": trial_idx,
-        "answer_correct": answer_correct,
+        "accuracy_loose": accuracy_loose,
+        "accuracy_strict": accuracy_strict,
         "n_agents": n_agents,
         "n_pages": len(pages),
         "termination_round": sim["termination_round"],
         "termination_reason": sim["termination_reason"],
         "elapsed_s": elapsed,
         "rouge1": scores.get("rouge1"),
+        "rouge2": scores.get("rouge2"),
         "rougeL": scores.get("rougeL"),
         "answer": sim["final_answer"],
     }
@@ -422,18 +440,26 @@ def _summarise(rows: list[dict[str, Any]], out: _Tee) -> None:
     out("\n── Summary ──────────────────────────────────────────────────")
     if not rows:
         return
-    out(f"{'metric':18s}  {'value':>10s}")
-    ans_acc = sum(1 for r in rows if r["answer_correct"]) / len(rows)
+    out(f"{'metric':22s}  {'value':>10s}")
+    loose_acc = statistics.mean(r["accuracy_loose"] for r in rows)
+    strict_acc = sum(1 for r in rows if r["accuracy_strict"]) / len(rows)
     avg_rounds = statistics.mean(r["termination_round"] or 0 for r in rows)
     avg_time = statistics.mean(r["elapsed_s"] for r in rows)
     avg_agents = statistics.mean(r["n_agents"] for r in rows)
     rouge1_vals = [r["rouge1"] for r in rows if r["rouge1"] is not None]
-    out(f"{'answer acc':18s}  {ans_acc * 100:>9.1f}%")
-    out(f"{'avg rounds':18s}  {avg_rounds:>10.2f}")
-    out(f"{'avg agents/question':18s}  {avg_agents:>10.2f}")
-    out(f"{'avg time':18s}  {avg_time:>9.1f}s")
+    rouge2_vals = [r["rouge2"] for r in rows if r["rouge2"] is not None]
+    rougel_vals = [r["rougeL"] for r in rows if r["rougeL"] is not None]
+    out(f"{'accuracy (loose)':22s}  {loose_acc * 100:>9.1f}%")
+    out(f"{'accuracy (strict)':22s}  {strict_acc * 100:>9.1f}%")
+    out(f"{'avg rounds':22s}  {avg_rounds:>10.2f}")
+    out(f"{'avg agents/question':22s}  {avg_agents:>10.2f}")
+    out(f"{'avg time':22s}  {avg_time:>9.1f}s")
     if rouge1_vals:
-        out(f"{'avg ROUGE-1':18s}  {statistics.mean(rouge1_vals):>10.3f}")
+        out(f"{'ROUGE-1':22s}  {statistics.mean(rouge1_vals):>10.3f}")
+    if rouge2_vals:
+        out(f"{'ROUGE-2':22s}  {statistics.mean(rouge2_vals):>10.3f}")
+    if rougel_vals:
+        out(f"{'ROUGE-L':22s}  {statistics.mean(rougel_vals):>10.3f}")
 
 
 # ── Entry point ───────────────────────────────────────────────────────────────
