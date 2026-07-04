@@ -358,6 +358,79 @@ async def test_round_one_posts_one_proposal_per_taker(db: AsyncConnection) -> No
     assert proposals == 2
 
 
+def _prompt_capturing_runner(
+    captured: list[tuple[str, str]], *, wave2_posts: bool = True
+) -> AgentRunner:
+    """Wraps _scripted_runner behaviour but records (agent_name, user_prompt)
+    for round-1 turns and lets wave-2 agents stay silent when wave2_posts=False."""
+    inner = _scripted_runner()
+
+    async def runner(
+        agent: dict[str, Any],
+        *,
+        user_prompt: str,
+        system_suffix: str,
+        tool_names: list[str],
+        tool_context: dict[str, Any],
+    ) -> tuple[str, list[ToolCall]]:
+        if "post_to_blackboard" in tool_names and "cite" not in tool_names:
+            captured.append((agent["name"], user_prompt))
+            if not wave2_posts and "second wave" in user_prompt:
+                return "", []  # wave-2 agent agrees in full: posts nothing
+        return await inner(
+            agent,
+            user_prompt=user_prompt,
+            system_suffix=system_suffix,
+            tool_names=tool_names,
+            tool_context=tool_context,
+        )
+
+    return runner
+
+
+async def test_round_one_second_wave_sees_first_wave_proposals(db: AsyncConnection) -> None:
+    for i, name in enumerate(["Alpha", "Beta", "Gamma", "Delta"]):
+        await _insert_agent(db, f"a{i + 1}", name)
+    captured: list[tuple[str, str]] = []
+    await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2),
+        db,
+        agent_runner=_prompt_capturing_runner(captured),
+    )
+    wave1 = [p for _, p in captured if "second wave" not in p]
+    wave2 = [p for _, p in captured if "second wave" in p]
+    assert len(wave1) == 2 and len(wave2) == 2  # ceil(4/2) split
+    for p in wave1:
+        assert "PROPOSALS ALREADY POSTED" not in p
+    for p in wave2:
+        assert "PROPOSALS ALREADY POSTED" in p
+        assert "proposal" in p  # wave-1 content excerpts made it in
+        assert "do NOT post" in p
+
+
+async def test_silent_wave2_agent_still_votes_and_run_completes(db: AsyncConnection) -> None:
+    for i, name in enumerate(["Alpha", "Beta"]):
+        await _insert_agent(db, f"a{i + 1}", name)
+    captured: list[tuple[str, str]] = []
+    steps = await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2),
+        db,
+        agent_runner=_prompt_capturing_runner(captured, wave2_posts=False),
+    )
+    # ceil(2/2)=1 → Beta is wave 2 and posted nothing:
+    proposals = (
+        await db.execute(
+            text("SELECT COUNT(*) FROM draft_entries WHERE round = 1 AND entry_type = 'proposal'")
+        )
+    ).scalar_one()
+    assert proposals == 1
+    # …but still voted in the vote sub-round:
+    votes = (await db.execute(text("SELECT COUNT(*) FROM votes"))).scalar_one()
+    assert votes >= 1
+    assert any(s.type == "convergence" for s in steps)  # run completed
+    assert any("second wave" in s.msg for s in steps if s.type == "system")
+
+
 async def test_reply_without_reply_to_is_rejected(db: AsyncConnection) -> None:
     """A 'reply' post with no reply_to has nothing to thread under — the Draft
     board's nesting and the graph view's reply edges both key off reply_to, so
@@ -572,6 +645,134 @@ async def test_amendment_processor_seam_is_invoked_each_round(db: AsyncConnectio
 
     assert processor.rounds == [2, 3]
     assert [s.type for s in steps].count("amendment") == 2
+
+
+# ── Rounds RAG context injection ──────────────────────────────────────────────
+
+
+async def test_discussion_prompts_carry_injected_relevant_posts(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+    captured: list[str] = []
+    inner = _scripted_runner()
+
+    async def runner(
+        agent: dict[str, Any],
+        *,
+        user_prompt: str,
+        system_suffix: str,
+        tool_names: list[str],
+        tool_context: dict[str, Any],
+    ) -> tuple[str, list[ToolCall]]:
+        if "cite" in tool_names:  # discussion rounds only
+            captured.append(user_prompt)
+        return await inner(
+            agent,
+            user_prompt=user_prompt,
+            system_suffix=system_suffix,
+            tool_names=tool_names,
+            tool_context=tool_context,
+        )
+
+    await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2),
+        db,
+        agent_runner=runner,
+    )
+    assert captured, "no discussion turns ran"
+    for p in captured:
+        assert "RELEVANT EXISTING POSTS" in p
+        assert "cite(entry_ids=[...]) it instead of restating" in p
+        assert "proposal" in p  # round-1 content surfaced through retrieval
+        assert "] Alpha · Round 1 · proposal" in p or "] Beta · Round 1 · proposal" in p
+
+
+# ── Adaptive turn skipping (resilient runs) ───────────────────────────────────
+
+
+async def test_dropout_after_consecutive_failures_shrinks_promotion_denominator(
+    db: AsyncConnection,
+) -> None:
+    for i, name in enumerate(["Alpha", "Beta", "Gamma", "Delta", "Echo", "Foxtrot"]):
+        await _insert_agent(db, f"a{i + 1}", name)
+    inner = _scripted_runner()
+
+    async def flaky(
+        agent: dict[str, Any],
+        *,
+        user_prompt: str,
+        system_suffix: str,
+        tool_names: list[str],
+        tool_context: dict[str, Any],
+    ) -> tuple[str, list[ToolCall]]:
+        if agent["name"] == "Foxtrot" and "submit_bid" not in tool_names:
+            raise RuntimeError("provider down")
+        return await inner(
+            agent,
+            user_prompt=user_prompt,
+            system_suffix=system_suffix,
+            tool_names=tool_names,
+            tool_context=tool_context,
+        )
+
+    steps = await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=3, max_takers=6),
+        db,
+        agent_runner=flaky,
+    )
+    assert any("dropped out" in s.msg for s in steps if s.type == "system")
+    failed = (
+        await db.execute(
+            text("SELECT COUNT(*) FROM turn_log WHERE agent_id = 'a6' AND status = 'failed'")
+        )
+    ).scalar_one()
+    assert failed >= 2
+
+    run = (await db.execute(text("SELECT status FROM swarm_runs"))).mappings().fetchone()
+    assert run is not None
+    assert run["status"] == "completed"
+
+
+async def test_retry_succeeds_without_dropout(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+    inner = _scripted_runner()
+    calls = {"n": 0}
+
+    async def flaky_once(
+        agent: dict[str, Any],
+        *,
+        user_prompt: str,
+        system_suffix: str,
+        tool_names: list[str],
+        tool_context: dict[str, Any],
+    ) -> tuple[str, list[ToolCall]]:
+        if agent["name"] == "Beta" and "cite" in tool_names and calls["n"] == 0:
+            calls["n"] += 1
+            raise RuntimeError("transient error")
+        return await inner(
+            agent,
+            user_prompt=user_prompt,
+            system_suffix=system_suffix,
+            tool_names=tool_names,
+            tool_context=tool_context,
+        )
+
+    steps = await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2),
+        db,
+        agent_runner=flaky_once,
+    )
+    assert not any("dropped out" in s.msg for s in steps if s.type == "system")
+    statuses = (
+        await db.execute(
+            text(
+                "SELECT status FROM turn_log WHERE agent_id = 'a2' AND phase = 'round_2' "
+                "ORDER BY created_at"
+            )
+        )
+    ).scalars().all()
+    assert statuses[-1] == "done"
 
 
 # ── M4: finalize + final output ───────────────────────────────────────────────
@@ -1003,6 +1204,87 @@ async def test_dispute_tool_records_valid_dispute(db: AsyncConnection) -> None:
     assert '"ok": true' in result
 
 
+async def test_dispute_flip_emits_bb_contest_step(db: AsyncConnection) -> None:
+    """Two distinct disputes on a promoted entry (M=2 with 4 takers) flip it to
+    contested through the real orchestrator wiring — _ROUNDS_TOOLS, _board_events'
+    dispute branch, and _end_of_round's contest_check pass."""
+    for i, name in enumerate(["Alpha", "Beta", "Gamma", "Delta"]):
+        await _insert_agent(db, f"a{i + 1}", name)
+    inner = _scripted_runner()
+    disputers_used: set[str] = set()
+
+    async def runner(
+        agent: dict[str, Any],
+        *,
+        user_prompt: str,
+        system_suffix: str,
+        tool_names: list[str],
+        tool_context: dict[str, Any],
+    ) -> tuple[str, list[ToolCall]]:
+        if (
+            "dispute" in tool_names
+            and tool_context["round"] == 3
+            and len(disputers_used) < 2
+        ):
+            db_ = tool_context["db"]
+            run_id = tool_context["run_id"]
+            agent_id = tool_context["agent_id"]
+            row = (
+                (
+                    await db_.execute(
+                        text(
+                            "SELECT ce.id AS id, de.author_id AS author_id "
+                            "FROM confirmed_entries ce "
+                            "JOIN draft_entries de ON de.id = ce.source_draft_id "
+                            "WHERE ce.run_id = :r AND ce.status = 'confirmed'"
+                        ),
+                        {"r": run_id},
+                    )
+                )
+                .mappings()
+                .fetchone()
+            )
+            if (
+                row is not None
+                and row["author_id"] != agent_id
+                and agent_id not in disputers_used
+            ):
+                bb = Blackboard(db_)
+                result = await bb.dispute(
+                    run_id=run_id,
+                    disputing_agent_id=agent_id,
+                    confirmed_entry_id=row["id"],
+                    reason="stale data",
+                    round=3,
+                )
+                if result["ok"]:
+                    disputers_used.add(agent_id)
+                    return "", [
+                        ToolCall(name="dispute", input={"entry_id": row["id"]}, output="{}")
+                    ]
+        return await inner(
+            agent,
+            user_prompt=user_prompt,
+            system_suffix=system_suffix,
+            tool_names=tool_names,
+            tool_context=tool_context,
+        )
+
+    steps = await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=4), db, agent_runner=runner
+    )
+    assert len(disputers_used) == 2
+    assert any(s.type == "bb-contest" for s in steps)
+    disputes = (await db.execute(text("SELECT COUNT(*) FROM disputes"))).scalar_one()
+    assert disputes == 2
+    # The scripted runner keeps re-citing the source draft every round, so the
+    # contest raised in round 3 gathers fresh citers and re-affirms by round 4 —
+    # both contest_check and reaffirm_check fired through the real wiring.
+    run = (await db.execute(text("SELECT status FROM swarm_runs"))).mappings().fetchone()
+    assert run is not None
+    assert run["status"] == "completed"
+
+
 async def test_ratification_tools_record_votes() -> None:
     votes: dict[str, str | None] = {}
     ok = await ApproveSynthesisTool().execute(
@@ -1014,3 +1296,87 @@ async def test_ratification_tools_record_votes() -> None:
     )
     assert '"ok": true' in ok and '"ok": true' in rev
     assert votes == {"a1": None, "a2": "misses the §7.1 pricing risk"}
+
+
+async def test_unanimous_approval_ships_ratified(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+    inner = _scripted_runner()
+
+    async def runner(
+        agent: dict[str, Any],
+        *,
+        user_prompt: str,
+        system_suffix: str,
+        tool_names: list[str],
+        tool_context: dict[str, Any],
+    ) -> tuple[str, list[ToolCall]]:
+        if "approve_synthesis" in tool_names:
+            tool_context["ratification_votes"][agent["id"]] = None
+            return "", [ToolCall(name="approve_synthesis", input={}, output='{"ok": true}')]
+        return await inner(
+            agent,
+            user_prompt=user_prompt,
+            system_suffix=system_suffix,
+            tool_names=tool_names,
+            tool_context=tool_context,
+        )
+
+    steps = await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2), db, agent_runner=runner
+    )
+    conv = next(s for s in steps if s.type == "convergence")
+    assert conv.data["ratification"]["approved"] is True
+    assert conv.data["ratification"]["round"] == 1
+    stored = (await db.execute(text("SELECT ratification FROM swarm_runs"))).scalar_one()
+    assert json.loads(stored)["approved"] is True
+
+
+async def test_double_rejection_ships_flagged_with_objections(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+    inner = _scripted_runner()
+
+    async def runner(
+        agent: dict[str, Any],
+        *,
+        user_prompt: str,
+        system_suffix: str,
+        tool_names: list[str],
+        tool_context: dict[str, Any],
+    ) -> tuple[str, list[ToolCall]]:
+        if "revise_synthesis" in tool_names:
+            reason = f"{agent['name']} objects"
+            tool_context["ratification_votes"][agent["id"]] = reason
+            return "", [ToolCall(name="revise_synthesis", input={"reason": reason}, output="{}")]
+        return await inner(
+            agent,
+            user_prompt=user_prompt,
+            system_suffix=system_suffix,
+            tool_names=tool_names,
+            tool_context=tool_context,
+        )
+
+    class _CountingSynthesizer:
+        def __init__(self) -> None:
+            self.calls: list[list[str] | None] = []
+
+        async def synthesize(
+            self, *, prompt: str, findings: list[Any], objections: list[str] | None = None
+        ) -> str:
+            self.calls.append(objections)
+            return f"draft answer v{len(self.calls)}"
+
+    synth = _CountingSynthesizer()
+    steps = await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2),
+        db,
+        agent_runner=runner,
+        synthesizer=synth,
+    )
+    assert len(synth.calls) == 2
+    assert synth.calls[1]  # objections from round 1 were passed to the revision call
+    conv = next(s for s in steps if s.type == "convergence")
+    assert conv.data["ratification"]["approved"] is False
+    assert conv.data["ratification"]["round"] == 2
+    assert conv.data["ratification"]["objections"]

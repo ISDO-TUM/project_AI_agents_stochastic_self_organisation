@@ -243,5 +243,29 @@ def test_structured_columns_have_migration_entries() -> None:
         "merged_into",
         "heartbeat_at",
         "ratification",
+        "phase",
+        "current_round",
     ):
         assert src.count(col) >= 2, f"{col} missing from a migration branch"
+
+
+async def test_reaper_marks_stale_running_runs_interrupted(db: AsyncConnection) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import text
+
+    from server.db import reap_stale_runs
+
+    await db.execute(
+        text(
+            "INSERT INTO swarm_runs (id, status, mode, heartbeat_at) "
+            "VALUES ('stale', 'running', 'swarm', :old), "
+            "       ('fresh', 'running', 'swarm', :now)"
+        ),
+        {"old": datetime.now(UTC) - timedelta(minutes=30), "now": datetime.now(UTC)},
+    )
+    await db.commit()
+    n = await reap_stale_runs(db)
+    assert n == 1
+    rows = dict((await db.execute(text("SELECT id, status FROM swarm_runs"))).fetchall())
+    assert rows["stale"] == "interrupted" and rows["fresh"] == "running"
