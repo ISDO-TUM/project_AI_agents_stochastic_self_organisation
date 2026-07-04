@@ -9,20 +9,12 @@ import {
   CheckCircle2,
   EyeOff,
   Maximize2,
-  AtSign,
 } from "lucide-react";
 import { useTheme } from "@/lib/theme-context";
 import { getTheme } from "@/lib/theme";
 import { truncate } from "@/lib/blackboard-utils";
 import { GraphAgentHub, GraphEntryNode, HUB_RADIUS } from "@/lib/board-graph-layout";
-import { MarkdownRenderer } from "@/components/markdown-renderer";
-import { CitationRing } from "./citation-ring";
 import { AgentTrustPanel } from "./agent-trust-panel";
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from "@/components/ui/popover";
 
 const GOLD = "#b5860d";
 
@@ -161,6 +153,7 @@ interface GraphEntryCardProps {
   selected: boolean;
   threshold: number;
   onToggleSelect: () => void;
+  onExpand: () => void;
 }
 
 export function GraphEntryCard({
@@ -170,6 +163,7 @@ export function GraphEntryCard({
   selected,
   threshold,
   onToggleSelect,
+  onExpand,
 }: GraphEntryCardProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -370,123 +364,27 @@ export function GraphEntryCard({
         {!entry.is_visible && (
           <EyeOff size={10} strokeWidth={2} color={t.textDim} style={{ flexShrink: 0 }} />
         )}
-        <Popover>
-          <PopoverTrigger asChild>
-            <button
-              onMouseDown={(e) => e.stopPropagation()}
-              onClick={(e) => {
-                // Only block this click from bubbling up to the card's own
-                // onClick (which toggles *selection* — a different thing).
-                // Radix's Trigger already composes its own open/close
-                // toggle onto this same onClick internally — that's the
-                // exact same uncontrolled pattern the agent-hub trigger
-                // above uses (and it works there), so we let Radix own the
-                // open state instead of shadowing it with our own local
-                // state. The previous controlled `open`/`onOpenChange` +
-                // preventDefault() dance duplicated that toggle and was
-                // the actual source of "expand does nothing".
-                e.stopPropagation();
-              }}
-              title="Expand full content"
-              style={{
-                background: "none",
-                border: "none",
-                cursor: "pointer",
-                padding: 3,
-                margin: -3,
-                display: "flex",
-                color: t.textDim,
-                flexShrink: 0,
-              }}
-            >
-              <Maximize2 size={10} strokeWidth={2} />
-            </button>
-          </PopoverTrigger>
-          <PopoverContent
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={(e) => e.stopPropagation()}
-            style={{ maxWidth: 340 }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 6, marginBottom: 8 }}>
-              <span style={{ fontSize: 13, fontWeight: 700, color: t.text }}>
-                {entry.author_name}
-              </span>
-              <span
-                style={{
-                  fontSize: 9,
-                  fontWeight: 800,
-                  color,
-                  background: `${color}1f`,
-                  borderRadius: 4,
-                  padding: "1.5px 6px",
-                  letterSpacing: "0.05em",
-                  textTransform: "uppercase",
-                }}
-              >
-                {entry.entry_type}
-              </span>
-              <span
-                style={{
-                  fontSize: 10,
-                  color: t.textDim,
-                  fontFamily: "'JetBrains Mono', monospace",
-                  marginLeft: "auto",
-                }}
-              >
-                R{entry.round}
-              </span>
-            </div>
-            {!entry.is_visible && (
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 4,
-                  fontSize: 10.5,
-                  color: t.textDim,
-                  fontStyle: "italic",
-                  marginBottom: 6,
-                }}
-              >
-                <EyeOff size={11} strokeWidth={2} />
-                evaporated at round {entry.round}
-              </div>
-            )}
-            <div style={{ fontSize: 12.5, lineHeight: 1.55, marginBottom: 8 }}>
-              <MarkdownRenderer content={entry.content} fontSize={12.5} compact />
-            </div>
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                flexWrap: "wrap",
-              }}
-            >
-              <CitationRing
-                count={entry.citation_count}
-                threshold={threshold}
-                variant="compact"
-                citers={entry.citers}
-                promotedRound={node.confirmedRound ?? undefined}
-              />
-              {entry.mention_agents.length > 0 && (
-                <span
-                  style={{
-                    display: "flex",
-                    alignItems: "center",
-                    gap: 3,
-                    fontSize: 10,
-                    color: t.textDim,
-                  }}
-                >
-                  <AtSign size={10} strokeWidth={2} />
-                  {entry.mention_agents.length} mentioned
-                </span>
-              )}
-            </div>
-          </PopoverContent>
-        </Popover>
+        <button
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            // Expansion is not selection — keep the card's own onClick out of it.
+            e.stopPropagation();
+            onExpand();
+          }}
+          title="Expand full content"
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: 3,
+            margin: -3,
+            display: "flex",
+            color: t.textDim,
+            flexShrink: 0,
+          }}
+        >
+          <Maximize2 size={10} strokeWidth={2} />
+        </button>
       </div>
 
       <div

@@ -37,6 +37,7 @@ import {
   HUB_RADIUS,
 } from "@/lib/board-graph-layout";
 import { GraphHubNode, GraphEntryCard } from "./board-graph-node";
+import { EntryDetailModal } from "./entry-detail-modal";
 
 interface BoardGraphViewProps {
   /** Thread-filtered but NOT visibility-filtered — the graph shows the full
@@ -194,6 +195,7 @@ export function BoardGraphView({
 
   const [selected, setSelected] = useState<Selected>(null);
   const [spotlight, setSpotlight] = useState(done);
+  const [expandedEntryId, setExpandedEntryId] = useState<string | null>(null);
   const [disabledKinds, setDisabledKinds] = useState<Set<GraphEdgeKind>>(new Set());
   const [disabledEntryTypes, setDisabledEntryTypes] = useState<Set<DraftEntry["entry_type"]>>(
     new Set(),
@@ -659,6 +661,7 @@ export function BoardGraphView({
                       : { kind: "entry", id: node.entry.id },
                   )
                 }
+                onExpand={() => setExpandedEntryId(node.entry.id)}
               />
             ))}
           </div>
@@ -811,6 +814,20 @@ export function BoardGraphView({
             </div>
           </div>
         )}
+
+        {expandedEntryId &&
+          (() => {
+            const node = layout.nodeById.get(expandedEntryId);
+            if (!node) return null;
+            return (
+              <EntryDetailModal
+                node={node}
+                color={agentColor(node.entry.author_id, agents, promotedAgentIds)}
+                threshold={threshold}
+                onClose={() => setExpandedEntryId(null)}
+              />
+            );
+          })()}
       </div>
     </div>
   );
