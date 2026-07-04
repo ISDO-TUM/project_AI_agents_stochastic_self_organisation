@@ -5,6 +5,7 @@ import {
   BlackboardState,
   ConfirmedEntry,
   DraftEntry,
+  Ratification,
   ThreadInfo,
 } from "@/lib/types";
 import { useApiKeys, apiKeyHeaders } from "@/lib/api-keys-context";
@@ -45,6 +46,9 @@ export interface SwarmRunState {
   // on the final `convergence` step. Null until the run completes (or if a run
   // produced no answer).
   finalAnswer: string | null;
+  // The takers' vote on `finalAnswer`, carried on the same `convergence` step.
+  // Null until the run completes, or if ratification didn't run (no findings).
+  ratification: Ratification | null;
   error: string | null;
 }
 
@@ -55,6 +59,7 @@ const IDLE: SwarmRunState = {
   blackboard: EMPTY_BOARD,
   responding: [],
   finalAnswer: null,
+  ratification: null,
   error: null,
 };
 
@@ -78,9 +83,14 @@ type Action =
   | { type: "CITE"; entryId: string; citerName: string; round: number }
   | { type: "PROMOTE"; confirmed: ConfirmedEntry }
   | { type: "DELETE"; entryId: string }
+  | { type: "CONTEST"; entryId: string; status: ConfirmedEntry["status"] }
   | { type: "THINKING_RESET" }
   | { type: "THINKING_ADD"; nodeId: string }
-  | { type: "DONE"; finalAnswer?: string | null }
+  | {
+      type: "DONE";
+      finalAnswer?: string | null;
+      ratification?: Ratification | null;
+    }
   | { type: "ERROR"; error: string }
   | { type: "RESET" };
 
@@ -178,6 +188,16 @@ function reducer(state: SwarmRunState, action: Action): SwarmRunState {
           })),
         },
       };
+    case "CONTEST":
+      return {
+        ...state,
+        blackboard: {
+          ...bb,
+          confirmed: bb.confirmed.map((e) =>
+            e.id === action.entryId ? { ...e, status: action.status } : e,
+          ),
+        },
+      };
     case "THINKING_RESET":
       // A fresh sub-round wave starts: nobody from the previous wave is pulsing.
       return { ...state, responding: [] };
@@ -191,9 +211,10 @@ function reducer(state: SwarmRunState, action: Action): SwarmRunState {
         active: false,
         done: true,
         responding: [],
-        // The convergence step carries the answer; the stream-end DONE that
-        // follows omits it, so keep whatever was already set.
+        // The convergence step carries the answer/ratification; the stream-end
+        // DONE that follows omits them, so keep whatever was already set.
         finalAnswer: action.finalAnswer ?? state.finalAnswer,
+        ratification: action.ratification ?? state.ratification,
       };
     case "ERROR":
       return { ...state, error: action.error };
@@ -345,10 +366,23 @@ function applyStep(
         dispatch({ type: "DELETE", entryId: d.entry_id });
       }
       break;
+    case "bb-contest":
+      if (typeof d.id === "string" && typeof d.status === "string") {
+        dispatch({
+          type: "CONTEST",
+          entryId: d.id,
+          status: d.status as ConfirmedEntry["status"],
+        });
+      }
+      break;
     case "convergence":
       dispatch({
         type: "DONE",
         finalAnswer: typeof d.final_answer === "string" ? d.final_answer : null,
+        ratification:
+          d.ratification && typeof d.ratification === "object"
+            ? (d.ratification as unknown as Ratification)
+            : null,
       });
       break;
   }

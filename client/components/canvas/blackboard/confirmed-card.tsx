@@ -11,6 +11,7 @@ import {
   Heart,
   ChevronRight,
   Users,
+  AlertTriangle,
 } from "lucide-react";
 import { useTheme } from "@/lib/theme-context";
 import { getTheme, BURG_LT, BURG_DIM } from "@/lib/theme";
@@ -66,6 +67,9 @@ export function ConfirmedCard({
   const { dark } = useTheme();
   const t = getTheme(dark);
   const s = entryStyle(entry.entry_type);
+  const status = entry.status ?? "confirmed";
+  const contested = status === "contested";
+  const retracted = status === "retracted";
   const [hovered, setHovered] = useState(false);
   const [copied, setCopied] = useState(false);
   const [showCollaborators, setShowCollaborators] = useState(false);
@@ -96,11 +100,16 @@ export function ConfirmedCard({
       style={{
         position: "relative",
         background: s.bg,
-        border: `1px solid ${s.border}`,
-        borderLeft: `4px solid ${s.accentColor}`,
+        border: contested
+          ? "1px dashed rgba(197,90,17,0.55)"
+          : `1px solid ${s.border}`,
+        borderLeft: contested
+          ? "4px dashed #c55a11"
+          : `4px solid ${s.accentColor}`,
         borderRadius: 9,
         padding: "10px 14px",
         marginBottom: 8,
+        opacity: retracted ? 0.55 : 1,
       }}
     >
       {/* ── Header ── */}
@@ -121,6 +130,7 @@ export function ConfirmedCard({
             letterSpacing: "0.08em",
             textTransform: "uppercase",
             fontFamily: "'Space Grotesk', system-ui",
+            textDecoration: retracted ? "line-through" : "none",
           }}
         >
           {s.label}
@@ -128,6 +138,39 @@ export function ConfirmedCard({
         {entry.entry_type !== "anchor" && (
           <span style={{ fontSize: 10, color: t.textDim }}>
             R{entry.round_confirmed}
+          </span>
+        )}
+        {contested && (
+          <span
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 3,
+              fontSize: 9.5,
+              fontWeight: 800,
+              color: "#c55a11",
+              letterSpacing: "0.05em",
+              textTransform: "uppercase",
+              background: "rgba(197,90,17,0.12)",
+              borderRadius: 8,
+              padding: "1.5px 7px",
+            }}
+          >
+            <AlertTriangle size={9} strokeWidth={2.5} />
+            Contested
+          </span>
+        )}
+        {retracted && (
+          <span
+            style={{
+              fontSize: 9.5,
+              fontWeight: 700,
+              color: t.textDim,
+              letterSpacing: "0.05em",
+              textTransform: "uppercase",
+            }}
+          >
+            Retracted
           </span>
         )}
         <div

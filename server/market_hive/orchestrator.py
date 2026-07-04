@@ -481,6 +481,29 @@ async def _load_agents(db: AsyncConnection) -> dict[str, dict[str, Any]]:
     return {row["id"]: deserialise_agent_row(row) for row in rows}
 
 
+async def _load_contract_and_threads(
+    db: AsyncConnection, run_id: str
+) -> tuple[ContractSchema, list[ThreadSchema]]:
+    """Reconstruct an already-created run's contract + threads (resume)."""
+    contract_row = (
+        (await db.execute(text("SELECT * FROM contracts WHERE run_id = :r"), {"r": run_id}))
+        .mappings()
+        .fetchone()
+    )
+    contract = ContractSchema(**dict(contract_row))
+    thread_rows = (
+        (
+            await db.execute(
+                text("SELECT * FROM threads WHERE run_id = :r ORDER BY created_at"), {"r": run_id}
+            )
+        )
+        .mappings()
+        .fetchall()
+    )
+    threads = [ThreadSchema(**dict(row)) for row in thread_rows]
+    return contract, threads
+
+
 def _excerpt(value: str) -> str:
     value = value.strip().replace("\n", " ")
     return value if len(value) <= _MSG_EXCERPT_LEN else value[:_MSG_EXCERPT_LEN] + "…"
@@ -771,6 +794,9 @@ async def _run_round_one(
     # sub-round that follows).
     half = (len(takers) + 1) // 2
     wave1, wave2 = takers[:half], takers[half:]
+    # Resume-safe for free: an agent already recorded done/skipped for this
+    # (phase, round) is never re-driven through another LLM call.
+    already_done = await journal.completed_turns(db, phase="round_1", round=1)
 
     def _wave_turns(
         wave: list[str], prompts_by_thread: dict[str, str] | None
@@ -779,6 +805,8 @@ async def _run_round_one(
         for thread in threads:
             coworkers = [agents_by_id[t]["name"] for t in takers if t in agents_by_id]
             for taker in wave:
+                if taker in already_done:
+                    continue
                 agent = agents_by_id.get(taker)
                 if agent is None:
                     continue
@@ -836,10 +864,13 @@ async def _run_vote_subround(
 ) -> AsyncIterator[SimulationStep]:
     """Each taker votes on the round-1 proposals it endorses (PRD §9.4)."""
     yield _step("system", "Vote sub-round. Agents review Round 1 proposals.")
+    already_done = await journal.completed_turns(db, phase="vote", round=1)
     turns: list[_Turn] = []
     for thread in threads:
         proposals = await _round1_proposals(db, run_id, thread.id)
         for taker in takers:
+            if taker in already_done:
+                continue
             agent = agents_by_id.get(taker)
             if agent is None:
                 continue
@@ -900,9 +931,12 @@ async def _run_discussion_round(
     """One discussion round: each taker reads, replies, and cites (PRD §9.5)."""
     yield _step("system", f"Round {round} begins.")
     phase = f"round_{round}"
+    already_done = await journal.completed_turns(db, phase=phase, round=round)
     turns: list[_Turn] = []
     for thread in threads:
         for taker in takers:
+            if taker in already_done:
+                continue
             agent = agents_by_id.get(taker)
             if agent is None:
                 continue
@@ -1273,6 +1307,17 @@ async def _run_ratification(
 # ── Orchestrator ─────────────────────────────────────────────────────────────
 
 
+_PHASE_ORDER = ["auction", "round_1", "vote"]
+
+
+def _phase_index(phase: str | None, max_rounds: int) -> int:
+    """Position of ``phase`` in the run's linear progression, for resume's
+    "skip everything strictly before the recorded phase" rule. Unknown/``None``
+    (a run interrupted before its first phase write) sorts before everything."""
+    order = _PHASE_ORDER + [f"round_{r}" for r in range(2, max_rounds + 1)] + ["synthesis", "done"]
+    return order.index(phase) if phase in order else -1
+
+
 async def run_swarm(
     config: SwarmRunConfig,
     db: AsyncConnection,
@@ -1283,10 +1328,17 @@ async def run_swarm(
     agent_runner: AgentRunner | None = None,
     amendment_processor: AmendmentProcessor | None = None,
     synthesizer: Synthesizer | None = None,
+    resume_run_id: str | None = None,
 ) -> AsyncIterator[SimulationStep]:
     """Drive one swarm run end-to-end, yielding ``SimulationStep`` events.
 
     Seam defaults are the v1 placeholders; pass real components to override.
+
+    ``resume_run_id``: re-enter an ``interrupted`` run instead of creating a new
+    one. Phases strictly before the run's recorded phase are skipped wholesale
+    (their state is already on the DB); the recorded phase re-runs, but every
+    turn-building site consults ``journal.completed_turns`` and skips agents
+    already ``done``/``skipped`` for it — so no completed work re-runs twice.
     """
     contract_source = contract_source or FallbackContractSource()
     terminator = terminator or MaxRoundsTerminator()
@@ -1296,71 +1348,122 @@ async def run_swarm(
     # AnswerSynthesizer (one LLM call) exactly as they inject the Market Maker.
     synthesizer = synthesizer or FallbackAnswerSynthesizer()
 
-    run_id = str(uuid.uuid4())
-    await _create_run(db, run_id, config)
-    agents_by_id = await _load_agents(db)
-    journal = RunJournal(run_id)
     dropped: set[str] = set()
     announced_dropouts: set[str] = set()
+    resume_from = -1
+    recorded_round = 1
+
+    if resume_run_id is not None:
+        run_row = (
+            (
+                await db.execute(
+                    text(
+                        "SELECT status, phase, current_round, config FROM swarm_runs "
+                        "WHERE id = :id"
+                    ),
+                    {"id": resume_run_id},
+                )
+            )
+            .mappings()
+            .fetchone()
+        )
+        if run_row is None or run_row["status"] != "interrupted":
+            raise ValueError(f"run {resume_run_id!r} is not resumable")
+        run_id = resume_run_id
+        if run_row["config"]:
+            config = SwarmRunConfig(**json.loads(run_row["config"]))
+        await db.execute(
+            text("UPDATE swarm_runs SET status = 'running' WHERE id = :id"), {"id": run_id}
+        )
+        await db.commit()
+        resume_from = _phase_index(run_row["phase"], config.max_rounds)
+        recorded_round = run_row["current_round"] or 1
+        yield _step("system", f"Run resumed at phase {run_row['phase']!r}.", data={"run_id": run_id})
+    else:
+        run_id = str(uuid.uuid4())
+        await _create_run(db, run_id, config)
+
+    agents_by_id = await _load_agents(db)
+    journal = RunJournal(run_id)
 
     # ── Contract (Market Maker seam) ──────────────────────────────────────────
     # The Confirmed layer starts empty by design — it fills only as draft entries
     # earn enough citations to be promoted. The contract/threads live in the
     # agents' prompts, not as confirmed anchors.
-    #
-    # Emit an immediate frame so the client sees the run start: the Market Maker's
-    # LLM call below is the first slow step, and some clients/proxies don't render
-    # the stream until the first real ``data:`` frame arrives (a comment is not
-    # enough). This also confirms liveness while the contract is being drafted.
-    yield _step("system", "Run started — drafting the contract…", data={"run_id": run_id})
-    contract, threads = await contract_source.make_contract(config.prompt, run_id, db)
-    yield _step(
-        "system",
-        f"Contract created: {contract.task_type}, {contract.task_nature}, "
-        f"confidence={contract.confidence:.2f}",
-        data={"run_id": run_id, "contract_id": contract.id},
+    existing_contract = (
+        (await db.execute(text("SELECT id FROM contracts WHERE run_id = :r"), {"r": run_id}))
+        .mappings()
+        .fetchone()
+        if resume_run_id is not None
+        else None
     )
-    yield _step(
-        "system",
-        f"Threads created: {', '.join(t.title for t in threads)}",
-        data={
-            "thread_ids": [t.id for t in threads],
-            # Slim thread objects (no embeddings) so the board can show thread tabs.
-            "threads": [t.model_dump(mode="json", exclude={"thread_embedding"}) for t in threads],
-        },
-    )
+    if existing_contract is not None:
+        contract, threads = await _load_contract_and_threads(db, run_id)
+    else:
+        # Emit an immediate frame so the client sees the run start: the Market Maker's
+        # LLM call below is the first slow step, and some clients/proxies don't render
+        # the stream until the first real ``data:`` frame arrives (a comment is not
+        # enough). This also confirms liveness while the contract is being drafted.
+        yield _step("system", "Run started — drafting the contract…", data={"run_id": run_id})
+        contract, threads = await contract_source.make_contract(config.prompt, run_id, db)
+        yield _step(
+            "system",
+            f"Contract created: {contract.task_type}, {contract.task_nature}, "
+            f"confidence={contract.confidence:.2f}",
+            data={"run_id": run_id, "contract_id": contract.id},
+        )
+        yield _step(
+            "system",
+            f"Threads created: {', '.join(t.title for t in threads)}",
+            data={
+                "thread_ids": [t.id for t in threads],
+                # Slim thread objects (no embeddings) so the board can show thread tabs.
+                "threads": [
+                    t.model_dump(mode="json", exclude={"thread_embedding"}) for t in threads
+                ],
+            },
+        )
 
     # ── Auction (Market Hive §6.2) ───────────────────────────────────────────
-    await journal.phase(db, "auction")
     auction = AuctionEngine.from_config(db, config)
-    async for step in _run_auction(db, auction, run_id, contract, agents_by_id, agent_runner):
-        yield step
+    if _phase_index("auction", config.max_rounds) >= resume_from:
+        await journal.phase(db, "auction")
+        async for step in _run_auction(db, auction, run_id, contract, agents_by_id, agent_runner):
+            yield step
 
     takers = await auction.get_takers(run_id=run_id)
     if not takers:
         await _complete_run(db, run_id, status="aborted", reason="no_takers", round=0)
         return
+    if resume_run_id is not None:
+        # Reconstruct the dropout set the interrupted run had already recorded
+        # (K_DROPOUT consecutive failures), so a re-dropped agent stays excluded.
+        for step in await _apply_dropouts(db, run_id, agents_by_id, dropped, announced_dropouts):
+            yield step
+        takers = [t for t in takers if t not in dropped]
 
     # ── Round 1 — opening proposals (§9.3) ───────────────────────────────────
     convergence = ConvergenceEngine.from_config(db, config)
-    await journal.phase(db, "round_1", 1)
-    async for step in _run_round_one(
-        db, run_id, contract, threads, takers, agents_by_id, agent_runner, config, journal
-    ):
-        yield step
-    for step in await _apply_dropouts(db, run_id, agents_by_id, dropped, announced_dropouts):
-        yield step
-    takers = [t for t in takers if t not in dropped]
+    if _phase_index("round_1", config.max_rounds) >= resume_from:
+        await journal.phase(db, "round_1", 1)
+        async for step in _run_round_one(
+            db, run_id, contract, threads, takers, agents_by_id, agent_runner, config, journal
+        ):
+            yield step
+        for step in await _apply_dropouts(db, run_id, agents_by_id, dropped, announced_dropouts):
+            yield step
+        takers = [t for t in takers if t not in dropped]
 
     # ── Vote sub-round → cold-start confidence/temperature (§9.4, §6.4) ───────
-    await journal.phase(db, "vote", 1)
-    async for step in _run_vote_subround(
-        db, run_id, threads, takers, agents_by_id, agent_runner, journal
-    ):
-        yield step
-    for step in await _apply_dropouts(db, run_id, agents_by_id, dropped, announced_dropouts):
-        yield step
-    takers = [t for t in takers if t not in dropped]
+    if _phase_index("vote", config.max_rounds) >= resume_from:
+        await journal.phase(db, "vote", 1)
+        async for step in _run_vote_subround(
+            db, run_id, threads, takers, agents_by_id, agent_runner, journal
+        ):
+            yield step
+        for step in await _apply_dropouts(db, run_id, agents_by_id, dropped, announced_dropouts):
+            yield step
+        takers = [t for t in takers if t not in dropped]
     confidences, temperatures = await _cold_start_temperatures(
         db, run_id, threads, takers, convergence
     )
@@ -1370,7 +1473,14 @@ async def run_swarm(
     # ── Discussion rounds 2..max_rounds (§9.5, §11.2) ────────────────────────
     termination_reason = "max_rounds"
     last_round = 1
-    for round in range(2, config.max_rounds + 1):
+    # ``resume_from`` past "vote" means the recorded phase is a discussion round
+    # (f"round_{N}") — re-enter at its recorded round; otherwise start at 2 as usual.
+    discussion_start = (
+        max(2, recorded_round)
+        if resume_from > _phase_index("vote", config.max_rounds)
+        else 2
+    )
+    for round in range(discussion_start, config.max_rounds + 1):
         last_round = round
         await journal.phase(db, f"round_{round}", round)
         async for step in _run_discussion_round(

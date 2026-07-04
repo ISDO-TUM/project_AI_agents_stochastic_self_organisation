@@ -775,6 +775,55 @@ async def test_retry_succeeds_without_dropout(db: AsyncConnection) -> None:
     assert statuses[-1] == "done"
 
 
+async def test_resume_continues_without_duplicating_completed_turns(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+
+    class _CrashOnceProcessor:
+        """Simulates an orchestrator-level crash right after round 2 finishes
+        (end-of-round processing already committed) but before round 3 starts."""
+
+        def __init__(self) -> None:
+            self.crashed = False
+
+        async def process(
+            self, *, run_id: str, current_round: int, takers: list[str], db: AsyncConnection
+        ) -> AsyncIterator[SimulationStep]:
+            if current_round == 2 and not self.crashed:
+                self.crashed = True
+                raise RuntimeError("simulated crash")
+            return
+            yield  # pragma: no cover - makes this an async generator
+
+    with pytest.raises(RuntimeError):
+        await _drain(
+            SwarmRunConfig(prompt="Analyze this contract", max_rounds=3),
+            db,
+            agent_runner=_scripted_runner(),
+            amendment_processor=_CrashOnceProcessor(),
+        )
+    run_id = (await db.execute(text("SELECT id FROM swarm_runs"))).scalar_one()
+    await db.execute(
+        text("UPDATE swarm_runs SET status = 'interrupted' WHERE id = :i"), {"i": run_id}
+    )
+    await db.commit()
+    round1_before = (
+        await db.execute(text("SELECT COUNT(*) FROM draft_entries WHERE round = 1"))
+    ).scalar_one()
+
+    steps = await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=3),
+        db,
+        agent_runner=_scripted_runner(),
+        resume_run_id=run_id,
+    )
+    assert any(s.type == "convergence" for s in steps)
+    round1_after = (
+        await db.execute(text("SELECT COUNT(*) FROM draft_entries WHERE round = 1"))
+    ).scalar_one()
+    assert round1_after == round1_before  # round 1 was not re-run
+
+
 # ── M4: finalize + final output ───────────────────────────────────────────────
 
 

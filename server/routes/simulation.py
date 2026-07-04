@@ -111,6 +111,51 @@ async def _swarm_event_stream(
         _creds_var.reset(token)
 
 
+async def _swarm_resume_event_stream(
+    run_id: str, credentials: RequestCredentials
+) -> AsyncGenerator[str, None]:
+    """Stream a resumed swarm run's events, same plumbing as a fresh run.
+
+    ``run_swarm`` reconstructs the original ``SwarmRunConfig`` from the
+    persisted ``swarm_runs.config`` column once it validates ``run_id`` is
+    ``interrupted`` — the placeholder passed here is never used for a real run.
+    """
+    from server.llm.credentials import _current as _creds_var
+
+    yield ": stream open\n\n"
+
+    token = _creds_var.set(credentials)
+    try:
+        async with get_engine().connect() as db:
+            async for step in run_swarm(
+                SwarmRunConfig(prompt=""),
+                db,
+                contract_source=MarketMaker(),
+                synthesizer=AnswerSynthesizer(),
+                resume_run_id=run_id,
+            ):
+                yield f"data: {step.model_dump_json()}\n\n"
+    finally:
+        _creds_var.reset(token)
+
+
+@router.post(
+    "/{run_id}/resume",
+    summary="Resume an interrupted swarm run",
+    dependencies=[Depends(use_credentials)],
+)
+async def resume_simulation(run_id: str) -> StreamingResponse:
+    return StreamingResponse(
+        _swarm_resume_event_stream(run_id, current_credentials()),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
+
+
 @router.post(
     "/run",
     response_model=SimulationStartResponse,

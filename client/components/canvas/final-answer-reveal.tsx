@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { AnimatePresence, motion } from "framer-motion";
 import {
+  AlertTriangle,
   Check,
   CheckCircle2,
   ChevronRight,
@@ -14,10 +15,11 @@ import {
 } from "lucide-react";
 import { useTheme } from "@/lib/theme-context";
 import { getTheme } from "@/lib/theme";
-import { ConfirmedEntry } from "@/lib/types";
+import { ConfirmedEntry, Ratification } from "@/lib/types";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 
 const GOLD = "#b5860d";
+const AMBER = "#c55a11";
 
 interface FinalAnswerRevealProps {
   open: boolean;
@@ -27,6 +29,8 @@ interface FinalAnswerRevealProps {
   answer: string;
   /** Confirmed findings the answer was synthesised from. */
   findings: ConfirmedEntry[];
+  /** The takers' vote on `answer` (ratified synthesis). Null if it didn't run. */
+  ratification?: Ratification | null;
   onClose: () => void;
 }
 
@@ -42,6 +46,7 @@ export function FinalAnswerReveal({
   prompt,
   answer,
   findings,
+  ratification = null,
   onClose,
 }: FinalAnswerRevealProps) {
   const { dark } = useTheme();
@@ -235,6 +240,69 @@ export function FinalAnswerReveal({
               >
                 <MarkdownRenderer content={answer} />
               </div>
+
+              {/* ── Ratification badge (ratified synthesis) ── */}
+              {ratification && ratification.approved && (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 5,
+                    marginTop: 10,
+                    fontSize: 10.5,
+                    fontWeight: 700,
+                    color: GOLD,
+                  }}
+                >
+                  <CheckCircle2 size={11} strokeWidth={2} />
+                  Ratified by {ratification.approvals}/{ratification.voters}{" "}
+                  takers
+                </div>
+              )}
+              {ratification && !ratification.approved && (
+                <div
+                  style={{
+                    marginTop: 10,
+                    padding: "8px 12px",
+                    background: "rgba(197,90,17,0.09)",
+                    border: "1px solid rgba(197,90,17,0.3)",
+                    borderRadius: 8,
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 5,
+                      fontSize: 10.5,
+                      fontWeight: 800,
+                      color: AMBER,
+                      letterSpacing: "0.04em",
+                      textTransform: "uppercase",
+                      marginBottom: ratification.objections.length ? 5 : 0,
+                    }}
+                  >
+                    <AlertTriangle size={11} strokeWidth={2.5} />
+                    Contested synthesis ({ratification.approvals}/
+                    {ratification.voters} approved)
+                  </div>
+                  {ratification.objections.length > 0 && (
+                    <ul
+                      style={{
+                        margin: 0,
+                        paddingLeft: 16,
+                        fontSize: 11.5,
+                        color: t.textSub,
+                        lineHeight: 1.5,
+                      }}
+                    >
+                      {ratification.objections.map((o, i) => (
+                        <li key={i}>{o}</li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
 
               {/* ── Supporting findings (collapsible) ── */}
               {findings.length > 0 && (

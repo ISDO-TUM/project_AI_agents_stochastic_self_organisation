@@ -842,6 +842,7 @@ export function App({ onModeSelected }: AppProps = {}) {
         findings={swarm.state.blackboard.confirmed.filter(
           (e) => e.entry_type === "finding",
         )}
+        ratification={swarm.state.ratification}
         onClose={() => setAnswerDismissed(true)}
       />
 

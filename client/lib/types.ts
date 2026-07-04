@@ -376,6 +376,21 @@ export interface ConfirmedEntry {
   citation_count: number;
   round_confirmed: number;
   created_at: string;
+  /** Contestable consensus: a confirmed entry may be disputed (contested),
+   *  re-affirmed back to confirmed, or retracted at termination. Optional so
+   *  entries from before the feature (or dummy fixtures) default to confirmed. */
+  status?: "confirmed" | "contested" | "retracted";
+}
+
+/** The takers' approve/revise vote on the synthesised final answer
+ *  (ratified synthesis). Null when the run predates the feature or shipped
+ *  with no takers left to ratify. */
+export interface Ratification {
+  approved: boolean;
+  round: 1 | 2;
+  approvals: number;
+  voters: number;
+  objections: string[];
 }
 
 export interface Citer {
