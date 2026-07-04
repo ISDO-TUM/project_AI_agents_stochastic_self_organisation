@@ -47,6 +47,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.llm.embeddings import cosine
+from server.market_hive.trust import trust_for_all
 
 # ── Defaults (mirror SWARM_DEFAULTS in PRD §15) ────────────────────────────────
 DEFAULT_INVITE_FLOOR = 0.3
@@ -165,7 +166,7 @@ class AuctionEngine:
             .fetchall()
         )
 
-        trust_by_agent = await self._trust_scores(task_type)
+        trust_by_agent = await self._trust_scores(task_type, contract_emb)
 
         invitations: list[Invitation] = []
         all_agents: list[Invitation] = []
@@ -264,7 +265,10 @@ class AuctionEngine:
         contract = (
             (
                 await self._db.execute(
-                    text("SELECT task_type, confidence FROM contracts WHERE id = :id"),
+                    text(
+                        "SELECT task_type, confidence, contract_embedding "
+                        "FROM contracts WHERE id = :id"
+                    ),
                     {"id": contract_id},
                 )
             )
@@ -273,7 +277,8 @@ class AuctionEngine:
         )
         mm_confidence = float(contract["confidence"]) if contract else 0.0
         task_type = contract["task_type"] if contract else ""
-        trust_by_agent = await self._trust_scores(task_type)
+        contract_emb = self._parse_embedding(contract["contract_embedding"]) if contract else None
+        trust_by_agent = await self._trust_scores(task_type, contract_emb)
 
         thread_clause = (
             "AND thread_id = :thread_id" if thread_id is not None else "AND thread_id IS NULL"
@@ -411,15 +416,15 @@ class AuctionEngine:
 
     # ── helpers ────────────────────────────────────────────────────────────────
 
-    async def _trust_scores(self, domain: str) -> dict[str, float]:
-        """Map of agent_id → trust_score for a domain (only agents with a row)."""
-        rows = (
-            await self._db.execute(
-                text("SELECT agent_id, trust_score FROM agent_trust WHERE domain = :domain"),
-                {"domain": domain},
-            )
-        ).fetchall()
-        return {r[0]: float(r[1]) for r in rows}
+    async def _trust_scores(
+        self, domain: str, contract_embedding: list[float] | None
+    ) -> dict[str, float]:
+        """Map of agent_id → trust_score for this contract (only agents with
+        ledger history). Similarity-weighted against ``contract_embedding``
+        when present; falls back to exact domain-label matching offline."""
+        return await trust_for_all(
+            self._db, contract_embedding=contract_embedding, domain_label=domain
+        )
 
     async def _insert_bid(
         self,

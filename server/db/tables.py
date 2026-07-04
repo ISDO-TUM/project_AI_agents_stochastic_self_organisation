@@ -376,6 +376,27 @@ agent_trust = Table(
     CheckConstraint("trust_score >= 0.0 AND trust_score <= 1.0", name="ck_agent_trust_score"),
 )
 
+# ── Trust events (append-only evidence ledger) ────────────────────────────────
+# The source of truth for cross-run trust (2026-07-04-trust-registry-hardening):
+# ``agent_trust`` above becomes a materialized read cache recomputed from this
+# ledger. One row per (run, agent, kind) — ``run_id`` nullable to carry the
+# synthetic ``legacy_prior`` cutover event for pre-ledger agent_trust rows,
+# which has no real run.
+trust_events = Table(
+    "trust_events",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("run_id", Text, ForeignKey("swarm_runs.id"), nullable=True),
+    Column("agent_id", Text, ForeignKey("agents.id"), nullable=False),
+    Column("kind", Text, nullable=False),
+    Column("outcome", Float, nullable=False),
+    Column("weight", Float, nullable=False),
+    Column("domain_label", Text, nullable=False),
+    Column("domain_embedding", Text),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+    UniqueConstraint("run_id", "agent_id", "kind", name="uq_trust_event_once"),
+)
+
 # ── Amendment proposals ───────────────────────────────────────────────────────
 # A taker's ``request_expertise`` proposal to widen the contract scope. Resolved
 # by a majority vote of existing takers + the Market Maker.

@@ -1029,8 +1029,10 @@ async def test_trust_accumulates_across_runs(db: AsyncConnection) -> None:
     assert runs_2 == 2
 
 
-async def test_observer_trust_decremented_after_run(db: AsyncConnection) -> None:
-    """An agent that bids and loses (observer) has its trust lowered at run end."""
+async def test_observer_gets_no_trust_events_or_penalty(db: AsyncConnection) -> None:
+    """An agent that bids and loses (observer) gets zero trust events — no
+    penalty of any kind (2026-07-04 trust-registry-hardening removed the
+    flat observer penalty: losing a bid is not evidence of anything)."""
     # Three agents, but cap takers at 2 so the lowest-scored bidder loses.
     await _insert_agent(db, "a1", "Alpha")
     await _insert_agent(db, "a2", "Beta")
@@ -1045,14 +1047,14 @@ async def test_observer_trust_decremented_after_run(db: AsyncConnection) -> None
     observers = (
         await db.execute(text("SELECT agent_id FROM bids WHERE is_observer = true"))
     ).fetchall()
-    # If taker selection produced an observer, its trust must be below cold-start
-    # and it must not have been credited with participation.
     for (agent_id,) in observers:
-        trust = await _trust_for(db, agent_id)
-        assert trust is not None
-        score, runs = trust
-        assert score < 0.5
-        assert runs == 0
+        n_events = (
+            await db.execute(
+                text("SELECT COUNT(*) FROM trust_events WHERE agent_id = :a"), {"a": agent_id}
+            )
+        ).scalar_one()
+        assert n_events == 0
+        assert await _trust_for(db, agent_id) is None
 
 
 # ── Tool-level unit tests: structured posts, citation cap, disputes,

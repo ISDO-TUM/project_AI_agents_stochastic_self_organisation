@@ -337,6 +337,11 @@ async def init_db() -> None:
         await conn.run_sync(metadata.create_all)
         await _apply_column_migrations(conn)
         await reap_stale_runs(conn)
+        # Lazy import: server.market_hive imports server.db at module load time
+        # (tool registration), so importing it eagerly here would cycle.
+        from server.market_hive.trust import migrate_agent_trust_to_ledger
+
+        await migrate_agent_trust_to_ledger(conn)
 
 
 async def close_db() -> None:
