@@ -436,11 +436,8 @@ class AmendmentEngine:
 # ── live vote collectors (LLM path; tests inject fakes instead) ───────────────
 #
 # These are the production defaults the orchestrator passes to ``process_pending``.
-# The Market Maker's own ``cast_amendment_vote`` (PRD §6.1) is owned by Phase 2;
-# until that class exists, :func:`make_llm_mm_vote_collector` provides the MM's
-# single equal vote so the amendment flow is fully functional. When the Market
-# Maker lands, the orchestrator can pass ``market_maker.cast_amendment_vote``
-# directly as the ``mm_vote`` argument instead — no change needed here.
+# The Market Maker's single equal vote is ``MarketMaker.cast_amendment_vote``
+# (PRD §6.1), passed in as the ``mm_vote`` argument.
 
 _TAKER_VOTE_SYSTEM_PROMPT = (
     "You are a taker in a multi-agent swarm. A co-worker proposes adding expertise "
@@ -449,40 +446,44 @@ _TAKER_VOTE_SYSTEM_PROMPT = (
     "current team can handle it. Reply with a single word: APPROVE or REJECT."
 )
 
-_MM_VOTE_SYSTEM_PROMPT = (
-    "You are the Market Maker in a multi-agent swarm. You scoped the original "
-    "contract. A taker now proposes adding expertise the team may be missing. You "
-    "hold ONE vote, equal to every taker — you are not a judge. Approve only if the "
-    "gap is real and worth a new thread; otherwise reject. Reply with a single "
-    "word: APPROVE or REJECT."
-)
 
+class LiveAmendmentProcessor:
+    """Production ``AmendmentProcessor`` for the orchestrator's end-of-round seam.
 
-def make_llm_mm_vote_collector(provider: str = "openai", model: str = "gpt-4o") -> MMVoteFn:
-    """Build an ``MMVoteFn`` for the Market Maker's single equal vote.
+    Thin glue over :meth:`AmendmentEngine.process_pending`: each taker votes with
+    its own LLM (:func:`make_llm_vote_collector`), the Market Maker casts its one
+    equal vote via the injected ``mm_vote``, and approved threads recruit agents
+    through the real mini-auction (:func:`make_auction_recruiter`, current takers
+    excluded). Constructed once per run; the DB connection arrives per call, so
+    the engine and collectors are built against the live connection each round.
 
-    A stand-in for ``MarketMaker.cast_amendment_vote`` (Phase 2). Swap for the real
-    method once the Market Maker class exists.
+    ``vote_collector`` is injectable for tests; ``None`` selects the LLM path.
     """
 
-    async def vote(amendment: AmendmentSchema) -> Literal["approve", "reject"]:
-        user_prompt = (
-            f"Proposed expertise: {amendment.requested_domain}\n"
-            f"Reason given: {amendment.reason}\n\n"
-            "Should a new thread be created for this expertise? Reply APPROVE or REJECT."
-        )
-        response, _ = await call_agent(
-            prompt=user_prompt,
-            provider=provider,
-            model=model,
-            system_prompt=_MM_VOTE_SYSTEM_PROMPT,
-        )
-        # Silence/abstention is not approval (PRD §6.5); default to reject.
-        if "approve" in response.strip().lower():
-            return "approve"
-        return "reject"
+    def __init__(
+        self,
+        *,
+        mm_vote: MMVoteFn,
+        config: Any = None,
+        vote_collector: VoteCollectorFn | None = None,
+    ) -> None:
+        self._mm_vote = mm_vote
+        self._config = config
+        self._vote_collector = vote_collector
 
-    return vote
+    async def process(
+        self, *, run_id: str, current_round: int, takers: list[str], db: AsyncConnection
+    ) -> AsyncIterator[SimulationStep]:
+        engine = AmendmentEngine(db)
+        async for step in engine.process_pending(
+            run_id=run_id,
+            current_round=current_round,
+            takers=takers,
+            vote_collector=self._vote_collector or make_llm_vote_collector(db),
+            mm_vote=self._mm_vote,
+            recruiter=make_auction_recruiter(db, config=self._config, exclude_agent_ids=takers),
+        ):
+            yield step
 
 
 # ── mini-auction recruiter (real AuctionEngine path) ─────────────────────────

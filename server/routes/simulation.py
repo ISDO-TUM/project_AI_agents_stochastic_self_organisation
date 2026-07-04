@@ -20,6 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from server.db import create_trial, get_db, get_engine, resolve_experiment, update_trial_status
 from server.db.tables import agents
 from server.llm.credentials import RequestCredentials, current_credentials, use_credentials
+from server.market_hive.amendment import LiveAmendmentProcessor
 from server.market_hive.history import SwarmHistoryRecorder
 from server.market_hive.market_maker import MarketMaker
 from server.market_hive.orchestrator import run_swarm
@@ -102,20 +103,29 @@ async def _swarm_event_stream(
     try:
         async with get_engine().connect() as db:
             # The real Market Maker (one LLM call) produces a typed, scoped
-            # contract so the auction invites the right specialists, and the real
+            # contract — decomposed into threads for multi-step prompts — so the
+            # auction invites the right specialists, and the real
             # AnswerSynthesizer (one LLM call at the end) condenses the confirmed
             # findings into a brief final answer. Both fall back to their no-LLM
             # stand-ins internally on failure, so a run never blocks. Tests drive
             # run_swarm on the no-LLM defaults.
             #
+            # The amendment processor resolves request_expertise proposals at
+            # end-of-round: takers vote with their own LLMs and the same Market
+            # Maker casts its one equal vote (PRD §6.5).
+            #
             # The recorder mirrors the run into the shared history tables so it
             # shows up on the history page and statistics dashboards like any
             # topology trial.
             recorder = SwarmHistoryRecorder(db, config.trial_id) if config.trial_id else None
+            market_maker = MarketMaker()
             async for step in run_swarm(
                 config,
                 db,
-                contract_source=MarketMaker(),
+                contract_source=market_maker,
+                amendment_processor=LiveAmendmentProcessor(
+                    mm_vote=market_maker.cast_amendment_vote, config=config
+                ),
                 synthesizer=AnswerSynthesizer(),
                 recorder=recorder,
             ):

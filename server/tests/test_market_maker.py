@@ -13,7 +13,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_en
 from sqlalchemy.pool import StaticPool
 
 from server.db.tables import metadata
-from server.market_hive.market_maker import MarketMaker, _ContractAnalysis, _extract_json
+from server.market_hive.market_maker import (
+    MarketMaker,
+    _ContractAnalysis,
+    _extract_json,
+    _usable_threads,
+)
+from server.market_hive.schemas import AmendmentSchema
 
 
 @pytest.fixture
@@ -179,3 +185,182 @@ async def test_make_contract_falls_back_on_unparseable_response(db: AsyncConnect
 
     assert contract.task_type == "analysis"
     assert contract.confidence == 0.0
+
+
+# ── multi-step decomposition ──────────────────────────────────────────────────
+
+
+def _multi_analysis_json() -> str:
+    return json.dumps(
+        {
+            "task_type": "vendor_evaluation",
+            "task_nature": "multi",
+            "required_expertise": ["contract law", "financial modeling", "IT security"],
+            "complexity": "high",
+            "brief": "Evaluate the vendor offer legally, financially and technically.",
+            "confidence": 0.8,
+            "threads": [
+                {
+                    "title": "Legal Review",
+                    "description": "Assess the contract terms and liability clauses.",
+                    "required_expertise": ["contract law"],
+                    "complexity": "medium",
+                },
+                {
+                    "title": "Financial Analysis",
+                    "description": "Model the total cost of ownership over 5 years.",
+                    "required_expertise": ["financial modeling"],
+                    "complexity": "high",
+                },
+            ],
+        }
+    )
+
+
+async def test_make_contract_multi_persists_all_threads(db: AsyncConnection) -> None:
+    run_id = str(uuid.uuid4())
+    await _seed_run(db, run_id)
+
+    # Distinct vector per embedded text so each thread gets its own embedding.
+    async def fake_embed(texts: list[str]) -> list[list[float]]:
+        return [[float(i + 1), 0.0] for i in range(len(texts))]
+
+    mm = MarketMaker()
+    with (
+        patch(
+            "server.market_hive.market_maker.call_agent",
+            new=AsyncMock(return_value=(_multi_analysis_json(), [])),
+        ),
+        patch(
+            "server.market_hive.contract_source.embed_texts",
+            new=AsyncMock(side_effect=fake_embed),
+        ),
+    ):
+        contract, threads = await mm.make_contract("Evaluate this vendor offer", run_id, db)
+
+    assert contract.task_nature == "multi"
+    assert len(threads) == 2
+    assert [t.title for t in threads] == ["Legal Review", "Financial Analysis"]
+    assert threads[0].required_expertise == ["contract law"]
+    assert threads[1].complexity == "high"
+    # Contract and each thread carry their own (distinct) embeddings.
+    assert contract.contract_embedding is not None
+    assert threads[0].thread_embedding != threads[1].thread_embedding
+
+    rows = (
+        (
+            await db.execute(
+                text("SELECT title, required_expertise FROM threads WHERE run_id = :r"),
+                {"r": run_id},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    assert {r["title"] for r in rows} == {"Legal Review", "Financial Analysis"}
+    nature = (
+        await db.execute(text("SELECT task_nature FROM contracts WHERE run_id = :r"), {"r": run_id})
+    ).scalar_one()
+    assert nature == "multi"
+
+
+async def test_make_contract_multi_with_one_thread_collapses_to_single(
+    db: AsyncConnection,
+) -> None:
+    run_id = str(uuid.uuid4())
+    await _seed_run(db, run_id)
+
+    llm_json = json.dumps(
+        {
+            "task_type": "review",
+            "task_nature": "multi",
+            "required_expertise": ["law"],
+            "brief": "A brief.",
+            "confidence": 0.6,
+            "threads": [{"title": "Only one", "description": "d"}],
+        }
+    )
+    mm = MarketMaker()
+    with patch(
+        "server.market_hive.market_maker.call_agent",
+        new=AsyncMock(return_value=(llm_json, [])),
+    ):
+        contract, threads = await mm.make_contract("Some prompt", run_id, db)
+
+    # One thread is just the contract itself — reconciled server-side.
+    assert contract.task_nature == "single"
+    assert len(threads) == 1
+    assert threads[0].title == "Main Thread"
+
+
+def test_usable_threads_reconciliation() -> None:
+    # "single" ignores any planned threads.
+    single = _ContractAnalysis.model_validate(
+        {"task_nature": "single", "threads": [{"title": "a", "description": "b"}] * 3}
+    )
+    assert _usable_threads(single) == []
+
+    # Junk items and empty threads are dropped; titles are defaulted.
+    messy = _ContractAnalysis.model_validate(
+        {
+            "task_nature": "multi",
+            "threads": [
+                "not a dict",
+                {"title": "", "description": ""},
+                {"title": "", "description": "only description"},
+                {"title": "Titled", "description": ""},
+            ],
+        }
+    )
+    usable = _usable_threads(messy)
+    assert [t.title for t in usable] == ["Sub-task 1", "Titled"]
+    assert usable[1].description == "Titled"  # empty description falls back to title
+
+    # Thread count is capped at 4.
+    many = _ContractAnalysis.model_validate(
+        {
+            "task_nature": "multi",
+            "threads": [{"title": f"T{i}", "description": "d"} for i in range(6)],
+        }
+    )
+    assert len(_usable_threads(many)) == 4
+
+
+# ── cast_amendment_vote ───────────────────────────────────────────────────────
+
+
+def _amendment() -> AmendmentSchema:
+    from datetime import UTC, datetime
+
+    return AmendmentSchema(
+        id=str(uuid.uuid4()),
+        run_id=str(uuid.uuid4()),
+        proposing_agent_id="a1",
+        thread_id=None,
+        requested_domain="tax law",
+        reason="No one covers tax implications.",
+        created_at=datetime.now(UTC),
+    )
+
+
+async def test_cast_amendment_vote_approve_and_reject() -> None:
+    mm = MarketMaker()
+    with patch(
+        "server.market_hive.market_maker.call_agent",
+        new=AsyncMock(return_value=("APPROVE", [])),
+    ):
+        assert await mm.cast_amendment_vote(_amendment()) == "approve"
+    with patch(
+        "server.market_hive.market_maker.call_agent",
+        new=AsyncMock(return_value=("REJECT — the team covers this.", [])),
+    ):
+        assert await mm.cast_amendment_vote(_amendment()) == "reject"
+
+
+async def test_cast_amendment_vote_failure_counts_as_reject() -> None:
+    mm = MarketMaker()
+    with patch(
+        "server.market_hive.market_maker.call_agent",
+        new=AsyncMock(side_effect=RuntimeError("no api key")),
+    ):
+        assert await mm.cast_amendment_vote(_amendment()) == "reject"

@@ -11,6 +11,7 @@ import json
 import uuid
 from collections.abc import AsyncGenerator
 from typing import Literal, NamedTuple
+from unittest.mock import patch
 
 import pytest
 from sqlalchemy import text
@@ -18,7 +19,11 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_en
 from sqlalchemy.pool import StaticPool
 
 from server.db.tables import metadata
-from server.market_hive.amendment import AmendmentEngine, make_auction_recruiter
+from server.market_hive.amendment import (
+    AmendmentEngine,
+    LiveAmendmentProcessor,
+    make_auction_recruiter,
+)
 from server.market_hive.auction import Invitation
 from server.market_hive.schemas import AmendmentSchema, ThreadSchema
 from server.market_hive.tools import RequestExpertiseInput, RequestExpertiseTool
@@ -550,3 +555,45 @@ async def test_auction_recruiter_scores_against_thread_embedding(db: AsyncConnec
         )
     ).scalar_one()
     assert stored is not None
+
+
+# ── LiveAmendmentProcessor (orchestrator seam glue) ───────────────────────────
+
+
+async def test_live_amendment_processor_approves_and_recruits(db: AsyncConnection) -> None:
+    """End-to-end processor pass: vote → approve → new thread → mini-auction recruit."""
+    s = await _seed(db, n_agents=3)
+    takers = s.agent_ids[:2]
+    idle_agent = s.agent_ids[2]
+    amendment_id = await _make_pending(db, s)
+    assert amendment_id
+
+    async def taker_approves(
+        taker_id: str, amendment: AmendmentSchema
+    ) -> Literal["approve", "reject"]:
+        return "approve"
+
+    async def mm_approves(amendment: AmendmentSchema) -> Literal["approve", "reject"]:
+        return "approve"
+
+    processor = LiveAmendmentProcessor(mm_vote=mm_approves, vote_collector=taker_approves)
+    # No embedding client in tests: embed_texts falls back to None → the
+    # recruiter keeps candidates inclusively instead of cosine-filtering.
+    with patch(
+        "server.llm.embeddings._get_embedding_client",
+        side_effect=RuntimeError("offline"),
+    ):
+        steps = [
+            step
+            async for step in processor.process(
+                run_id=s.run_id, current_round=2, takers=takers, db=db
+            )
+        ]
+
+    assert [step.type for step in steps] == ["amendment", "amendment-approved"]
+    outcome = steps[-1].data
+    assert outcome is not None
+    # The one non-taker agent was recruited for the new thread via the mini-auction.
+    assert outcome["new_takers"] == [idle_agent]
+    threads = await _count(db, "SELECT COUNT(*) FROM threads WHERE run_id = :r", {"r": s.run_id})
+    assert threads == 2
