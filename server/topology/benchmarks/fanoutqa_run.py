@@ -146,40 +146,43 @@ def _safe_filename(name: str) -> str:
 def _attach_files(
     client: httpx.Client,
     agents: list[dict[str, Any]],
-    chunks: dict[str, str],
-    file_label: str,
+    chunks: dict[str, list[tuple[str, str]]],
 ) -> list[tuple[str, str]]:
-    """Upload one knowledge file per agent and attach it. Returns [(agent_id, file_id)]."""
+    """Upload one file per Wikipedia page and attach it to the assigned agent.
+
+    chunks maps agent_key → [(page_title, page_content), ...].
+    Returns [(agent_id, file_id)] for every uploaded file.
+    """
     created: list[tuple[str, str]] = []
     for i, agent in enumerate(agents):
-        content = chunks[f"agent_{i + 1}"]
-        if len(content) > _MAX_CONTENT:
-            print(
-                f"Warning: truncating file for agent {i + 1} "
-                f"({len(content)} → {_MAX_CONTENT} chars)",
-                file=sys.stderr,
-            )
-            content = content[:_MAX_CONTENT]
-
-        file_name = f"{_safe_filename(agent['name'])}_{file_label}.txt"
-        r = client.post(
-            "/api/files", json={"name": file_name, "content": content, "skip_injection_check": True}
-        )
-        if not r.is_success:
-            print(f"File upload failed ({r.status_code}): {r.text}", file=sys.stderr)
-        r.raise_for_status()
-        file_id = r.json()["id"]
-
-        attach = client.post(f"/api/agents/{agent['id']}/files/{file_id}")
-        attach.raise_for_status()
-
         if "files" not in (agent.get("tools") or []):
             tools = [*(agent.get("tools") or []), "files"]
             patch = client.patch(f"/api/agents/{agent['id']}", json={"tools": tools})
             patch.raise_for_status()
             agent["tools"] = tools
 
-        created.append((agent["id"], file_id))
+        for title, content in chunks[f"agent_{i + 1}"]:
+            if len(content) > _MAX_CONTENT:
+                print(
+                    f"Warning: truncating '{title}' ({len(content)} → {_MAX_CONTENT} chars)",
+                    file=sys.stderr,
+                )
+                content = content[:_MAX_CONTENT]
+
+            file_name = f"{_safe_filename(title)}.txt"
+            r = client.post(
+                "/api/files",
+                json={"name": file_name, "content": content, "skip_injection_check": True},
+            )
+            if not r.is_success:
+                print(f"File upload failed ({r.status_code}): {r.text}", file=sys.stderr)
+            r.raise_for_status()
+            file_id = r.json()["id"]
+
+            attach = client.post(f"/api/agents/{agent['id']}/files/{file_id}")
+            attach.raise_for_status()
+
+            created.append((agent["id"], file_id))
     return created
 
 
@@ -215,14 +218,14 @@ def _compute_n_agents(
 
 
 def _split_pages(
-    pages: list[str],
+    pages: list[tuple[str, str]],
     n_agents: int,
-) -> dict[str, str]:
-    """Round-robin distribute pages across agents, joining multiple pages per agent."""
-    buckets: dict[str, list[str]] = {f"agent_{k + 1}": [] for k in range(n_agents)}
-    for i, page_text in enumerate(pages):
-        buckets[f"agent_{i % n_agents + 1}"].append(page_text)
-    return {key: "\n\n---\n\n".join(texts) for key, texts in buckets.items()}
+) -> dict[str, list[tuple[str, str]]]:
+    """Round-robin distribute (title, content) pages across agents."""
+    buckets: dict[str, list[tuple[str, str]]] = {f"agent_{k + 1}": [] for k in range(n_agents)}
+    for i, page in enumerate(pages):
+        buckets[f"agent_{i % n_agents + 1}"].append(page)
+    return buckets
 
 
 # ── Simulation (SSE swarm) ────────────────────────────────────────────────────
@@ -287,10 +290,10 @@ def _run_swarm(
 def _load_questions_and_evidence(
     start: int,
     end: int,
-) -> list[tuple[Any, list[str]]]:
+) -> list[tuple[Any, list[tuple[str, str]]]]:
     """Load FanOutQA dev questions and fetch their evidence pages.
 
-    Returns [(question_obj, [page_markdown, ...])].
+    Returns [(question_obj, [(page_title, page_markdown), ...])].
 
     start/end are 0-based indices into the dev set (end is exclusive).
     Questions are loaded from the JSON file bundled with the fanoutqa package
@@ -307,13 +310,13 @@ def _load_questions_and_evidence(
         raise SystemExit("fanoutqa is not installed. Run: uv add fanoutqa") from exc
 
     questions = load_dev()[start:end]
-    result: list[tuple[Any, list[str]]] = []
+    result: list[tuple[Any, list[tuple[str, str]]]] = []
     for q in questions:
-        pages: list[str] = []
+        pages: list[tuple[str, str]] = []
         for ev in q.necessary_evidence:
             text = wiki_content(ev)
             if text and text.strip():
-                pages.append(text)
+                pages.append((ev.title, text))
         result.append((q, pages))
     return result
 
@@ -387,6 +390,35 @@ def _evaluate_answer(
         return {"error": str(exc)}
 
 
+def _evaluate_citations(
+    page_titles: list[str],
+    generated_answer: str,
+    reference_answer: str,
+) -> dict[str, float]:
+    """Score citation quality with ROUGE-1 and ROUGE-2.
+
+    ROUGE-1 reference: the page titles joined — measures whether citation words
+    appear anywhere in the answer.
+
+    ROUGE-2 reference: the reference answer interleaved with each title
+    (``"{ref} {title1} {ref} {title2} ..."``) — the bigrams spanning the
+    answer→citation boundary reward answers where citations appear immediately
+    after the information they support.
+    """
+    if not page_titles:
+        return {"citation_rouge1": 0.0, "citation_rouge2": 0.0}
+
+    ref_rouge1 = " ".join(page_titles)
+    ref_rouge2 = " ".join(f"{reference_answer} {title}" for title in page_titles)
+
+    scores1 = _ROUGE.score(ref_rouge1, generated_answer)
+    scores2 = _ROUGE.score(ref_rouge2, generated_answer)
+    return {
+        "citation_rouge1": scores1["rouge1"].fmeasure,
+        "citation_rouge2": scores2["rouge2"].fmeasure,
+    }
+
+
 def _ok(b: bool | None) -> str:
     if b is True:
         return "✓"
@@ -401,12 +433,13 @@ def _ok(b: bool | None) -> str:
 def _run_trial(
     client: httpx.Client,
     question: Any,
-    pages: list[str],
+    pages: list[tuple[str, str]],
     max_pages_per_agent: int,
     rounds: int,
     trial_idx: int,
     out: _Tee,
 ) -> dict[str, Any]:
+    page_titles = [title for title, _ in pages]
     n_agents = _compute_n_agents(len(pages), max_pages_per_agent)
     chunks = _split_pages(pages, n_agents)
 
@@ -417,7 +450,7 @@ def _run_trial(
 
     agents = _create_bench_agents(client, n_agents)
     try:
-        created = _attach_files(client, agents, chunks, file_label=f"q{trial_idx}")
+        created = _attach_files(client, agents, chunks)
         try:
             t0 = time.perf_counter()
             sim = _run_swarm(client, question.question, rounds, n_agents, out=out)
@@ -430,6 +463,10 @@ def _run_trial(
     scores = _evaluate_answer(question, sim["final_answer"])
     accuracy_loose = scores.get("accuracy_loose", 0.0)
     accuracy_strict = bool(scores.get("accuracy_strict", 0.0))
+
+    citation_scores = _evaluate_citations(
+        page_titles, sim["final_answer"], _str_answer(question.answer)
+    )
 
     out(
         f"  strict {_ok(accuracy_strict)}  loose={accuracy_loose:.2f}  "
@@ -445,6 +482,10 @@ def _run_trial(
             f"  ROUGE-2={scores.get('rouge2', 0):.3f}"
             f"  ROUGE-L={scores.get('rougeL', 0):.3f}"
         )
+    out(
+        f"  Citation ROUGE-1={citation_scores['citation_rouge1']:.3f}"
+        f"  Citation ROUGE-2={citation_scores['citation_rouge2']:.3f}"
+    )
 
     return {
         "trial": trial_idx,
@@ -458,6 +499,8 @@ def _run_trial(
         "rouge1": scores.get("rouge1"),
         "rouge2": scores.get("rouge2"),
         "rougeL": scores.get("rougeL"),
+        "citation_rouge1": citation_scores["citation_rouge1"],
+        "citation_rouge2": citation_scores["citation_rouge2"],
         "answer": sim["final_answer"],
     }
 
@@ -471,6 +514,8 @@ def _compute_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     rouge1_vals = [r["rouge1"] for r in rows if r.get("rouge1") is not None]
     rouge2_vals = [r["rouge2"] for r in rows if r.get("rouge2") is not None]
     rougel_vals = [r["rougeL"] for r in rows if r.get("rougeL") is not None]
+    cit1_vals = [r["citation_rouge1"] for r in rows if r.get("citation_rouge1") is not None]
+    cit2_vals = [r["citation_rouge2"] for r in rows if r.get("citation_rouge2") is not None]
     return {
         "n_questions": len(rows),
         "accuracy_loose": statistics.mean(r["accuracy_loose"] for r in rows),
@@ -482,6 +527,8 @@ def _compute_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "rouge1": statistics.mean(rouge1_vals) if rouge1_vals else None,
         "rouge2": statistics.mean(rouge2_vals) if rouge2_vals else None,
         "rougeL": statistics.mean(rougel_vals) if rougel_vals else None,
+        "citation_rouge1": statistics.mean(cit1_vals) if cit1_vals else None,
+        "citation_rouge2": statistics.mean(cit2_vals) if cit2_vals else None,
     }
 
 
@@ -503,6 +550,10 @@ def _summarise(rows: list[dict[str, Any]], out: _Tee) -> None:
         out(f"{'ROUGE-2':22s}  {s['rouge2']:>10.3f}")
     if s.get("rougeL") is not None:
         out(f"{'ROUGE-L':22s}  {s['rougeL']:>10.3f}")
+    if s.get("citation_rouge1") is not None:
+        out(f"{'Citation ROUGE-1':22s}  {s['citation_rouge1']:>10.3f}")
+    if s.get("citation_rouge2") is not None:
+        out(f"{'Citation ROUGE-2':22s}  {s['citation_rouge2']:>10.3f}")
 
 
 # ── Results file ──────────────────────────────────────────────────────────────

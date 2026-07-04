@@ -41,6 +41,7 @@ _SYSTEM_PROMPT = (
     "no bullet lists unless the answer is inherently a short list.\n"
     "- Do not introduce facts, caveats, or recommendations the findings do not support.\n"
     "- Write plain prose addressed to the end user."
+    "- ANY CITATIONS MADE BY THE AGENTS SHOULD BE INCLUDED AS INLINE CITATIONS IN THE SUMMARY."
 )
 
 
