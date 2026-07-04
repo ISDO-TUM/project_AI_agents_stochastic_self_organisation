@@ -84,24 +84,31 @@ class FallbackAnswerSynthesizer:
 
 
 class AnswerSynthesizer:
-    """LLM-backed synthesizer: confirmed findings → a couple of sentences."""
+    """LLM-backed synthesizer: confirmed findings → a couple of sentences.
 
-    def __init__(
-        self,
-        *,
-        provider: str = "openai",
-        model: str = "gpt-4o",
-        timeout: float = 30.0,
-    ) -> None:
+    ``provider`` and ``model`` are intentionally left unset at construction time
+    so the orchestrator can configure them from the takers' actual provider and
+    model after the auction (call ``configure()`` before ``synthesize()``).
+    """
+
+    def __init__(self, *, timeout: float = 30.0) -> None:
+        self._provider: str | None = None
+        self._model: str | None = None
+        self._timeout = timeout
+
+    def configure(self, *, provider: str, model: str) -> None:
+        """Set the provider and model derived from the run's taker agents."""
         self._provider = provider
         self._model = model
-        self._timeout = timeout
 
     async def synthesize(self, *, prompt: str, findings: list[ConfirmedEntrySchema]) -> str:
         """One LLM call → brief answer. Falls back to the joiner on empty/failure."""
         findings = _findings_only(findings)
         if not findings:
             return NO_ANSWER
+        if self._provider is None or self._model is None:
+            logger.warning("AnswerSynthesizer.configure() was never called; using fallback.")
+            return fallback_answer(findings)
         try:
             response, _ = await asyncio.wait_for(
                 call_agent(

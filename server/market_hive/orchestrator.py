@@ -970,6 +970,18 @@ async def run_swarm(
         await _complete_run(db, run_id, status="aborted", reason="no_takers", round=0)
         return
 
+    # Configure the synthesizer from the first taker's provider and model so
+    # synthesis uses the same LLM stack as the agents, rather than a hardcoded
+    # provider. Only AnswerSynthesizer (which exposes configure()) is affected;
+    # the FallbackAnswerSynthesizer and test fakes are left unchanged.
+    if hasattr(synthesizer, "configure"):
+        first_taker = agents_by_id.get(takers[0])
+        if first_taker and first_taker.get("provider") and first_taker.get("model"):
+            synthesizer.configure(
+                provider=first_taker["provider"],
+                model=first_taker["model"],
+            )
+
     # ── Round 1 — opening proposals (§9.3) ───────────────────────────────────
     convergence = ConvergenceEngine.from_config(db, config)
     async for step in _run_round_one(

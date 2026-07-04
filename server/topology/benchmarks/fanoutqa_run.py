@@ -50,6 +50,7 @@ _MAX_AGENTS = 8
 _MAX_CONTENT = 490_000  # just under the 500 KB schema limit
 
 _LOG_AUTO = "<auto>"
+_BENCH_RESULT_DIR = Path("Benchmark-result")
 
 _BENCH_SYSTEM_PROMPT = (
     "You are a research assistant working in a team to answer complex questions. "
@@ -58,6 +59,8 @@ _BENCH_SYSTEM_PROMPT = (
     "Post your findings and partial answers to the blackboard, and cite other agents' "
     "entries when they support your reasoning. "
     "Your goal is to help the team reach a well-supported consensus answer."
+    "DO NOT ANSWER USING WORLD KNOWLEDGE."
+    "ALL INFORMATION YOU CONTRIBUTE MUST BE CITED BY A SOURCE."
 )
 _BENCH_PROVIDER = "anthropic"
 _BENCH_MODEL = "claude-sonnet-4-6"
@@ -81,12 +84,26 @@ class _Tee:
             self._log_file.flush()
 
 
+def _resolve_output_path(value: str) -> Path:
+    """Resolve a user-supplied file path.
+
+    A bare filename (no directory component) is placed inside
+    ``_BENCH_RESULT_DIR``; an explicit relative or absolute path is used as-is.
+    The parent directory is created if it does not exist.
+    """
+    p = Path(value).expanduser()
+    if p.parent == Path("."):
+        p = _BENCH_RESULT_DIR / p
+    p.parent.mkdir(parents=True, exist_ok=True)
+    return p
+
+
 def _resolve_log_path(value: str | None) -> Path | None:
     if value is None:
         return None
     if value == _LOG_AUTO:
-        return Path.cwd() / f"fanoutqa-benchmark-{datetime.now():%Y%m%d-%H%M}.log"
-    return Path(value).expanduser()
+        return _resolve_output_path(f"fanoutqa-benchmark-{datetime.now():%Y%m%d-%H%M}.log")
+    return _resolve_output_path(value)
 
 
 # ── Agent + file lifecycle ────────────────────────────────────────────────────
@@ -506,6 +523,7 @@ def _update_results_file(path: Path, new_rows: list[dict[str, Any]]) -> None:
         by_trial[row["trial"]] = row
     merged = sorted(by_trial.values(), key=lambda r: r["trial"])
 
+    path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
         json.dumps(
             {"results": merged, "summary": _compute_summary(merged)},
@@ -563,7 +581,7 @@ def main(argv: list[str] | None = None) -> int:
         metavar="PATH",
         help=(
             "Mirror output to a log file. Omit value for auto-named "
-            "./fanoutqa-benchmark-YYYYMMDD-HHMM.log."
+            f"{_BENCH_RESULT_DIR}/fanoutqa-benchmark-YYYYMMDD-HHMM.log."
         ),
     )
     parser.add_argument(
@@ -572,6 +590,8 @@ def main(argv: list[str] | None = None) -> int:
         metavar="PATH",
         help=(
             "JSON file to write per-task scores and summary. "
+            "A bare filename (e.g. results.json) is placed inside "
+            f"{_BENCH_RESULT_DIR}/ automatically; an explicit path is used as-is. "
             "If the file already exists, new results are merged by task index "
             "and the summary is recalculated."
         ),
@@ -624,7 +644,7 @@ def main(argv: list[str] | None = None) -> int:
             _summarise(all_rows, out)
 
         if all_rows and args.results_file is not None:
-            results_path = Path(args.results_file).expanduser()
+            results_path = _resolve_output_path(args.results_file)
             _update_results_file(results_path, all_rows)
             out(f"\nResults written to {results_path}")
     finally:
