@@ -42,6 +42,7 @@ _SYSTEM_PROMPT = (
     "- Do not introduce facts, caveats, or recommendations the findings do not support.\n"
     "- Write plain prose addressed to the end user."
     "- ANY CITATIONS MADE BY THE AGENTS SHOULD BE INCLUDED AS INLINE CITATIONS IN THE SUMMARY."
+    "- IF CITATIONS ARE IN THE FORM OF FILE NAMES THEN THOSE SHOULD BE USED."
 )
 
 

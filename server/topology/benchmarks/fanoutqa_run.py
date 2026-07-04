@@ -390,32 +390,62 @@ def _evaluate_answer(
         return {"error": str(exc)}
 
 
+def _answer_citation_pairs(question: Any) -> list[tuple[str, str]]:
+    """Walk the subquestion decomposition and return (sub_answer, page_title) pairs.
+
+    Each leaf subquestion has a direct answer and a single evidence page; this
+    pairs them so the citation references are grounded in the actual answer→source
+    relationships rather than just the flat list of titles.
+    """
+    pairs: list[tuple[str, str]] = []
+
+    def walk(subqs: list[Any]) -> None:
+        for subq in subqs:
+            if subq.evidence:
+                pairs.append(
+                    (
+                        _str_answer(subq.answer).replace("\n", " "),
+                        _safe_filename(subq.evidence.title),
+                    )
+                )
+            walk(subq.decomposition)
+
+    walk(question.decomposition)
+    return pairs
+
+
 def _evaluate_citations(
-    page_titles: list[str],
+    pairs: list[tuple[str, str]],
     generated_answer: str,
-    reference_answer: str,
-) -> dict[str, float]:
+) -> dict[str, Any]:
     """Score citation quality with ROUGE-1 and ROUGE-2.
 
-    ROUGE-1 reference: the page titles joined — measures whether citation words
+    ROUGE-1 reference: page titles joined — measures whether citation words
     appear anywhere in the answer.
 
-    ROUGE-2 reference: the reference answer interleaved with each title
-    (``"{ref} {title1} {ref} {title2} ..."``) — the bigrams spanning the
-    answer→citation boundary reward answers where citations appear immediately
-    after the information they support.
+    ROUGE-2 reference: sub-answer and page title interleaved as pairs
+    (``"{sub_answer1} {title1} {sub_answer2} {title2} ..."``) — bigrams
+    spanning the answer→citation boundary reward answers that cite the
+    correct source immediately after the relevant fact.
     """
-    if not page_titles:
-        return {"citation_rouge1": 0.0, "citation_rouge2": 0.0}
+    if not pairs:
+        return {
+            "citation_rouge1": 0.0,
+            "citation_rouge2": 0.0,
+            "_ref_rouge1": "",
+            "_ref_rouge2": "",
+        }
 
-    ref_rouge1 = " ".join(page_titles)
-    ref_rouge2 = " ".join(f"{reference_answer} {title}" for title in page_titles)
+    ref_rouge1 = " ".join(title for _, title in pairs)
+    ref_rouge2 = " ".join(f"{answer} {title}" for answer, title in pairs)
 
     scores1 = _ROUGE.score(ref_rouge1, generated_answer)
     scores2 = _ROUGE.score(ref_rouge2, generated_answer)
     return {
         "citation_rouge1": scores1["rouge1"].fmeasure,
         "citation_rouge2": scores2["rouge2"].fmeasure,
+        "_ref_rouge1": ref_rouge1,
+        "_ref_rouge2": ref_rouge2,
     }
 
 
@@ -439,7 +469,6 @@ def _run_trial(
     trial_idx: int,
     out: _Tee,
 ) -> dict[str, Any]:
-    page_titles = [title for title, _ in pages]
     n_agents = _compute_n_agents(len(pages), max_pages_per_agent)
     chunks = _split_pages(pages, n_agents)
 
@@ -464,9 +493,7 @@ def _run_trial(
     accuracy_loose = scores.get("accuracy_loose", 0.0)
     accuracy_strict = bool(scores.get("accuracy_strict", 0.0))
 
-    citation_scores = _evaluate_citations(
-        page_titles, sim["final_answer"], _str_answer(question.answer)
-    )
+    citation_scores = _evaluate_citations(_answer_citation_pairs(question), sim["final_answer"])
 
     out(
         f"  strict {_ok(accuracy_strict)}  loose={accuracy_loose:.2f}  "
@@ -486,6 +513,8 @@ def _run_trial(
         f"  Citation ROUGE-1={citation_scores['citation_rouge1']:.3f}"
         f"  Citation ROUGE-2={citation_scores['citation_rouge2']:.3f}"
     )
+    out(f"  Cit-ref (R1) : {citation_scores['_ref_rouge1']}")
+    out(f"  Cit-ref (R2) : {citation_scores['_ref_rouge2']}")
 
     return {
         "trial": trial_idx,
