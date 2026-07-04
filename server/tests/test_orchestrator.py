@@ -19,9 +19,11 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from sqlalchemy.pool import StaticPool
 
+from server.db import create_trial
 from server.db.tables import metadata
 from server.market_hive.auction import AuctionEngine
 from server.market_hive.blackboard import Blackboard
+from server.market_hive.history import SwarmHistoryRecorder
 from server.market_hive.orchestrator import AgentRunner, _default_agent_runner, run_swarm
 from server.market_hive.schemas import SimulationStep, SwarmRunConfig
 from server.schemas import ToolCall
@@ -665,3 +667,100 @@ async def test_observer_trust_decremented_after_run(db: AsyncConnection) -> None
         score, runs = trust
         assert score < 0.5
         assert runs == 0
+
+
+# ── History mirroring (swarm run ↔ trials/rounds/messages) ───────────────────
+
+
+async def test_recorder_mirrors_run_into_history(db: AsyncConnection) -> None:
+    """A recorded run lands in the shared history tables like a topology trial."""
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+    trial_id = await create_trial(db, "Analyze this contract", "swarm run", "swarm")
+
+    await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2, trial_id=trial_id),
+        db,
+        agent_runner=_scripted_runner(),
+        recorder=SwarmHistoryRecorder(db, trial_id),
+    )
+
+    # The run row links back to its trial, and both are marked completed.
+    run = (await db.execute(text("SELECT trial_id, status FROM swarm_runs"))).mappings().fetchone()
+    assert run is not None
+    assert run["trial_id"] == trial_id
+    assert run["status"] == "completed"
+    trial_status = (
+        await db.execute(text("SELECT status FROM trials WHERE id = :t"), {"t": trial_id})
+    ).scalar_one()
+    assert trial_status == "completed"
+
+    # One rounds row per phase the run went through.
+    phases = {
+        (row["round_index"], row["phase"])
+        for row in (await db.execute(text("SELECT round_index, phase FROM rounds"))).mappings()
+    }
+    assert {
+        (0, "contract"),
+        (0, "auction"),
+        (1, "proposals"),
+        (1, "vote"),
+        (2, "discussion"),
+        (2, "final"),
+    } <= phases
+
+    # Board actions are mirrored as swarm_* messages from the acting agent, with
+    # the agent name snapshotted so history survives agent deletion.
+    rows = (
+        (
+            await db.execute(
+                text("SELECT message_type, from_agent_id, from_agent_name FROM messages")
+            )
+        )
+        .mappings()
+        .all()
+    )
+    by_type: dict[str, int] = {}
+    for row in rows:
+        by_type[row["message_type"]] = by_type.get(row["message_type"], 0) + 1
+    assert by_type.get("swarm_bid") == 2
+    assert by_type.get("swarm_post", 0) >= 4  # 2 proposals + 2 discussion replies
+    assert by_type.get("swarm_vote") == 2
+    assert by_type.get("swarm_cite", 0) >= 2
+    assert by_type.get("swarm_final") == 1
+    assert by_type.get("agent-thinking") is None
+    bid_names = {row["from_agent_name"] for row in rows if row["message_type"] == "swarm_bid"}
+    assert bid_names == {"Alpha", "Beta"}
+
+
+async def test_recorder_marks_aborted_run(db: AsyncConnection) -> None:
+    """A run that aborts in the auction marks its trial aborted, not running."""
+    await _insert_agent(db, "a1", "Alpha")
+    trial_id = await create_trial(db, "Analyze this contract", "swarm run", "swarm")
+
+    await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2, trial_id=trial_id),
+        db,
+        agent_runner=_scripted_runner(abstainers=frozenset({"Alpha"})),
+        recorder=SwarmHistoryRecorder(db, trial_id),
+    )
+
+    trial_status = (
+        await db.execute(text("SELECT status FROM trials WHERE id = :t"), {"t": trial_id})
+    ).scalar_one()
+    assert trial_status == "aborted"
+
+
+async def test_draft_entries_snapshot_author_name(db: AsyncConnection) -> None:
+    """Posts snapshot the author's display name at write time."""
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+
+    await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2),
+        db,
+        agent_runner=_scripted_runner(),
+    )
+
+    names = {row[0] for row in (await db.execute(text("SELECT author_name FROM draft_entries")))}
+    assert names == {"Alpha", "Beta"}

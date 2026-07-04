@@ -98,6 +98,22 @@ export interface CanvasState {
   sources: Source[];
   edges: Edge[];
   selectedRules?: string[];
+  /** Results of the last completed Market Hive run, embedded on export so
+   *  runs can be saved and compared later. Ignored on import. */
+  swarmResults?: SwarmRunExport;
+}
+
+/** Snapshot of a completed Market Hive run for the exported canvas JSON. */
+export interface SwarmRunExport {
+  runId: string;
+  trialId: string | null;
+  experimentId: string | null;
+  prompt: string | null;
+  exportedAt: string;
+  finalAnswer: string | null;
+  threads: ThreadInfo[];
+  confirmed: ConfirmedEntry[];
+  draft: DraftEntry[];
 }
 
 export interface Rule {

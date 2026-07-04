@@ -12,6 +12,13 @@ from pydantic import BaseModel, Field, field_validator
 class SwarmRunConfig(BaseModel):
     prompt: str
     mode: Literal["swarm", "topology"] = "swarm"
+    # Shared-history linkage (set by the run endpoint): the trials row mirroring
+    # this run and the experiment grouping it on the statistics page. The trial
+    # id doubles as the Langfuse session id for the run's LLM calls.
+    trial_id: str | None = None
+    experiment_id: str | None = None
+    # Anonymous owner of the run (X-User-Id header); None = legacy/shared.
+    user_id: str | None = None
     min_takers: int = Field(default=2, ge=1, le=10)
     max_takers: int = Field(default=5, ge=1, le=20)
     min_rounds: int = Field(default=3, ge=1, le=5)

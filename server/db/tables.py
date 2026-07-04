@@ -27,6 +27,10 @@ from sqlalchemy import (
 
 metadata = MetaData()
 
+# NOTE on ``user_id`` columns: the app has no authentication, so ownership is an
+# anonymous per-browser id the client generates once and sends as ``X-User-Id``.
+# NULL means "legacy/shared" — rows written before scoping existed (or by clients
+# that send no id) stay visible to everyone.
 agents = Table(
     "agents",
     metadata,
@@ -43,6 +47,7 @@ agents = Table(
     # ECSAS auction engine to score agents against a contract embedding. TEXT so
     # the application owns (de)serialisation, NULL until an embedding is computed.
     Column("capability_embedding", Text),
+    Column("user_id", Text),
     CheckConstraint(
         "provider IN ('openai', 'anthropic', 'groq', 'gemini')",
         name="ck_agents_provider",
@@ -56,6 +61,7 @@ knowledge_files = Table(
     Column("name", Text, nullable=False),
     Column("content", Text, nullable=False),
     Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    Column("user_id", Text),
 )
 
 agent_files = Table(
@@ -79,6 +85,7 @@ experiments = Table(
     Column("agent_snapshot", Text, nullable=False),
     Column("simulation_params", Text, nullable=False),
     Column("created_at", Text, nullable=False),
+    Column("user_id", Text),
     UniqueConstraint("setup_hash", name="uq_experiments_setup_hash"),
 )
 
@@ -93,6 +100,7 @@ trials = Table(
     Column("status", Text, nullable=False, server_default=text("'running'")),
     Column("created_at", Text, nullable=False),
     Column("completed_at", Text),
+    Column("user_id", Text),
 )
 
 rounds = Table(
@@ -162,6 +170,13 @@ swarm_runs = Table(
     Column("token_usage", Text, nullable=False, server_default=text("'{}'")),
     # Brief synthesised answer to the prompt, written once at run completion.
     Column("final_answer", Text),
+    # Links the swarm run to the shared history/statistics world: every run gets
+    # a ``trials`` row (mode='swarm') whose experiment groups it on the stats
+    # page. Plain TEXT (no FK) so deleting history never blocks or cascades into
+    # the swarm audit trail — the same event-log philosophy as connections/
+    # messages below.
+    Column("trial_id", Text),
+    Column("user_id", Text),
     Column("created_at", DateTime(timezone=True), server_default=func.now()),
     Column("completed_at", DateTime(timezone=True)),
     CheckConstraint(
@@ -202,6 +217,11 @@ threads = Table(
     Column("created_at", DateTime(timezone=True), server_default=func.now()),
 )
 
+# NOTE: like the topology history tables above, the ECSAS run tables carry NO
+# foreign keys to ``agents``: a swarm run is an immutable audit trail that must
+# survive the canvas being cleared. Agent id columns are denormalised snapshots;
+# ``draft_entries.author_name`` snapshots the display name at post time so the
+# board stays readable after the author is deleted.
 draft_entries = Table(
     "draft_entries",
     metadata,
@@ -209,7 +229,8 @@ draft_entries = Table(
     Column("run_id", Text, ForeignKey("swarm_runs.id"), nullable=False),
     Column("thread_id", Text, ForeignKey("threads.id"), nullable=False),
     Column("round", Integer, nullable=False),
-    Column("author_id", Text, ForeignKey("agents.id"), nullable=False),
+    Column("author_id", Text, nullable=False),
+    Column("author_name", Text),
     Column(
         "entry_type",
         Text,
@@ -234,7 +255,7 @@ citations = Table(
     metadata,
     Column("id", Text, primary_key=True),
     Column("run_id", Text, ForeignKey("swarm_runs.id"), nullable=False),
-    Column("citing_agent_id", Text, ForeignKey("agents.id"), nullable=False),
+    Column("citing_agent_id", Text, nullable=False),
     Column("cited_entry_id", Text, ForeignKey("draft_entries.id"), nullable=False),
     Column("citing_entry_id", Text, ForeignKey("draft_entries.id")),
     Column("round", Integer, nullable=False),
@@ -247,7 +268,7 @@ votes = Table(
     metadata,
     Column("id", Text, primary_key=True),
     Column("run_id", Text, ForeignKey("swarm_runs.id"), nullable=False),
-    Column("voter_agent_id", Text, ForeignKey("agents.id"), nullable=False),
+    Column("voter_agent_id", Text, nullable=False),
     Column("voted_entry_id", Text, ForeignKey("draft_entries.id"), nullable=False),
     Column("thread_id", Text, ForeignKey("threads.id"), nullable=False),
     Column("round", Integer, nullable=False, server_default=text("1")),
@@ -290,7 +311,7 @@ bids = Table(
     Column("run_id", Text, ForeignKey("swarm_runs.id"), nullable=False),
     Column("contract_id", Text, ForeignKey("contracts.id")),
     Column("thread_id", Text, ForeignKey("threads.id")),
-    Column("agent_id", Text, ForeignKey("agents.id"), nullable=False),
+    Column("agent_id", Text, nullable=False),
     Column("justification", Text, nullable=False, server_default=text("''")),
     Column("preliminary_score", Float, nullable=False, server_default=text("0.0")),
     Column("is_taker", Boolean, nullable=False, server_default=text("false")),
@@ -307,7 +328,7 @@ reputation = Table(
     "reputation",
     metadata,
     Column("run_id", Text, ForeignKey("swarm_runs.id"), primary_key=True, nullable=False),
-    Column("agent_id", Text, ForeignKey("agents.id"), primary_key=True, nullable=False),
+    Column("agent_id", Text, primary_key=True, nullable=False),
     Column("domain", Text, primary_key=True, nullable=False),
     Column("score", Float, nullable=False, server_default=text("0.5")),
     Column("updated_at", DateTime(timezone=True), server_default=func.now()),
@@ -317,10 +338,12 @@ reputation = Table(
 # ── Cross-run trust (persistent) ──────────────────────────────────────────────
 # Per-agent, per-domain credibility that *persists across runs*. Updated at run
 # end (winner gain / observer loss) and fed back into bid scoring. Starts at 0.5.
+# No FK to agents: trust survives the canvas being cleared, and re-importing a
+# canvas with preserved agent ids picks the old scores back up.
 agent_trust = Table(
     "agent_trust",
     metadata,
-    Column("agent_id", Text, ForeignKey("agents.id"), primary_key=True, nullable=False),
+    Column("agent_id", Text, primary_key=True, nullable=False),
     Column("domain", Text, primary_key=True, nullable=False),
     Column("trust_score", Float, nullable=False, server_default=text("0.5")),
     Column("runs_participated", Integer, nullable=False, server_default=text("0")),
@@ -336,7 +359,7 @@ amendments = Table(
     metadata,
     Column("id", Text, primary_key=True),
     Column("run_id", Text, ForeignKey("swarm_runs.id"), nullable=False),
-    Column("proposing_agent_id", Text, ForeignKey("agents.id"), nullable=False),
+    Column("proposing_agent_id", Text, nullable=False),
     Column("thread_id", Text, ForeignKey("threads.id")),
     Column("requested_domain", Text, nullable=False),
     Column("reason", Text, nullable=False),
@@ -367,3 +390,13 @@ Index("idx_confirmed_run_thread", confirmed_entries.c.run_id, confirmed_entries.
 Index("idx_confirmed_citations", confirmed_entries.c.citation_count.desc())
 Index("idx_bids_run", bids.c.run_id, bids.c.is_taker)
 Index("idx_trust_agent_domain", agent_trust.c.agent_id, agent_trust.c.domain)
+
+# ── User-scoping + linkage indexes ────────────────────────────────────────────
+# Every list endpoint filters on user_id, and swarm runs are looked up by their
+# linked trial when the history/statistics views cross over.
+Index("idx_agents_user", agents.c.user_id)
+Index("idx_knowledge_files_user", knowledge_files.c.user_id)
+Index("idx_experiments_user", experiments.c.user_id)
+Index("idx_trials_user", trials.c.user_id)
+Index("idx_swarm_runs_user", swarm_runs.c.user_id)
+Index("idx_swarm_runs_trial", swarm_runs.c.trial_id)
