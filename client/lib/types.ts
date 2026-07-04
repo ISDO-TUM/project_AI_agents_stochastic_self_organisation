@@ -380,6 +380,9 @@ export interface ConfirmedEntry {
    *  re-affirmed back to confirmed, or retracted at termination. Optional so
    *  entries from before the feature (or dummy fixtures) default to confirmed. */
   status?: "confirmed" | "contested" | "retracted";
+  /** Multi-turn contract sessions: set on a carried-forward anchor to the run
+   *  that originally ratified it. No UI renders this yet (API + mechanics only). */
+  origin_run_id?: string | null;
 }
 
 /** The takers' approve/revise vote on the synthesised final answer

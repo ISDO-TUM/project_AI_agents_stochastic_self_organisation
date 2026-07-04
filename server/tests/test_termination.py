@@ -126,7 +126,8 @@ async def _create_minimal_schema(conn: AsyncConnection) -> None:
             citation_count INTEGER NOT NULL DEFAULT 0,
             round_confirmed INTEGER NOT NULL,
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-            status TEXT NOT NULL DEFAULT 'confirmed'
+            status TEXT NOT NULL DEFAULT 'confirmed',
+            origin_run_id TEXT
         )
         """,
         """

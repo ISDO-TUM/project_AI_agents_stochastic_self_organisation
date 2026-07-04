@@ -45,6 +45,80 @@ def format_entries_digest(entries: list[DraftEntrySchema]) -> str:
     return "\n\n---\n\n".join(lines)
 
 
+async def carry_forward_findings(
+    db: AsyncConnection, *, parent_run_id: str, child_run_id: str
+) -> list[ConfirmedEntrySchema]:
+    """Copy the parent run's ratified findings into the child run as anchors.
+
+    Findings only (never the parent's anchors — no transitive re-anchoring);
+    retracted findings are excluded when the ``status`` column exists
+    (feature-detected). Carried anchors keep provenance via ``origin_run_id``
+    = the run that ratified them (for a finding that was itself carried and
+    re-ratified, that is the parent — provenance chains are walkable run by
+    run, by design, not transitively collapsed).
+
+    Carried rows reference the *parent's* ``thread_id`` — that FK is satisfied
+    (``threads`` is not run-scoped by constraint) but the row belongs to
+    another run; this is acceptable for anchors, which are context rather than
+    thread content, and ``get_confirmed(thread_id=None)`` returns them.
+    """
+    status_filter = ""
+    try:
+        await db.execute(text("SELECT status FROM confirmed_entries LIMIT 1"))
+        status_filter = "AND status = 'confirmed'"
+    except Exception:
+        await db.rollback()
+
+    rows = (
+        await db.execute(
+            text(
+                f"""
+                SELECT id, thread_id, content, citation_count
+                FROM confirmed_entries
+                WHERE run_id = :parent AND entry_type = 'finding' {status_filter}
+                ORDER BY citation_count DESC, round_confirmed ASC
+                """
+            ),
+            {"parent": parent_run_id},
+        )
+    ).mappings().all()
+
+    carried: list[ConfirmedEntrySchema] = []
+    for row in rows:
+        new_id = str(uuid.uuid4())
+        await db.execute(
+            text(
+                """
+                INSERT INTO confirmed_entries
+                    (id, run_id, thread_id, source_draft_id, content, entry_type,
+                     citation_count, round_confirmed, origin_run_id)
+                VALUES (:id, :run_id, :thread_id, NULL, :content, 'anchor',
+                        :cites, 0, :origin)
+                """
+            ),
+            {
+                "id": new_id,
+                "run_id": child_run_id,
+                "thread_id": row["thread_id"],
+                "content": f"[carried] {row['content']}",
+                "cites": row["citation_count"],
+                "origin": parent_run_id,
+            },
+        )
+        fetched = (
+            (
+                await db.execute(
+                    text("SELECT * FROM confirmed_entries WHERE id = :id"), {"id": new_id}
+                )
+            )
+            .mappings()
+            .fetchone()
+        )
+        carried.append(ConfirmedEntrySchema(**dict(fetched)))
+    await db.commit()
+    return carried
+
+
 def _now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -524,7 +598,8 @@ class Blackboard:
             text(
                 f"""
                 SELECT id, run_id, thread_id, source_draft_id, content,
-                       entry_type, citation_count, round_confirmed, created_at, status
+                       entry_type, citation_count, round_confirmed, created_at, status,
+                       origin_run_id
                 FROM confirmed_entries
                 WHERE run_id = :run_id {thread_clause}
                 ORDER BY round_confirmed ASC, created_at ASC

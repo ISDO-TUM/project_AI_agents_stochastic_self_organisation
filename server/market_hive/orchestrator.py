@@ -30,7 +30,7 @@ from server.db.tables import agents as agents_table
 from server.guardrails import build_guarded_system_prompt
 from server.llm import call_agent
 from server.market_hive.auction import AuctionEngine, Invitation
-from server.market_hive.blackboard import Blackboard, format_entries_digest
+from server.market_hive.blackboard import Blackboard, carry_forward_findings, format_entries_digest
 from server.market_hive.contract_source import FallbackContractSource
 from server.market_hive.convergence import ConvergenceEngine
 from server.market_hive.journal import RunJournal
@@ -48,6 +48,7 @@ from server.market_hive.prompts import (
     vote_user_prompt,
 )
 from server.market_hive.schemas import (
+    ConfirmedEntrySchema,
     ContractSchema,
     SimulationStep,
     SwarmRunConfig,
@@ -76,7 +77,12 @@ class ContractSource(Protocol):
     """Turns a raw prompt into a persisted contract + threads (the MM's job)."""
 
     async def make_contract(
-        self, prompt: str, run_id: str, db: AsyncConnection
+        self,
+        prompt: str,
+        run_id: str,
+        db: AsyncConnection,
+        *,
+        session_context: str | None = None,
     ) -> tuple[ContractSchema, list[ThreadSchema]]:
         raise NotImplementedError
 
@@ -419,15 +425,34 @@ def _board_turn(
 # ── Run lifecycle helpers ────────────────────────────────────────────────────
 
 
-async def _create_run(db: AsyncConnection, run_id: str, config: SwarmRunConfig) -> None:
+async def _create_run(
+    db: AsyncConnection,
+    run_id: str,
+    config: SwarmRunConfig,
+    *,
+    session_id: str | None = None,
+    parent_run_id: str | None = None,
+) -> None:
     """Persist a new run, including its config (resilient runs): a resumed run
-    must use the SAME knobs as the original, not silently-different defaults."""
+    must use the SAME knobs as the original, not silently-different defaults.
+
+    ``session_id``/``parent_run_id`` (multi-turn contract sessions): the first
+    run in a session mints ``session_id = its own id``; a follow-up run
+    inherits the parent's ``session_id`` and records ``parent_run_id``.
+    """
     await db.execute(
         text(
-            "INSERT INTO swarm_runs (id, status, mode, config, heartbeat_at) "
-            "VALUES (:id, 'running', 'swarm', :config, :now)"
+            "INSERT INTO swarm_runs "
+            "(id, status, mode, config, heartbeat_at, session_id, parent_run_id) "
+            "VALUES (:id, 'running', 'swarm', :config, :now, :session_id, :parent_run_id)"
         ),
-        {"id": run_id, "config": config.model_dump_json(), "now": datetime.now(UTC)},
+        {
+            "id": run_id,
+            "config": config.model_dump_json(),
+            "now": datetime.now(UTC),
+            "session_id": session_id or run_id,
+            "parent_run_id": parent_run_id,
+        },
     )
     await db.commit()
 
@@ -1329,6 +1354,7 @@ async def run_swarm(
     amendment_processor: AmendmentProcessor | None = None,
     synthesizer: Synthesizer | None = None,
     resume_run_id: str | None = None,
+    parent_run_id: str | None = None,
 ) -> AsyncIterator[SimulationStep]:
     """Drive one swarm run end-to-end, yielding ``SimulationStep`` events.
 
@@ -1339,6 +1365,12 @@ async def run_swarm(
     (their state is already on the DB); the recorded phase re-runs, but every
     turn-building site consults ``journal.completed_turns`` and skips agents
     already ``done``/``skipped`` for it — so no completed work re-runs twice.
+
+    ``parent_run_id`` (multi-turn contract sessions): a follow-up run in the
+    same session — inherits the parent's ratified findings as anchors (with
+    provenance) and scopes the contract/auction against that context. Mutually
+    exclusive with ``resume_run_id`` in practice (a resumed run already has its
+    session recorded).
     """
     contract_source = contract_source or FallbackContractSource()
     terminator = terminator or MaxRoundsTerminator()
@@ -1381,10 +1413,47 @@ async def run_swarm(
         yield _step("system", f"Run resumed at phase {run_row['phase']!r}.", data={"run_id": run_id})
     else:
         run_id = str(uuid.uuid4())
-        await _create_run(db, run_id, config)
+        session_id = run_id
+        if parent_run_id is not None:
+            parent_row = (
+                await db.execute(
+                    text("SELECT status, session_id FROM swarm_runs WHERE id = :id"),
+                    {"id": parent_run_id},
+                )
+            ).mappings().fetchone()
+            if parent_row is None:
+                raise ValueError(f"parent run {parent_run_id!r} not found")
+            if parent_row["status"] == "running":
+                raise ValueError(f"parent run {parent_run_id!r} is still running")
+            session_id = parent_row["session_id"] or parent_run_id
+        await _create_run(
+            db, run_id, config, session_id=session_id, parent_run_id=parent_run_id
+        )
 
     agents_by_id = await _load_agents(db)
     journal = RunJournal(run_id)
+
+    # Multi-turn contract sessions: carry the parent's ratified findings forward
+    # as provenance-bearing anchors before the contract is drafted, so both the
+    # Market Maker and the auction can see the session context.
+    carried: list[ConfirmedEntrySchema] = []
+    if resume_run_id is None and parent_run_id is not None:
+        carried = await carry_forward_findings(
+            db, parent_run_id=parent_run_id, child_run_id=run_id
+        )
+        if carried:
+            yield _step(
+                "system", f"Carried {len(carried)} ratified findings from the previous run."
+            )
+    session_context: str | None = None
+    if carried:
+        digest = "\n".join(
+            f"- {c.content[len('[carried] '):][:200]}" for c in carried[:12]
+        )
+        session_context = (
+            "PREVIOUSLY RATIFIED FINDINGS (from the prior run in this session — "
+            "settled ground truth; scope only what is new or changed):\n" + digest
+        )
 
     # ── Contract (Market Maker seam) ──────────────────────────────────────────
     # The Confirmed layer starts empty by design — it fills only as draft entries
@@ -1405,7 +1474,9 @@ async def run_swarm(
         # the stream until the first real ``data:`` frame arrives (a comment is not
         # enough). This also confirms liveness while the contract is being drafted.
         yield _step("system", "Run started — drafting the contract…", data={"run_id": run_id})
-        contract, threads = await contract_source.make_contract(config.prompt, run_id, db)
+        contract, threads = await contract_source.make_contract(
+            config.prompt, run_id, db, session_context=session_context
+        )
         yield _step(
             "system",
             f"Contract created: {contract.task_type}, {contract.task_nature}, "

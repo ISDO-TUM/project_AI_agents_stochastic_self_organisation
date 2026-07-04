@@ -14,7 +14,7 @@ from typing import Annotated
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.db import create_trial, get_db, get_engine, resolve_experiment, update_trial_status
@@ -80,7 +80,7 @@ async def _run_batch_background(
 
 
 async def _swarm_event_stream(
-    config: SwarmRunConfig, credentials: RequestCredentials
+    config: SwarmRunConfig, credentials: RequestCredentials, *, parent_run_id: str | None = None
 ) -> AsyncGenerator[str, None]:
     """Stream a swarm run's ``SimulationStep`` events as SSE ``data:`` frames.
 
@@ -104,7 +104,11 @@ async def _swarm_event_stream(
             # stand-ins internally on failure, so a run never blocks. Tests drive
             # run_swarm on the no-LLM defaults.
             async for step in run_swarm(
-                config, db, contract_source=MarketMaker(), synthesizer=AnswerSynthesizer()
+                config,
+                db,
+                contract_source=MarketMaker(),
+                synthesizer=AnswerSynthesizer(),
+                parent_run_id=parent_run_id,
             ):
                 yield f"data: {step.model_dump_json()}\n\n"
     finally:
@@ -181,9 +185,29 @@ async def run_simulation(
 
     # ── Swarm (ECSAS) engine: stream the run's events as SSE ──────────────────
     if body.engine == "swarm":
+        if body.parent_run_id is not None:
+            # Pre-validate before opening the SSE stream — an SSE response can't
+            # 404/409 mid-stream once headers are sent, so fail fast here.
+            parent = (
+                await db.execute(
+                    text("SELECT status FROM swarm_runs WHERE id = :id"),
+                    {"id": body.parent_run_id},
+                )
+            ).mappings().fetchone()
+            if parent is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"parent_run_id {body.parent_run_id!r} not found.",
+                )
+            if parent["status"] == "running":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"parent_run_id {body.parent_run_id!r} is still running.",
+                )
+
         config = SwarmRunConfig(prompt=body.prompt)
         return StreamingResponse(
-            _swarm_event_stream(config, current_credentials()),
+            _swarm_event_stream(config, current_credentials(), parent_run_id=body.parent_run_id),
             media_type="text/event-stream",
             headers={
                 # Stream incrementally: disable client/proxy buffering so each

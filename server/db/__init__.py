@@ -241,6 +241,10 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS config TEXT",
             # Ratified synthesis: the takers' vote on the synthesised answer
             "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS ratification TEXT",
+            # Multi-turn contract sessions
+            "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS session_id TEXT",
+            "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS parent_run_id TEXT",
+            "ALTER TABLE confirmed_entries ADD COLUMN IF NOT EXISTS origin_run_id TEXT",
         ):
             await conn.execute(text(stmt))
     elif dialect == "sqlite":
@@ -289,6 +293,10 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             ("swarm_runs", "config", "TEXT"),
             # Ratified synthesis
             ("swarm_runs", "ratification", "TEXT"),
+            # Multi-turn contract sessions
+            ("swarm_runs", "session_id", "TEXT"),
+            ("swarm_runs", "parent_run_id", "TEXT"),
+            ("confirmed_entries", "origin_run_id", "TEXT"),
         ):
             result = await conn.execute(text(f"PRAGMA table_info({table})"))
             if col not in {row[1] for row in result.fetchall()}:

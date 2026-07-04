@@ -174,6 +174,11 @@ swarm_runs = Table(
     Column("config", Text),
     # Ratified-synthesis: the takers' vote on the synthesised final answer.
     Column("ratification", Text),
+    # Multi-turn contract sessions: the first run in a session mints
+    # session_id = its own id; a follow-up run inherits it and sets
+    # parent_run_id to the run it carried ratified findings forward from.
+    Column("session_id", Text),
+    Column("parent_run_id", Text),
     CheckConstraint(
         "status IN ('running','completed','failed','aborted','interrupted')",
         name="ck_swarm_runs_status",
@@ -300,6 +305,9 @@ confirmed_entries = Table(
     # dispute threshold reached), re-affirmed back to confirmed, or retracted at
     # termination if it stays contested. Never deleted — status is append-only.
     Column("status", Text, nullable=False, server_default=text("'confirmed'")),
+    # Multi-turn contract sessions: set on a carried-forward anchor to the run
+    # that originally ratified it (provenance across a session's runs).
+    Column("origin_run_id", Text),
     CheckConstraint(
         "entry_type IN ('anchor','finding','system')",
         name="ck_confirmed_entries_type",

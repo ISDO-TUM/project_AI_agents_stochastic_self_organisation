@@ -1214,3 +1214,138 @@ async def test_check_promotions_dedup_skipped_when_embeddings_zero(db: AsyncConn
 
     confirmed_rows = await bb.get_confirmed(run_id=run_id, thread_id=thread_id)
     assert len(confirmed_rows) == 2
+
+
+# ── carry_forward_findings (multi-turn contract sessions) ─────────────────────
+
+
+async def _seed_anchor(conn: AsyncConnection, *, run_id: str, thread_id: str, content: str) -> str:
+    """A pre-existing anchor (no source_draft_id) — must never carry forward."""
+    from sqlalchemy import text
+
+    anchor_id = str(uuid.uuid4())
+    await conn.execute(
+        text(
+            "INSERT INTO confirmed_entries "
+            "(id, run_id, thread_id, content, entry_type, round_confirmed) "
+            "VALUES (:id, :run_id, :thread_id, :content, 'anchor', 0)"
+        ),
+        {"id": anchor_id, "run_id": run_id, "thread_id": thread_id, "content": content},
+    )
+    await conn.commit()
+    return anchor_id
+
+
+async def test_carry_forward_brings_findings_as_anchors_with_provenance(
+    db: AsyncConnection,
+) -> None:
+    from server.market_hive.blackboard import carry_forward_findings
+    from sqlalchemy import text
+
+    run_id, thread_id, agent_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    await _seed_run(db, run_id, thread_id, agent_id)
+    await _seed_confirmed(db, run_id, thread_id, agent_id)  # one finding
+    await _seed_anchor(db, run_id=run_id, thread_id=thread_id, content="pre-existing anchor")
+
+    child_id = str(uuid.uuid4())
+    await db.execute(
+        text("INSERT INTO swarm_runs (id, status, mode) VALUES (:id, 'running', 'swarm')"),
+        {"id": child_id},
+    )
+    await db.commit()
+
+    carried = await carry_forward_findings(db, parent_run_id=run_id, child_run_id=child_id)
+
+    assert len(carried) == 1
+    assert carried[0].entry_type == "anchor"
+    assert carried[0].origin_run_id == run_id
+    assert carried[0].content.startswith("[carried] ")
+
+    rows = (
+        await db.execute(
+            text("SELECT COUNT(*) FROM confirmed_entries WHERE run_id = :r"), {"r": child_id}
+        )
+    ).scalar_one()
+    assert rows == 1  # the parent's own anchor did NOT transfer
+
+
+async def test_carry_forward_is_not_transitive(db: AsyncConnection) -> None:
+    """r1 → r2 (carried anchor) → r3: r3 gets r2's *own* finding only — r2's
+    carried anchor (entry_type='anchor') does not re-carry."""
+    from server.market_hive.blackboard import carry_forward_findings
+    from sqlalchemy import text
+
+    r1, thread_id, agent_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    await _seed_run(db, r1, thread_id, agent_id)
+    await _seed_confirmed(db, r1, thread_id, agent_id)
+
+    r2 = str(uuid.uuid4())
+    await db.execute(
+        text("INSERT INTO swarm_runs (id, status, mode) VALUES (:id, 'running', 'swarm')"),
+        {"id": r2},
+    )
+    await db.commit()
+    await carry_forward_findings(db, parent_run_id=r1, child_run_id=r2)
+    # r2 gains its own genuine finding on top of the carried anchor:
+    await _seed_confirmed(db, r2, thread_id, agent_id)
+
+    r3 = str(uuid.uuid4())
+    await db.execute(
+        text("INSERT INTO swarm_runs (id, status, mode) VALUES (:id, 'running', 'swarm')"),
+        {"id": r3},
+    )
+    await db.commit()
+    carried = await carry_forward_findings(db, parent_run_id=r2, child_run_id=r3)
+
+    assert len(carried) == 1  # only r2's own finding — its carried anchor did not re-carry
+    assert all(c.origin_run_id == r2 for c in carried)
+
+
+async def test_carry_forward_excludes_retracted_findings(db: AsyncConnection) -> None:
+    from server.market_hive.blackboard import carry_forward_findings
+    from sqlalchemy import text
+
+    run_id, thread_id, agent_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    await _seed_run(db, run_id, thread_id, agent_id)
+    confirmed_id = await _seed_confirmed(db, run_id, thread_id, agent_id)
+    await db.execute(
+        text("UPDATE confirmed_entries SET status = 'retracted' WHERE id = :id"),
+        {"id": confirmed_id},
+    )
+    await db.commit()
+
+    child_id = str(uuid.uuid4())
+    await db.execute(
+        text("INSERT INTO swarm_runs (id, status, mode) VALUES (:id, 'running', 'swarm')"),
+        {"id": child_id},
+    )
+    await db.commit()
+
+    carried = await carry_forward_findings(db, parent_run_id=run_id, child_run_id=child_id)
+    assert carried == []
+
+
+async def test_carried_anchors_visible_via_get_confirmed_across_threads(
+    db: AsyncConnection,
+) -> None:
+    """Carried anchors reference the parent's thread_id, which does not belong
+    to the child run — get_confirmed(thread_id=None) must still surface them."""
+    from server.market_hive.blackboard import carry_forward_findings
+    from sqlalchemy import text
+
+    run_id, thread_id, agent_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    await _seed_run(db, run_id, thread_id, agent_id)
+    await _seed_confirmed(db, run_id, thread_id, agent_id)
+
+    child_id = str(uuid.uuid4())
+    await db.execute(
+        text("INSERT INTO swarm_runs (id, status, mode) VALUES (:id, 'running', 'swarm')"),
+        {"id": child_id},
+    )
+    await db.commit()
+    await carry_forward_findings(db, parent_run_id=run_id, child_run_id=child_id)
+
+    bb = Blackboard(db)
+    entries = await bb.get_confirmed(run_id=child_id, thread_id=None)
+    assert len(entries) == 1
+    assert entries[0].content.startswith("[carried] ")

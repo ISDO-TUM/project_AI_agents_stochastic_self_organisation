@@ -901,6 +901,14 @@ class SimulationRunRequest(BaseModel):
             "All runs share the same setup hash and feed into the same aggregated statistics."
         ),
     )
+    parent_run_id: str | None = Field(
+        default=None,
+        description=(
+            "swarm engine only: a prior swarm run to carry ratified findings forward "
+            "from, as a multi-turn contract session. Must be a completed (non-'running') "
+            "run — validated before the SSE stream opens."
+        ),
+    )
 
 
 class SimulationStartResponse(BaseModel):

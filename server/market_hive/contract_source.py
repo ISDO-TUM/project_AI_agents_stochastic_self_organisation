@@ -149,8 +149,14 @@ class FallbackContractSource:
     """
 
     async def make_contract(
-        self, prompt: str, run_id: str, db: AsyncConnection
+        self,
+        prompt: str,
+        run_id: str,
+        db: AsyncConnection,
+        *,
+        session_context: str | None = None,
     ) -> tuple[ContractSchema, list[ThreadSchema]]:
+        embedding_text = f"{prompt}\n{session_context}" if session_context else prompt
         return await persist_contract(
             db,
             run_id=run_id,
@@ -160,5 +166,5 @@ class FallbackContractSource:
             complexity="medium",
             confidence=0.0,
             description=prompt,
-            embedding_text=prompt,
+            embedding_text=embedding_text,
         )

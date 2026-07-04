@@ -123,13 +123,27 @@ class MarketMaker:
         self._fallback = fallback or FallbackContractSource()
 
     async def make_contract(
-        self, prompt: str, run_id: str, db: AsyncConnection
+        self,
+        prompt: str,
+        run_id: str,
+        db: AsyncConnection,
+        *,
+        session_context: str | None = None,
     ) -> tuple[ContractSchema, list[ThreadSchema]]:
-        """Decompose ``prompt`` into a typed contract, or fall back on failure."""
-        analysis = await self._analyse(prompt)
+        """Decompose ``prompt`` into a typed contract, or fall back on failure.
+
+        ``session_context`` (multi-turn contract sessions): a digest of the
+        prior run's ratified findings, when this is a follow-up run. Folded
+        into the analysis prompt so the Market Maker scopes only the delta,
+        and into the embedding text so the auction's cosine matching reflects
+        the session too.
+        """
+        analysis = await self._analyse(prompt, session_context)
         if analysis is None:
             logger.info("MarketMaker analysis unavailable; using fallback contract source.")
-            contract, threads = await self._fallback.make_contract(prompt, run_id, db)
+            contract, threads = await self._fallback.make_contract(
+                prompt, run_id, db, session_context=session_context
+            )
             return contract, threads
 
         brief = analysis.brief.strip() or prompt
@@ -139,6 +153,8 @@ class MarketMaker:
         embedding_text = (
             f"{brief}\nRelevant expertise: {expertise_line}" if expertise_line else brief
         )
+        if session_context:
+            embedding_text = f"{embedding_text}\n{session_context}"
 
         contract, threads = await persist_contract(
             db,
@@ -153,16 +169,19 @@ class MarketMaker:
         )
         return contract, threads
 
-    async def _analyse(self, prompt: str) -> _ContractAnalysis | None:
+    async def _analyse(
+        self, prompt: str, session_context: str | None = None
+    ) -> _ContractAnalysis | None:
         """One LLM call → validated analysis. Returns ``None`` on any failure.
 
         Bounded by ``timeout`` so a slow/hung provider can never stall the run's
         first frame — on timeout we fall back to the instant no-LLM source.
         """
+        user_prompt = f"{prompt}\n\n{session_context}" if session_context else prompt
         try:
             response, _ = await asyncio.wait_for(
                 call_agent(
-                    prompt,
+                    user_prompt,
                     provider=self._provider,
                     model=self._model,
                     system_prompt=_SYSTEM_PROMPT,

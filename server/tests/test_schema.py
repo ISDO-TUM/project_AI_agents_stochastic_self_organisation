@@ -245,6 +245,9 @@ def test_structured_columns_have_migration_entries() -> None:
         "ratification",
         "phase",
         "current_round",
+        "session_id",
+        "parent_run_id",
+        "origin_run_id",
     ):
         assert src.count(col) >= 2, f"{col} missing from a migration branch"
 

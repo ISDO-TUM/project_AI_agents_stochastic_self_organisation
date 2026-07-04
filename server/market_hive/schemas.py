@@ -124,6 +124,9 @@ class ConfirmedEntrySchema(BaseModel):
     # dispute), re-affirmed back to confirmed, or retracted at termination. The
     # row is never deleted — status is the only thing that changes (P-03).
     status: Literal["confirmed", "contested", "retracted"] = "confirmed"
+    # Multi-turn contract sessions: set to the run that originally ratified this
+    # finding when it was carried forward as an anchor into a follow-up run.
+    origin_run_id: str | None = None
 
 
 class BidSchema(BaseModel):
@@ -228,6 +231,11 @@ class SwarmRunSchema(BaseModel):
     config: dict[str, Any] | None = None
     # Ratified synthesis: the takers' vote on the synthesised final answer.
     ratification: dict[str, Any] | None = None
+    # Multi-turn contract sessions: the first run in a session mints
+    # session_id = its own id; follow-ups inherit it. parent_run_id is set only
+    # on a follow-up run, pointing at the run it carried findings forward from.
+    session_id: str | None = None
+    parent_run_id: str | None = None
 
     @field_validator("token_usage", mode="before")
     @classmethod

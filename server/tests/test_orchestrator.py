@@ -824,6 +824,107 @@ async def test_resume_continues_without_duplicating_completed_turns(db: AsyncCon
     assert round1_after == round1_before  # round 1 was not re-run
 
 
+# ── Multi-turn contract sessions ──────────────────────────────────────────────
+
+
+async def test_follow_up_run_sees_carried_anchors(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+    # Run 1 to completion with citations so a finding confirms:
+    await _drain(
+        SwarmRunConfig(prompt="Analyze the contract", max_rounds=2),
+        db,
+        agent_runner=_scripted_runner(),
+    )
+    parent_id = (
+        await db.execute(text("SELECT id FROM swarm_runs ORDER BY created_at LIMIT 1"))
+    ).scalar_one()
+
+    captured: list[str] = []
+    inner = _scripted_runner()
+
+    async def runner(
+        agent: dict[str, Any],
+        *,
+        user_prompt: str,
+        system_suffix: str,
+        tool_names: list[str],
+        tool_context: dict[str, Any],
+    ) -> tuple[str, list[ToolCall]]:
+        if "get_confirmed" in tool_names:
+            bb = Blackboard(tool_context["db"])
+            entries = await bb.get_confirmed(run_id=tool_context["run_id"], thread_id=None)
+            captured.extend(e.content for e in entries)
+        return await inner(
+            agent,
+            user_prompt=user_prompt,
+            system_suffix=system_suffix,
+            tool_names=tool_names,
+            tool_context=tool_context,
+        )
+
+    await _drain(
+        SwarmRunConfig(prompt="Now check the pricing follow-up", max_rounds=2),
+        db,
+        agent_runner=runner,
+        parent_run_id=parent_id,
+    )
+
+    assert any(c.startswith("[carried] ") for c in captured)
+    session = (
+        await db.execute(
+            text("SELECT session_id, parent_run_id FROM swarm_runs WHERE parent_run_id IS NOT NULL")
+        )
+    ).fetchone()
+    assert session[0] == parent_id  # first run minted session_id = its own id
+    assert session[1] == parent_id
+
+
+async def test_follow_up_run_with_no_parent_findings_runs_normally(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+    await db.execute(
+        text("INSERT INTO swarm_runs (id, status, mode) VALUES ('empty-parent', 'completed', 'swarm')")
+    )
+    await db.commit()
+
+    steps = await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2),
+        db,
+        agent_runner=_scripted_runner(),
+        parent_run_id="empty-parent",
+    )
+
+    assert any(s.type == "convergence" for s in steps)
+    assert not any("Carried" in s.msg for s in steps if s.type == "system")
+
+
+async def test_unknown_parent_run_id_raises(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    with pytest.raises(ValueError):
+        await _drain(
+            SwarmRunConfig(prompt="P", max_rounds=2),
+            db,
+            agent_runner=_scripted_runner(),
+            parent_run_id="does-not-exist",
+        )
+
+
+async def test_running_parent_run_id_raises(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    await db.execute(
+        text("INSERT INTO swarm_runs (id, status, mode) VALUES ('still-running', 'running', 'swarm')")
+    )
+    await db.commit()
+    with pytest.raises(ValueError):
+        await _drain(
+            SwarmRunConfig(prompt="P", max_rounds=2),
+            db,
+            agent_runner=_scripted_runner(),
+            parent_run_id="still-running",
+        )
+
+
 # ── M4: finalize + final output ───────────────────────────────────────────────
 
 

@@ -446,7 +446,7 @@ class TerminationEngine:
                         """
                         SELECT id, run_id, thread_id, source_draft_id, content,
                                entry_type, citation_count, round_confirmed, created_at,
-                               status
+                               status, origin_run_id
                         FROM confirmed_entries
                         WHERE run_id = :run_id
                         ORDER BY round_confirmed ASC, created_at ASC

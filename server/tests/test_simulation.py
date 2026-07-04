@@ -1602,3 +1602,73 @@ async def test_swarm_run_streams_simulation_steps_as_sse(client: AsyncClient) ->
     assert "data: " in body
     assert "Contract created" in body
     assert "convergence" in body
+
+
+@pytest.mark.asyncio
+async def test_swarm_run_unknown_parent_run_id_returns_404(client: AsyncClient) -> None:
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    resp = await client.post(
+        "/api/simulation/run",
+        json={"engine": "swarm", "prompt": "p", "parent_run_id": "does-not-exist"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_swarm_run_still_running_parent_returns_409(client: AsyncClient) -> None:
+    from sqlalchemy import text
+
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    async with get_engine().connect() as conn:
+        await conn.execute(
+            text("INSERT INTO swarm_runs (id, status, mode) VALUES ('still-running', 'running', 'swarm')")
+        )
+        await conn.commit()
+
+    resp = await client.post(
+        "/api/simulation/run",
+        json={"engine": "swarm", "prompt": "p", "parent_run_id": "still-running"},
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_swarm_run_valid_parent_carries_session(client: AsyncClient) -> None:
+    from sqlalchemy import text
+
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    async with get_engine().connect() as conn:
+        await conn.execute(
+            text("INSERT INTO swarm_runs (id, status, mode) VALUES ('parent-done', 'completed', 'swarm')")
+        )
+        await conn.commit()
+
+    captured_kwargs: dict[str, Any] = {}
+
+    async def fake_run_swarm(config: Any, db: Any, **kwargs: Any) -> AsyncIterator[SimulationStep]:
+        captured_kwargs.update(kwargs)
+        yield SimulationStep(type="convergence", msg="Run complete.")
+
+    with patch("server.routes.simulation.run_swarm", new=fake_run_swarm):
+        resp = await client.post(
+            "/api/simulation/run",
+            json={"engine": "swarm", "prompt": "p", "parent_run_id": "parent-done"},
+        )
+
+    assert resp.status_code == 200
+    assert captured_kwargs.get("parent_run_id") == "parent-done"

@@ -233,7 +233,7 @@ function reducer(state: SwarmRunState, action: Action): SwarmRunState {
  */
 export function useSwarmRun(): {
   state: SwarmRunState;
-  start: (prompt: string) => void;
+  start: (prompt: string, parentRunId?: string) => void;
   reset: () => void;
 } {
   const [state, dispatch] = useReducer(reducer, undefined, loadPersisted);
@@ -250,7 +250,7 @@ export function useSwarmRun(): {
   const { keys } = useApiKeys();
 
   const start = useCallback(
-    (prompt: string) => {
+    (prompt: string, parentRunId?: string) => {
       const seq = seqRef.current + 1;
       seqRef.current = seq;
       dispatch({ type: "BEGIN" });
@@ -263,7 +263,13 @@ export function useSwarmRun(): {
               "Content-Type": "application/json",
               ...apiKeyHeaders(keys),
             },
-            body: JSON.stringify({ engine: "swarm", prompt }),
+            body: JSON.stringify({
+              engine: "swarm",
+              prompt,
+              // Multi-turn contract sessions: no UI consumes this yet (API +
+              // mechanics only) — present so a future session picker can pass it.
+              ...(parentRunId ? { parent_run_id: parentRunId } : {}),
+            }),
           });
           if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
 
