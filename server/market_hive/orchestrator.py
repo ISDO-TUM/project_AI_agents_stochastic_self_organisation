@@ -30,15 +30,19 @@ from server.db.tables import agents as agents_table
 from server.guardrails import build_guarded_system_prompt
 from server.llm import call_agent
 from server.market_hive.auction import AuctionEngine, Invitation
-from server.market_hive.blackboard import Blackboard
+from server.market_hive.blackboard import Blackboard, format_entries_digest
 from server.market_hive.contract_source import FallbackContractSource
 from server.market_hive.convergence import ConvergenceEngine
+from server.market_hive.journal import RunJournal
 from server.market_hive.prompts import (
     AUCTION_SYSTEM_SUFFIX,
+    RATIFY_SYSTEM_SUFFIX,
     VOTE_SYSTEM_SUFFIX,
     auction_user_prompt,
+    ratify_user_prompt,
     round_one_system_suffix,
     round_one_user_prompt,
+    round_one_wave2_user_prompt,
     rounds_system_suffix,
     rounds_user_prompt,
     vote_user_prompt,
@@ -58,6 +62,11 @@ logger = logging.getLogger(__name__)
 
 _MSG_EXCERPT_LEN = 120
 
+# Resilient runs: per-turn timeout, retry budget before giving up, and the
+# number of *consecutive* failed phases before an agent is dropped entirely.
+TURN_TIMEOUT_S = 120
+K_DROPOUT = 2
+
 # ── Seams ────────────────────────────────────────────────────────────────────
 # Structural (Protocol) interfaces so defaults can be swapped for the real
 # components with no orchestrator change. Implementations need not inherit these.
@@ -76,7 +85,13 @@ class Terminator(Protocol):
     """Decides when the round loop stops and formats the final output."""
 
     async def should_terminate(
-        self, *, run_id: str, round: int, config: SwarmRunConfig, db: AsyncConnection
+        self,
+        *,
+        run_id: str,
+        round: int,
+        config: SwarmRunConfig,
+        db: AsyncConnection,
+        status_flips: int = 0,
     ) -> bool:
         raise NotImplementedError
 
@@ -143,7 +158,15 @@ async def _default_agent_runner(
     tool_names: list[str],
     tool_context: dict[str, Any],
 ) -> tuple[str, list[ToolCall]]:
-    """Drive one real LLM turn, guardrail-wrapped. Errors → no action (NFR-REL-01)."""
+    """Drive one real LLM turn, guardrail-wrapped.
+
+    Resilient runs: errors now PROPAGATE instead of being swallowed here — the
+    "errors → no action" contract (NFR-REL-01) moved up one level, to
+    ``_board_turn``'s timeout/retry wrapper, which retries once and only then
+    treats the turn as a no-op (and journals it ``failed``). The transaction
+    reset still happens unconditionally via ``finally`` so a failed write never
+    poisons the next agent's turn on a shared connection.
+    """
     db = tool_context.get("db")
     try:
         # Load this agent's knowledge files so it can consult them in any phase
@@ -169,11 +192,6 @@ async def _default_agent_runner(
             tool_context={**tool_context, "files": files},
         )
         return response, tools_used
-    except Exception:
-        logger.exception(
-            "Agent turn failed for agent_id=%s; treating as no action", agent.get("id")
-        )
-        return "", []
     finally:
         # A tool whose DB write failed (e.g. the LLM passed a bad thread_id/entry_id)
         # leaves the shared run connection's transaction aborted, which would reject
@@ -238,7 +256,9 @@ class _Turn(NamedTuple):
     run: Callable[[AsyncConnection], Awaitable[list[SimulationStep]]]
 
 
-async def _run_turns(db: AsyncConnection, turns: list[_Turn]) -> AsyncIterator[SimulationStep]:
+async def _run_turns(
+    db: AsyncConnection, turns: list[_Turn], *, journal: RunJournal | None = None
+) -> AsyncIterator[SimulationStep]:
     """Run a sub-round's agent turns, yielding each one's steps as it finishes.
 
     First emits an ``agent-thinking`` frame per turn so the UI lights up every
@@ -249,6 +269,11 @@ async def _run_turns(db: AsyncConnection, turns: list[_Turn]) -> AsyncIterator[S
     whose ``StaticPool`` shares one underlying DBAPI connection that can't carry
     concurrent transactions — they run sequentially on the shared connection,
     preserving the single-connection semantics the test suite relies on.
+
+    ``journal`` (resilient runs), when given, gets a heartbeat bump after each
+    turn finishes draining — a liveness signal spread across the sub-round
+    rather than one write at its very end, so a long sub-round still looks
+    alive from the DB's point of view while it is in flight.
     """
     if not turns:
         return
@@ -260,6 +285,8 @@ async def _run_turns(db: AsyncConnection, turns: list[_Turn]) -> AsyncIterator[S
         for turn in turns:
             for step in await turn.run(db):
                 yield step
+            if journal is not None:
+                await journal.heartbeat(db)
         return
 
     # Postgres: fan out, each turn on a private connection, bounded by a semaphore.
@@ -274,6 +301,8 @@ async def _run_turns(db: AsyncConnection, turns: list[_Turn]) -> AsyncIterator[S
         for finished in asyncio.as_completed(tasks):
             for step in await finished:
                 yield step
+            if journal is not None:
+                await journal.heartbeat(db)
     finally:
         # Cover early consumer exit (client disconnect) and any task error: cancel
         # whatever is still running and drain so every connection closes cleanly.
@@ -319,29 +348,70 @@ def _board_turn(
     *,
     run_id: str,
     agent_runner: AgentRunner,
-    user_prompt: str,
     system_suffix: str,
     tool_names: list[str],
     thread_id: str,
     round: int,
+    journal: RunJournal,
+    phase: str,
+    user_prompt: str | None = None,
+    prompt_builder: Callable[[AsyncConnection], Awaitable[str]] | None = None,
 ) -> _Turn:
-    """Build one blackboard turn (round 1 / vote / discussion) for ``agent``."""
+    """Build one blackboard turn (round 1 / vote / discussion) for ``agent``.
+
+    Exactly one of ``user_prompt`` (static) or ``prompt_builder`` (awaited on
+    the turn's own connection — required for anything that reads the DB, e.g.
+    RAG retrieval in discussion rounds) must be provided.
+
+    Resilient runs: the actual ``agent_runner`` call is wrapped with a timeout
+    and one retry on a clean transaction. A turn that still fails after the
+    retry is journaled ``failed`` and yields no board events (silence, not a
+    crash) — ``run_swarm`` drops an agent out once it accumulates
+    ``K_DROPOUT`` such failures. A turn that succeeds (first try or retry) is
+    journaled ``done``.
+    """
+    if (user_prompt is None) == (prompt_builder is None):
+        raise ValueError("provide exactly one of user_prompt / prompt_builder")
 
     async def run(conn: AsyncConnection) -> list[SimulationStep]:
-        _text, tools_used = await agent_runner(
-            agent,
-            user_prompt=user_prompt,
-            system_suffix=system_suffix,
-            tool_names=tool_names,
-            tool_context={
-                "db": conn,
-                "run_id": run_id,
-                "agent_id": agent["id"],
-                "thread_id": thread_id,
-                "round": round,
-            },
-        )
-        return await _board_events(conn, agent, tools_used, round)
+        prompt = user_prompt if user_prompt is not None else await prompt_builder(conn)
+
+        async def attempt() -> tuple[str, list[ToolCall]]:
+            return await asyncio.wait_for(
+                agent_runner(
+                    agent,
+                    user_prompt=prompt,
+                    system_suffix=system_suffix,
+                    tool_names=tool_names,
+                    tool_context={
+                        "db": conn,
+                        "run_id": run_id,
+                        "agent_id": agent["id"],
+                        "thread_id": thread_id,
+                        "round": round,
+                    },
+                ),
+                timeout=TURN_TIMEOUT_S,
+            )
+
+        try:
+            _text, tools_used = await attempt()
+        except Exception:
+            logger.exception("turn failed once for %s — retrying", agent.get("id"))
+            await _reset_transaction(conn)
+            try:
+                _text, tools_used = await attempt()
+            except Exception:
+                logger.exception("turn failed twice for %s", agent.get("id"))
+                await _reset_transaction(conn)
+                await journal.turn(
+                    conn, agent_id=agent["id"], phase=phase, round=round, status="failed"
+                )
+                return []
+
+        steps = await _board_events(conn, agent, tools_used, round)
+        await journal.turn(conn, agent_id=agent["id"], phase=phase, round=round, status="done")
+        return steps
 
     return _Turn(agent_name=agent["name"], node_id=agent["id"], run=run)
 
@@ -349,12 +419,28 @@ def _board_turn(
 # ── Run lifecycle helpers ────────────────────────────────────────────────────
 
 
-async def _create_run(db: AsyncConnection, run_id: str) -> None:
+async def _create_run(db: AsyncConnection, run_id: str, config: SwarmRunConfig) -> None:
+    """Persist a new run, including its config (resilient runs): a resumed run
+    must use the SAME knobs as the original, not silently-different defaults."""
     await db.execute(
-        text("INSERT INTO swarm_runs (id, status, mode) VALUES (:id, 'running', 'swarm')"),
-        {"id": run_id},
+        text(
+            "INSERT INTO swarm_runs (id, status, mode, config, heartbeat_at) "
+            "VALUES (:id, 'running', 'swarm', :config, :now)"
+        ),
+        {"id": run_id, "config": config.model_dump_json(), "now": datetime.now(UTC)},
     )
     await db.commit()
+
+
+async def _load_run_config(db: AsyncConnection, run_id: str) -> SwarmRunConfig | None:
+    """Reconstruct a run's original config for resume. None if never persisted
+    (older rows, or a run created before this column existed)."""
+    raw = (
+        await db.execute(text("SELECT config FROM swarm_runs WHERE id = :id"), {"id": run_id})
+    ).scalar()
+    if not raw:
+        return None
+    return SwarmRunConfig(**json.loads(raw))
 
 
 async def _complete_run(
@@ -365,12 +451,14 @@ async def _complete_run(
     reason: str | None,
     round: int,
     final_answer: str | None = None,
+    ratification: dict[str, Any] | None = None,
 ) -> None:
     await db.execute(
         text(
             "UPDATE swarm_runs "
             "SET status = :status, termination_reason = :reason, "
             "    termination_round = :round, final_answer = :final_answer, "
+            "    ratification = :ratification, phase = 'done', "
             "    completed_at = :now "
             "WHERE id = :id"
         ),
@@ -380,6 +468,7 @@ async def _complete_run(
             "reason": reason,
             "round": round,
             "final_answer": final_answer,
+            "ratification": json.dumps(ratification) if ratification is not None else None,
             "now": datetime.now(UTC),
         },
     )
@@ -416,7 +505,8 @@ async def _draft_entry_payload(db: AsyncConnection, entry_id: str) -> dict[str, 
                     SELECT de.id, de.run_id, de.thread_id, de.round, de.author_id,
                            COALESCE(a.name, de.author_id) AS author_name,
                            de.entry_type, de.content, de.reply_to, de.mention_agents,
-                           de.documents_used, de.is_visible, de.last_cited_round, de.created_at
+                           de.documents_used, de.is_visible, de.last_cited_round, de.created_at,
+                           de.claim, de.stance, de.stance_target, de.evidence
                     FROM draft_entries de
                     LEFT JOIN agents a ON a.id = de.author_id
                     WHERE de.id = :id
@@ -448,6 +538,10 @@ async def _draft_entry_payload(db: AsyncConnection, entry_id: str) -> dict[str, 
         "citation_count": 0,
         "created_at": str(row["created_at"]),
         "children": [],
+        "claim": row["claim"],
+        "stance": row["stance"],
+        "stance_target": row["stance_target"],
+        "evidence": json.loads(row["evidence"] or "[]"),
     }
 
 

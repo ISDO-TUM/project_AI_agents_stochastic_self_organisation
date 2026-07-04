@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { BlackboardState } from "@/lib/types";
 import { useTheme } from "@/lib/theme-context";
@@ -194,10 +194,17 @@ export function DraftBoard({
   const visibleDraft = filteredDraft.filter((e) => e.is_visible);
   const hasContent = visibleDraft.length > 0;
   const threshold = computePromotionThreshold(filteredDraft);
-  const promotedMap = new Map(
-    state.confirmed
-      .filter((c) => c.source_draft_id)
-      .map((c) => [c.source_draft_id as string, c.round_confirmed] as const),
+  // Referentially stable across renders so the graph view's layout memo holds
+  // between streaming ticks (rebuilding this Map every render forced a full
+  // relayout on every SSE event while the graph modal was open).
+  const promotedMap = useMemo(
+    () =>
+      new Map(
+        state.confirmed
+          .filter((c) => c.source_draft_id)
+          .map((c) => [c.source_draft_id as string, c.round_confirmed] as const),
+      ),
+    [state.confirmed],
   );
 
   // Convergence meter: threads that have at least one confirmed entry

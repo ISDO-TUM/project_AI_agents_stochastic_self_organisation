@@ -575,10 +575,18 @@ export function App({ onModeSelected }: AppProps = {}) {
     await clearAll().catch(() => {});
     dispatch({ type: "CLEAR" });
     // Also wipe the swarm run state and boards so the canvas starts fresh.
+    // Both run hooks must be reset: `blackboardState` falls back to
+    // `swarm.state.blackboard` whenever `dummy.state.active` is false, so a
+    // real (non-"test_mohamed") run's draft/confirmed/threads — persisted to
+    // sessionStorage by useSwarmRun — used to survive Clear entirely and kept
+    // showing up in the draft board / bidding board / graph view.
     dummy.reset();
+    swarm.reset();
     setRunId(null);
+    setAnswerDismissed(false);
+    setBiddingBoardOpen(false);
     stopSim();
-  }, [dispatch, dummy, stopSim]);
+  }, [dispatch, dummy, swarm, stopSim]);
   const onAutoLayout = useCallback(
     () => dispatch({ type: "AUTO_LAYOUT" }),
     [dispatch],

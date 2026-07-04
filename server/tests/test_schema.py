@@ -60,6 +60,8 @@ _ECSAS_TABLES = {
     "reputation",
     "agent_trust",
     "amendments",
+    "disputes",
+    "turn_log",
 }
 
 
@@ -102,14 +104,75 @@ async def test_draft_entries_columns(db: AsyncConnection) -> None:
         "content",
         "is_visible",
         "last_cited_round",
+        "claim",
+        "stance",
+        "stance_target",
+        "evidence",
+        "merged_into",
     ):
         assert expected in cols, f"draft_entries table missing column: {expected}"
 
 
 async def test_confirmed_entries_columns(db: AsyncConnection) -> None:
     cols = await _get_columns(db, "confirmed_entries")
-    for expected in ("id", "run_id", "thread_id", "content", "entry_type", "round_confirmed"):
+    for expected in (
+        "id",
+        "run_id",
+        "thread_id",
+        "content",
+        "entry_type",
+        "round_confirmed",
+        "status",
+    ):
         assert expected in cols, f"confirmed_entries table missing column: {expected}"
+
+
+async def test_citations_columns(db: AsyncConnection) -> None:
+    cols = await _get_columns(db, "citations")
+    for expected in (
+        "id",
+        "run_id",
+        "citing_agent_id",
+        "cited_entry_id",
+        "round",
+        "reason",
+    ):
+        assert expected in cols, f"citations table missing column: {expected}"
+
+
+async def test_disputes_columns(db: AsyncConnection) -> None:
+    cols = await _get_columns(db, "disputes")
+    for expected in (
+        "id",
+        "run_id",
+        "disputing_agent_id",
+        "confirmed_entry_id",
+        "reason",
+        "round",
+        "created_at",
+    ):
+        assert expected in cols, f"disputes table missing column: {expected}"
+
+
+async def test_turn_log_columns(db: AsyncConnection) -> None:
+    cols = await _get_columns(db, "turn_log")
+    for expected in ("id", "run_id", "agent_id", "phase", "round", "status", "created_at"):
+        assert expected in cols, f"turn_log table missing column: {expected}"
+
+
+async def test_swarm_runs_resilient_and_ratification_columns(db: AsyncConnection) -> None:
+    cols = await _get_columns(db, "swarm_runs")
+    for expected in (
+        "id",
+        "status",
+        "final_answer",
+        "phase",
+        "current_round",
+        "heartbeat_at",
+        "config",
+        "ratification",
+    ):
+        assert expected in cols, f"swarm_runs table missing column: {expected}"
 
 
 async def test_bids_columns(db: AsyncConnection) -> None:
@@ -161,3 +224,24 @@ async def test_metadata_create_all_is_idempotent(db: AsyncConnection) -> None:
     await db.run_sync(metadata.create_all)
     tables = await _get_tables(db)
     assert "swarm_runs" in tables
+
+
+def test_structured_columns_have_migration_entries() -> None:
+    """Guards the documents_used bug class: a new column must appear in BOTH
+    the PostgreSQL and SQLite branches of _apply_column_migrations, not just
+    in tables.py (which only fresh databases pick up via create_all)."""
+    import inspect
+
+    from server import db as db_module
+
+    src = inspect.getsource(db_module._apply_column_migrations)
+    for col in (
+        "claim",
+        "stance",
+        "stance_target",
+        "evidence",
+        "merged_into",
+        "heartbeat_at",
+        "ratification",
+    ):
+        assert src.count(col) >= 2, f"{col} missing from a migration branch"

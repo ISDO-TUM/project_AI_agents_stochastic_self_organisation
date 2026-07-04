@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
@@ -11,6 +12,19 @@ from sqlalchemy.pool import StaticPool
 
 from server.db.tables import metadata
 from server.market_hive.blackboard import Blackboard
+
+
+@pytest.fixture(autouse=True)
+def _offline_embeddings() -> Iterator[None]:
+    """Keep these tests offline + deterministic: never call the embedding API.
+
+    ``Blackboard.post`` embeds every entry's content; with a real API key
+    present that would hit the network on every test. Returning ``None``
+    makes it fall back to the zero-vector path, exactly as it does offline —
+    dedup tests that need real vectors overwrite ``content_embedding`` by hand.
+    """
+    with patch("server.market_hive.blackboard.embed_texts", new=AsyncMock(return_value=None)):
+        yield
 
 
 @pytest.fixture
@@ -849,3 +863,354 @@ async def test_cite_resolves_truncated_entry_id(db: AsyncConnection) -> None:
         round=2,
     )
     assert result["cited"] == 1
+
+
+# ── Contestable consensus: dispute / contest / re-affirm / dedup ─────────────
+
+
+async def _add_agent(conn: AsyncConnection, agent_id: str, name: str) -> None:
+    from sqlalchemy import text
+
+    await conn.execute(
+        text(
+            "INSERT INTO agents (id, name, description, system_prompt, provider, model) "
+            "VALUES (:id, :name, 'd', 's', 'openai', 'gpt-4o')"
+        ),
+        {"id": agent_id, "name": name},
+    )
+    await conn.commit()
+
+
+async def _seed_confirmed(conn: AsyncConnection, run_id: str, thread_id: str, author: str) -> str:
+    """Post a draft entry by ``author`` and directly insert its confirmed row
+    (bypassing the citation threshold) — returns the confirmed_entry id."""
+    from sqlalchemy import text
+
+    bb = Blackboard(conn)
+    draft_id = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=author,
+        content="a confirmed finding",
+        entry_type="proposal",
+        round=1,
+    )
+    confirmed_id = str(uuid.uuid4())
+    await conn.execute(
+        text(
+            """
+            INSERT INTO confirmed_entries
+                (id, run_id, thread_id, source_draft_id, content,
+                 entry_type, citation_count, round_confirmed)
+            VALUES (:id, :run_id, :thread_id, :source_draft_id, :content,
+                    'finding', 1, 1)
+            """
+        ),
+        {
+            "id": confirmed_id,
+            "run_id": run_id,
+            "thread_id": thread_id,
+            "source_draft_id": draft_id,
+            "content": "a confirmed finding",
+        },
+    )
+    await conn.commit()
+    return confirmed_id
+
+
+async def test_dispute_rejects_self(db: AsyncConnection) -> None:
+    from sqlalchemy import text
+
+    run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
+    agent_a, _ = await _seed_two_agents(db, run_id, thread_id)
+    ce_id = await _seed_confirmed(db, run_id, thread_id, agent_a)
+
+    bb = Blackboard(db)
+    result = await bb.dispute(
+        run_id=run_id,
+        disputing_agent_id=agent_a,
+        confirmed_entry_id=ce_id,
+        reason="x",
+        round=2,
+    )
+    assert result["ok"] is False
+    n = (await db.execute(text("SELECT COUNT(*) FROM disputes"))).scalar_one()
+    assert n == 0
+
+
+async def test_dispute_rejects_duplicate(db: AsyncConnection) -> None:
+    from sqlalchemy import text
+
+    run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+    ce_id = await _seed_confirmed(db, run_id, thread_id, agent_a)
+
+    bb = Blackboard(db)
+    first = await bb.dispute(
+        run_id=run_id, disputing_agent_id=agent_b, confirmed_entry_id=ce_id, reason="x", round=2
+    )
+    assert first["ok"] is True
+    second = await bb.dispute(
+        run_id=run_id, disputing_agent_id=agent_b, confirmed_entry_id=ce_id, reason="y", round=3
+    )
+    assert second["ok"] is False
+    n = (await db.execute(text("SELECT COUNT(*) FROM disputes"))).scalar_one()
+    assert n == 1
+
+
+async def test_dispute_rejects_non_confirmed_target(db: AsyncConnection) -> None:
+    run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+
+    bb = Blackboard(db)
+    result = await bb.dispute(
+        run_id=run_id,
+        disputing_agent_id=agent_b,
+        confirmed_entry_id="no-such-entry",
+        reason="x",
+        round=2,
+    )
+    assert result["ok"] is False
+    assert result["why"] == "not disputable"
+
+
+async def test_dispute_below_threshold_keeps_status(db: AsyncConnection) -> None:
+    from sqlalchemy import text
+
+    run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+    ce_id = await _seed_confirmed(db, run_id, thread_id, agent_a)
+
+    bb = Blackboard(db)
+    r = await bb.dispute(
+        run_id=run_id,
+        disputing_agent_id=agent_b,
+        confirmed_entry_id=ce_id,
+        reason="stale data",
+        round=3,
+    )
+    assert r["ok"]
+
+    # M = max(1, 6 // 3 + 1) = 3 — one disputer is not enough.
+    contested = await bb.contest_check(
+        run_id=run_id, current_round=3, participants_by_thread={thread_id: 6}
+    )
+    assert contested == []
+    status = (
+        await db.execute(text("SELECT status FROM confirmed_entries WHERE id=:id"), {"id": ce_id})
+    ).scalar_one()
+    assert status == "confirmed"
+
+
+async def test_m_distinct_disputes_flip_to_contested(db: AsyncConnection) -> None:
+    from sqlalchemy import text
+
+    run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+    agent_c = str(uuid.uuid4())
+    await _add_agent(db, agent_c, "C")
+    ce_id = await _seed_confirmed(db, run_id, thread_id, agent_a)
+
+    bb = Blackboard(db)
+    # M = max(1, 4 // 3 + 1) = 2 — two distinct disputers cross the threshold.
+    for agent in (agent_b, agent_c):
+        r = await bb.dispute(
+            run_id=run_id,
+            disputing_agent_id=agent,
+            confirmed_entry_id=ce_id,
+            reason="contradicted by §7",
+            round=3,
+        )
+        assert r["ok"]
+
+    contested = await bb.contest_check(
+        run_id=run_id, current_round=3, participants_by_thread={thread_id: 4}
+    )
+    assert [c.id for c in contested] == [ce_id]
+    assert contested[0].status == "contested"
+
+    # A system note announcing the contest must be visible on the board.
+    note = (
+        await db.execute(
+            text(
+                "SELECT content FROM draft_entries WHERE entry_type = 'system' "
+                "AND content LIKE '%contested%'"
+            )
+        )
+    ).scalar()
+    assert note is not None
+
+    # Re-running contest_check is idempotent — status is already 'contested',
+    # so the WHERE status='confirmed' filter excludes it from re-processing.
+    again = await bb.contest_check(
+        run_id=run_id, current_round=4, participants_by_thread={thread_id: 4}
+    )
+    assert again == []
+
+
+async def test_reaffirm_check_flips_contested_back_to_confirmed(db: AsyncConnection) -> None:
+    from sqlalchemy import text
+
+    run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+    agent_c = str(uuid.uuid4())
+    await _add_agent(db, agent_c, "C")
+    ce_id = await _seed_confirmed(db, run_id, thread_id, agent_a)
+
+    bb = Blackboard(db)
+    for agent in (agent_b, agent_c):
+        await bb.dispute(
+            run_id=run_id,
+            disputing_agent_id=agent,
+            confirmed_entry_id=ce_id,
+            reason="contradicted",
+            round=3,
+        )
+    contested = await bb.contest_check(
+        run_id=run_id, current_round=3, participants_by_thread={thread_id: 4}
+    )
+    assert len(contested) == 1
+
+    source_draft_id = (
+        await db.execute(
+            text("SELECT source_draft_id FROM confirmed_entries WHERE id=:id"), {"id": ce_id}
+        )
+    ).scalar_one()
+
+    # Fresh citations on the source draft, strictly after the contest round.
+    for agent in (agent_b, agent_c):
+        await bb.cite(run_id=run_id, citing_agent_id=agent, entry_ids=[source_draft_id], round=4)
+
+    reaffirmed = await bb.reaffirm_check(run_id=run_id, participants_by_thread={thread_id: 4})
+    assert [c.id for c in reaffirmed] == [ce_id]
+    assert reaffirmed[0].status == "confirmed"
+
+    status = (
+        await db.execute(text("SELECT status FROM confirmed_entries WHERE id=:id"), {"id": ce_id})
+    ).scalar_one()
+    assert status == "confirmed"
+
+    note = (
+        await db.execute(
+            text(
+                "SELECT content FROM draft_entries WHERE entry_type = 'system' "
+                "AND content LIKE '%re-affirmed%'"
+            )
+        )
+    ).scalar()
+    assert note is not None
+
+
+async def test_check_promotions_dedup_merges_near_duplicate(db: AsyncConnection) -> None:
+    """Two near-identical findings (hand-written embeddings, no API needed) merge
+    into a single confirmed entry instead of both being promoted separately."""
+    import json as json_lib
+
+    from sqlalchemy import text
+
+    run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+    agent_c = str(uuid.uuid4())
+    await _add_agent(db, agent_c, "C")
+
+    bb = Blackboard(db)
+    vec = json_lib.dumps([1.0, 0.0, 0.0])
+    entry1 = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_a,
+        content="First phrasing of the finding",
+        entry_type="proposal",
+        round=1,
+    )
+    entry2 = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_c,
+        content="Second phrasing of the same finding",
+        entry_type="proposal",
+        round=1,
+    )
+    for eid in (entry1, entry2):
+        await db.execute(
+            text("UPDATE draft_entries SET content_embedding = :emb WHERE id = :id"),
+            {"emb": vec, "id": eid},
+        )
+    await db.commit()
+
+    # Promote entry1 first (M=1 with 2 participants).
+    await bb.cite(run_id=run_id, citing_agent_id=agent_b, entry_ids=[entry1], round=2)
+    promoted1 = await bb.check_promotions(
+        run_id=run_id, current_round=2, participants_by_thread={thread_id: 2}
+    )
+    assert len(promoted1) == 1
+    confirmed_id = promoted1[0].id
+
+    # entry2 crosses the threshold too, but its embedding is a near-duplicate —
+    # it must merge into entry1's confirmed row, not create a second one.
+    await bb.cite(run_id=run_id, citing_agent_id=agent_b, entry_ids=[entry2], round=3)
+    promoted2 = await bb.check_promotions(
+        run_id=run_id, current_round=3, participants_by_thread={thread_id: 2}
+    )
+    assert promoted2 == []
+
+    confirmed_rows = await bb.get_confirmed(run_id=run_id, thread_id=thread_id)
+    assert len(confirmed_rows) == 1
+
+    merged_into = (
+        await db.execute(text("SELECT merged_into FROM draft_entries WHERE id = :id"), {"id": entry2})
+    ).scalar_one()
+    assert merged_into == confirmed_id
+
+    citation_count = (
+        await db.execute(
+            text("SELECT citation_count FROM confirmed_entries WHERE id = :id"), {"id": confirmed_id}
+        )
+    ).scalar_one()
+    assert citation_count == 2  # original + the merged entry's distinct citer
+
+    note = (
+        await db.execute(
+            text(
+                "SELECT content FROM draft_entries WHERE entry_type = 'system' "
+                "AND content LIKE '%merged into an existing confirmed finding%'"
+            )
+        )
+    ).scalar()
+    assert note is not None
+
+
+async def test_check_promotions_dedup_skipped_when_embeddings_zero(db: AsyncConnection) -> None:
+    """Zero/offline embeddings must never block promotion — dedup is a pure gate,
+    never a blocker, when no real vectors are available."""
+    run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+    agent_c = str(uuid.uuid4())
+    await _add_agent(db, agent_c, "C")
+
+    bb = Blackboard(db)
+    # _offline_embeddings makes post() fall back to the zero vector for both —
+    # identical zero vectors, yet dedup must NOT treat them as a match.
+    entry1 = await bb.post(
+        run_id=run_id, thread_id=thread_id, author_id=agent_a,
+        content="First finding", entry_type="proposal", round=1,
+    )
+    entry2 = await bb.post(
+        run_id=run_id, thread_id=thread_id, author_id=agent_c,
+        content="Second finding", entry_type="proposal", round=1,
+    )
+
+    await bb.cite(run_id=run_id, citing_agent_id=agent_b, entry_ids=[entry1], round=2)
+    promoted1 = await bb.check_promotions(
+        run_id=run_id, current_round=2, participants_by_thread={thread_id: 2}
+    )
+    assert len(promoted1) == 1
+
+    await bb.cite(run_id=run_id, citing_agent_id=agent_b, entry_ids=[entry2], round=3)
+    promoted2 = await bb.check_promotions(
+        run_id=run_id, current_round=3, participants_by_thread={thread_id: 2}
+    )
+    assert len(promoted2) == 1  # NOT merged
+
+    confirmed_rows = await bb.get_confirmed(run_id=run_id, thread_id=thread_id)
+    assert len(confirmed_rows) == 2

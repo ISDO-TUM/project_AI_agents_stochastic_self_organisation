@@ -67,7 +67,9 @@ def round_one_system_suffix(temperature_instruction: str) -> str:
         "ROUND 1 INSTRUCTION: Write your opening proposal for this thread. Include "
         "(1) why you are qualified, (2) your initial analysis and answer, and (3) the "
         "key clauses or evidence you rely on. This is your stake in the ground — make "
-        "it thorough and specific.\n\n"
+        "it thorough and specific. Fill the claim field with your one-sentence thesis, "
+        "evidence with the file names you relied on, and stance ('new' for an opening "
+        "proposal).\n\n"
         f"{temperature_instruction}"
     )
 
@@ -84,6 +86,41 @@ def round_one_user_prompt(
         f"ROUND: 1 of {max_rounds}\n"
         f"CO-WORKERS ON THIS THREAD: {people}\n\n"
         "Write your Round 1 proposal now with "
+        f'post_to_blackboard(entry_type="proposal", thread_id="{thread.id}").'
+    )
+
+
+def round_one_wave2_user_prompt(
+    contract: ContractSchema,
+    thread: ThreadSchema,
+    *,
+    proposals: list[tuple[str, str, str]],
+    max_rounds: int,
+    coworkers: list[str],
+) -> str:
+    """Second-wave opening prompt: earlier proposals shown, restating forbidden.
+
+    ``proposals`` is ``[(entry_id, author_name, content)]`` (the
+    ``_round1_proposals`` shape).
+    """
+    people = ", ".join(coworkers) or "(none)"
+    listing = (
+        "\n\n".join(f"[{pid}] {name}: {content[:400]}" for pid, name, content in proposals)
+        or "(none yet)"
+    )
+    return (
+        "CONTRACT:\n"
+        f"{contract.original_prompt}\n\n"
+        f"YOUR THREAD: [{thread.id}] {thread.title} — {thread.description}\n"
+        f"ROUND: 1 (second wave) of {max_rounds}\n"
+        f"CO-WORKERS ON THIS THREAD: {people}\n\n"
+        "PROPOSALS ALREADY POSTED BY YOUR CO-WORKERS:\n"
+        f"{listing}\n\n"
+        "If the proposals above fully cover what you would say, do NOT post — you "
+        "will endorse them in the vote sub-round that follows. Post an opening "
+        "proposal ONLY if you add something not already covered: a different "
+        "clause, a different risk, a disagreement, or new evidence. Do not restate "
+        "existing points. To post, call "
         f'post_to_blackboard(entry_type="proposal", thread_id="{thread.id}").'
     )
 
@@ -125,24 +162,73 @@ def rounds_system_suffix(temperature_instruction: str) -> str:
         "agents whose help you need.\n\n"
         "RULES:\n"
         "- The contract and your thread are in the message below.\n"
-        "- Use read_blackboard() to see what your co-workers have posted this run.\n"
+        "- read_blackboard() is available if you need more than the retrieved excerpts "
+        "in the message below.\n"
         "- Use post_to_blackboard(reply_to=..., thread_id=...) to respond to a post.\n"
+        "- Set claim (one-sentence thesis), stance ('supports'/'refutes'/'refines' + "
+        "stance_target) and evidence on every post.\n"
         "- Use cite(entry_ids=[...]) ONLY for entries you build on or agree with — "
-        "express disagreement in your reply content, not by citing.\n\n"
+        "express disagreement in your reply content, not by citing.\n"
+        "- Use dispute(entry_id, reason) ONLY against a CONFIRMED finding you can show "
+        "is wrong — it takes M agents to contest, exactly like promotion.\n\n"
         f"{temperature_instruction}"
     )
 
 
 def rounds_user_prompt(
-    contract: ContractSchema, thread: ThreadSchema, *, round: int, max_rounds: int
+    contract: ContractSchema,
+    thread: ThreadSchema,
+    *,
+    round: int,
+    max_rounds: int,
+    relevant_posts: str | None = None,
 ) -> str:
-    """The discussion user message for one taker on one thread in round ``round``."""
+    """The discussion user message for one taker on one thread in round ``round``.
+
+    ``relevant_posts`` is a pre-retrieved board digest (server-side RAG); when
+    present it is injected with an explicit cite-don't-restate instruction so
+    an agent cannot duplicate a point it was never forced to look at.
+    """
+    injected = (
+        "RELEVANT EXISTING POSTS (retrieved for you — most relevant to your "
+        "expertise):\n"
+        f"{relevant_posts}\n\n"
+        "If your point is already made above, cite(entry_ids=[...]) it instead of "
+        "restating it. Post a reply ONLY if it adds something new — a different "
+        "angle, a disagreement, or new evidence. Duplicated content will be "
+        "treated as noise, not reinforcement.\n\n"
+        if relevant_posts
+        else ""
+    )
     return (
         "CONTRACT:\n"
         f"{contract.original_prompt}\n\n"
         f"YOUR THREAD: [{thread.id}] {thread.title}\n"
         f"ROUND: {round} of {max_rounds}\n\n"
-        f'Use read_blackboard(thread_id="{thread.id}") to review the discussion, then '
-        "post_to_blackboard(reply_to=...) with your analysis and cite(entry_ids=[...]) "
-        "the entries you build on."
+        f"{injected}"
+        f'You may call read_blackboard(thread_id="{thread.id}") to browse beyond '
+        "the excerpts above, then post_to_blackboard(reply_to=...) with your "
+        "analysis and cite(entry_ids=[...]) the entries you build on."
+    )
+
+
+# ── Ratification sub-round (post-synthesis) ────────────────────────────────
+
+RATIFY_SYSTEM_SUFFIX = (
+    "The run is closing. A draft of the final answer has been synthesised from the "
+    "confirmed findings. Review it against the findings you helped ratify. Call "
+    "approve_synthesis() if it is faithful, or revise_synthesis(reason) stating "
+    "specifically what is missing or misrepresented. Do not relitigate the findings."
+)
+
+
+def ratify_user_prompt(candidate: str, own_findings: list[tuple[str, str]]) -> str:
+    """``own_findings``: (confirmed_entry_id, content) authored by this taker."""
+    mine = "\n".join(f"- [{fid[:8]}] {c[:200]}" for fid, c in own_findings) or "(none)"
+    return (
+        "DRAFT FINAL ANSWER:\n"
+        f"{candidate}\n\n"
+        "YOUR CONFIRMED FINDINGS THIS RUN:\n"
+        f"{mine}\n\n"
+        "Approve, or request one specific revision."
     )

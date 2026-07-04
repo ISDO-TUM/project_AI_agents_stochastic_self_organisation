@@ -89,6 +89,22 @@ class DraftEntrySchema(BaseModel):
     citation_count: int = 0
     created_at: datetime
     children: list[DraftEntrySchema] = []
+    # Structured contributions (2026-07-03): optional machine-readable fields.
+    # Never a hard gate on posting — absent on any entry predating this feature.
+    claim: str | None = None
+    stance: Literal["new", "supports", "refutes", "refines"] | None = None
+    stance_target: str | None = None
+    evidence: list[str] = []
+    # Contestable-consensus dedup: set when this draft was merged into an
+    # existing confirmed entry instead of being promoted separately.
+    merged_into: str | None = None
+
+    @field_validator("evidence", mode="before")
+    @classmethod
+    def _parse_evidence(cls, v: object) -> object:
+        if isinstance(v, str):
+            return json.loads(v or "[]")
+        return v
 
 
 DraftEntrySchema.model_rebuild()
@@ -104,6 +120,10 @@ class ConfirmedEntrySchema(BaseModel):
     citation_count: int = 0
     round_confirmed: int
     created_at: datetime
+    # Contestable-consensus: a confirmed entry may be contested (over-threshold
+    # dispute), re-affirmed back to confirmed, or retracted at termination. The
+    # row is never deleted — status is the only thing that changes (P-03).
+    status: Literal["confirmed", "contested", "retracted"] = "confirmed"
 
 
 class BidSchema(BaseModel):
@@ -156,6 +176,26 @@ class CitationSchema(BaseModel):
     cited_entry_id: str
     citing_entry_id: str | None = None
     round: int
+    # Contestable-consensus: citations require a short justification (P-02/P-03
+    # accountability). Optional on the schema only so pre-existing rows (created
+    # before this column existed) still deserialise.
+    reason: str | None = None
+    created_at: datetime
+
+
+class DisputeSchema(BaseModel):
+    """A taker's mechanical challenge of a CONFIRMED entry (contestable consensus).
+
+    Mirrors citations: one per agent per entry, crossing the same democratic
+    threshold M flips the target's ``ConfirmedEntrySchema.status`` to contested.
+    """
+
+    id: str
+    run_id: str
+    disputing_agent_id: str
+    confirmed_entry_id: str
+    reason: str
+    round: int
     created_at: datetime
 
 
@@ -180,12 +220,27 @@ class SwarmRunSchema(BaseModel):
     final_answer: str | None = None
     created_at: datetime
     completed_at: datetime | None = None
+    # Resilient runs: recorded position, so an orphaned run can resume from here.
+    phase: str | None = None
+    current_round: int | None = None
+    heartbeat_at: datetime | None = None
+    # The original SwarmRunConfig, persisted so resume uses the same knobs.
+    config: dict[str, Any] | None = None
+    # Ratified synthesis: the takers' vote on the synthesised final answer.
+    ratification: dict[str, Any] | None = None
 
     @field_validator("token_usage", mode="before")
     @classmethod
     def _parse_json(cls, v: object) -> object:
         if isinstance(v, str):
             return json.loads(v or "{}")
+        return v
+
+    @field_validator("config", "ratification", mode="before")
+    @classmethod
+    def _parse_optional_json(cls, v: object) -> object:
+        if isinstance(v, str):
+            return json.loads(v) if v else None
         return v
 
 
@@ -199,6 +254,9 @@ class SwarmFinalOutput(BaseModel):
     termination_round: int
     termination_reason: Literal["equilibrium", "max_rounds", "budget"]
     metadata: dict[str, Any] = {}
+    # Ratified synthesis: takers' approve/revise vote on ``final_answer``. None
+    # on runs predating the feature (or when ratification was skipped).
+    ratification: dict[str, Any] | None = None
 
 
 # ── SSE stream (swarm run) ────────────────────────────────────────────────────
@@ -216,6 +274,8 @@ SwarmSimStepType = Literal[
     "bb-promote",
     "bb-delete",
     "bb-mention",
+    "bb-dispute",
+    "bb-contest",
     "amendment",
     "amendment-approved",
     "amendment-rejected",
@@ -255,6 +315,7 @@ class AuditResponse(BaseModel):
     citations: list[CitationSchema] = []
     votes: list[VoteSchema] = []
     confirmed_entries: list[ConfirmedEntrySchema] = []
+    disputes: list[DisputeSchema] = []
     amendments: list[AmendmentSchema] = []
     reputation: list[ReputationSchema] = []
     final_output: SwarmFinalOutput | None = None

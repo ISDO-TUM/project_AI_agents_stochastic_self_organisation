@@ -33,7 +33,13 @@ class Synthesizer(Protocol):
     can stay LLM-free in tests: pass no synthesizer and ``final_answer`` is ``None``.
     """
 
-    async def synthesize(self, *, prompt: str, findings: list[ConfirmedEntrySchema]) -> str: ...
+    async def synthesize(
+        self,
+        *,
+        prompt: str,
+        findings: list[ConfirmedEntrySchema],
+        objections: list[str] | None = None,
+    ) -> str: ...
 
 
 # 3, not 2: the round loop starts at round 2 (round 1 is proposals + votes), so a
@@ -245,7 +251,9 @@ class TerminationEngine:
         ).scalar_one()
         return int(count) > 0
 
-    async def check_equilibrium(self, *, run_id: str, current_round: int) -> bool:
+    async def check_equilibrium(
+        self, *, run_id: str, current_round: int, status_flips: int = 0
+    ) -> bool:
         """Return true when the swarm has converged.
 
         Convergence requires *both* that the run has confirmed at least one finding
@@ -253,8 +261,15 @@ class TerminationEngine:
         ``epsilon_entropy`` new findings. The two guards below keep a cold start —
         an empty board where every round is trivially quiet — from being mistaken
         for convergence and ending the run before any proposal can be promoted.
+
+        ``status_flips`` (contestable consensus): a contest or re-affirmation this
+        round counts as activity too — it forces at least one more round of
+        deliberation rather than letting the run end on a freshly-contested finding.
         """
         if current_round < self.min_rounds:
+            return False
+
+        if status_flips > 0:
             return False
 
         # Nothing confirmed yet ⇒ the swarm has not started converging, let alone
@@ -281,18 +296,26 @@ class TerminationEngine:
         run_id: str,
         thread_id: str,
     ) -> ConfirmedEntrySchema | None:
-        """Pick the highest-cited confirmed finding for one thread."""
+        """Pick the highest-cited confirmed finding for one thread.
+
+        Excludes contested/retracted rows (contestable consensus) — a finding
+        that lost its democratic standing should not be featured as *the*
+        thread answer even while the audit-visible ``confirmed_layer`` still
+        carries it for transparency.
+        """
         row = (
             (
                 await self._db.execute(
                     text(
                         """
                         SELECT id, run_id, thread_id, source_draft_id, content,
-                               entry_type, citation_count, round_confirmed, created_at
+                               entry_type, citation_count, round_confirmed, created_at,
+                               status
                         FROM confirmed_entries
                         WHERE run_id = :run_id
                           AND thread_id = :thread_id
                           AND entry_type = 'finding'
+                          AND status = 'confirmed'
                         ORDER BY citation_count DESC, round_confirmed ASC, created_at ASC
                         LIMIT 1
                         """
@@ -322,7 +345,22 @@ class TerminationEngine:
         confirmed findings are also condensed into a single ``final_answer``. Both
         are optional so callers that only need the structured layers (e.g. the
         audit endpoint, which reads the persisted answer instead) skip the LLM call.
+
+        Contestable consensus: any entry still ``contested`` at this point never
+        gathered enough fresh citations to re-affirm, so it is retracted here —
+        the row is never deleted (P-03), only its status changes, and it stays
+        visible in ``confirmed_layer`` for audit even though it excludes itself
+        from ``final_answer`` and from ``answers`` (via ``select_final_answer``).
         """
+        await self._db.execute(
+            text(
+                "UPDATE confirmed_entries SET status = 'retracted' "
+                "WHERE run_id = :run_id AND status = 'contested'"
+            ),
+            {"run_id": run_id},
+        )
+        await self._db.commit()
+
         threads = (
             (
                 await self._db.execute(
@@ -349,7 +387,11 @@ class TerminationEngine:
 
         final_answer: str | None = None
         if synthesizer is not None and prompt is not None:
-            final_answer = await synthesizer.synthesize(prompt=prompt, findings=confirmed_layer)
+            # Only live (status='confirmed') findings feed synthesis — a
+            # contested/just-retracted entry must not shape the answer text,
+            # even though it remains visible in confirmed_layer for audit.
+            live_findings = [f for f in confirmed_layer if f.status == "confirmed"]
+            final_answer = await synthesizer.synthesize(prompt=prompt, findings=live_findings)
 
         return SwarmFinalOutput(
             run_id=run_id,
@@ -394,13 +436,17 @@ class TerminationEngine:
         await self._db.commit()
 
     async def _confirmed_layer(self, *, run_id: str) -> list[ConfirmedEntrySchema]:
+        """Every confirmed row regardless of status (audit trail — P-03: nothing
+        is ever deleted, so contested/retracted findings stay visible here even
+        though they are excluded from synthesis and per-thread ``answers``)."""
         rows = (
             (
                 await self._db.execute(
                     text(
                         """
                         SELECT id, run_id, thread_id, source_draft_id, content,
-                               entry_type, citation_count, round_confirmed, created_at
+                               entry_type, citation_count, round_confirmed, created_at,
+                               status
                         FROM confirmed_entries
                         WHERE run_id = :run_id
                         ORDER BY round_confirmed ASC, created_at ASC
@@ -475,11 +521,18 @@ class MaxRoundsTerminator:
     """
 
     async def should_terminate(
-        self, *, run_id: str, round: int, config: SwarmRunConfig, db: AsyncConnection
+        self,
+        *,
+        run_id: str,
+        round: int,
+        config: SwarmRunConfig,
+        db: AsyncConnection,
+        status_flips: int = 0,
     ) -> bool:
         return await TerminationEngine.from_config(db, config).check_equilibrium(
             run_id=run_id,
             current_round=round,
+            status_flips=status_flips,
         )
 
     async def format_output(

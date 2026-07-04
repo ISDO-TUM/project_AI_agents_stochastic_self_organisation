@@ -222,6 +222,25 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             # ECSAS: documents an agent consulted (via files()) while producing a post
             "ALTER TABLE draft_entries ADD COLUMN IF NOT EXISTS"
             " documents_used TEXT NOT NULL DEFAULT '[]'",
+            # Structured contributions: claim/stance/evidence on draft_entries
+            "ALTER TABLE draft_entries ADD COLUMN IF NOT EXISTS claim TEXT",
+            "ALTER TABLE draft_entries ADD COLUMN IF NOT EXISTS stance TEXT",
+            "ALTER TABLE draft_entries ADD COLUMN IF NOT EXISTS stance_target TEXT",
+            "ALTER TABLE draft_entries ADD COLUMN IF NOT EXISTS"
+            " evidence TEXT NOT NULL DEFAULT '[]'",
+            # Contestable consensus: citation reasons, confirmed status, dedup merge
+            "ALTER TABLE citations ADD COLUMN IF NOT EXISTS reason TEXT",
+            "ALTER TABLE confirmed_entries ADD COLUMN IF NOT EXISTS"
+            " status TEXT NOT NULL DEFAULT 'confirmed'",
+            "ALTER TABLE draft_entries ADD COLUMN IF NOT EXISTS merged_into TEXT",
+            # Resilient runs: phase/heartbeat/config columns on swarm_runs
+            "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS phase TEXT",
+            "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS current_round INTEGER",
+            "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS"
+            " heartbeat_at TIMESTAMP WITH TIME ZONE",
+            "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS config TEXT",
+            # Ratified synthesis: the takers' vote on the synthesised answer
+            "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS ratification TEXT",
         ):
             await conn.execute(text(stmt))
     elif dialect == "sqlite":
@@ -254,10 +273,51 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             ("messages", "to_agent_name", "TEXT"),
             ("swarm_runs", "final_answer", "TEXT"),
             ("draft_entries", "documents_used", "TEXT NOT NULL DEFAULT '[]'"),
+            # Structured contributions
+            ("draft_entries", "claim", "TEXT"),
+            ("draft_entries", "stance", "TEXT"),
+            ("draft_entries", "stance_target", "TEXT"),
+            ("draft_entries", "evidence", "TEXT NOT NULL DEFAULT '[]'"),
+            # Contestable consensus
+            ("citations", "reason", "TEXT"),
+            ("confirmed_entries", "status", "TEXT NOT NULL DEFAULT 'confirmed'"),
+            ("draft_entries", "merged_into", "TEXT"),
+            # Resilient runs
+            ("swarm_runs", "phase", "TEXT"),
+            ("swarm_runs", "current_round", "INTEGER"),
+            ("swarm_runs", "heartbeat_at", "DATETIME"),
+            ("swarm_runs", "config", "TEXT"),
+            # Ratified synthesis
+            ("swarm_runs", "ratification", "TEXT"),
         ):
             result = await conn.execute(text(f"PRAGMA table_info({table})"))
             if col not in {row[1] for row in result.fetchall()}:
                 await conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {col} {definition}"))
+
+
+# Orphaned "running" runs (crash / redeploy mid-flight) are flipped to
+# 'interrupted' once their heartbeat goes stale, so no run is immortal.
+STALE_RUN_MINUTES = 10
+
+
+async def reap_stale_runs(conn: AsyncConnection) -> int:
+    """Flip orphaned 'running' runs (stale heartbeat or none at all) to
+    'interrupted' so no run is immortal after a crash/deploy. Returns count.
+
+    At boot no legitimate run can be mid-flight in *this* process, but another
+    replica could still be running one — the heartbeat cutoff, not boot itself,
+    is the guard, so this is safe to call unconditionally from ``init_db``.
+    """
+    cutoff = datetime.now(UTC) - timedelta(minutes=STALE_RUN_MINUTES)
+    result = await conn.execute(
+        text(
+            "UPDATE swarm_runs SET status = 'interrupted' "
+            "WHERE status = 'running' "
+            "AND (heartbeat_at IS NULL OR heartbeat_at < :cutoff)"
+        ),
+        {"cutoff": cutoff},
+    )
+    return result.rowcount or 0
 
 
 async def init_db() -> None:
@@ -276,10 +336,12 @@ async def init_db() -> None:
     async with _engine.begin() as conn:
         await conn.run_sync(metadata.create_all)
         await _apply_column_migrations(conn)
+        await reap_stale_runs(conn)
 
 
 async def close_db() -> None:
     """Dispose the engine and its connection pool.
+
 
     Safe to call even if the engine was never initialised.
     """

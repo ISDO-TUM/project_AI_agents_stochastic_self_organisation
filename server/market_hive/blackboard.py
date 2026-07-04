@@ -21,6 +21,29 @@ from server.market_hive.schemas import (
 
 _ZERO_EMBEDDING = json.dumps([0.0] * 1536)
 
+# Promotion-time semantic dedup (contestable consensus): a draft crossing the
+# citation threshold that is near-identical to an already-confirmed finding is
+# merged into it instead of promoted separately, so the Confirmed layer doesn't
+# accumulate paraphrased duplicates of the same point.
+DEDUP_EPS = 0.92
+
+
+def format_entries_digest(entries: list[DraftEntrySchema]) -> str:
+    """One consistent rendering for board excerpts.
+
+    Used both by the ``read_blackboard`` tool and by server-side prompt
+    injection (rounds RAG context), so agents see the same format regardless of
+    how the content reached them.
+    """
+    if not entries:
+        return "No visible entries found."
+    lines = [
+        f"[{e.id[:8]}] {e.author_name} · Round {e.round} · {e.entry_type}"
+        f" · ♡{e.citation_count}\n{e.content[:300]}"
+        for e in entries
+    ]
+    return "\n\n---\n\n".join(lines)
+
 
 def _now() -> str:
     return datetime.now(UTC).isoformat()
@@ -97,17 +120,27 @@ class Blackboard:
         reply_to: str | None = None,
         mention_agents: list[str] | None = None,
         round_id: int | None = None,
+        claim: str | None = None,
+        stance: str | None = None,
+        stance_target: str | None = None,
+        evidence: list[str] | None = None,
     ) -> str:
         """Insert a draft entry. Returns the new entry_id.
 
         When mention_agents is non-empty a companion system entry is also
         inserted so the mention is visible as a card on the blackboard.
+
+        ``claim``/``stance``/``stance_target``/``evidence`` are the structured-
+        contributions fields (all optional — a post with none of them behaves
+        exactly as before). When ``claim`` is set, the embedding is computed
+        from ``claim + content`` so retrieval favors the stated thesis.
         """
         # The LLM copies the 8-char display id back into reply_to; resolve it to
         # a real id (or drop the linkage) so a stale/truncated id can't FK-violate.
         reply_to = await self._resolve_entry_id(run_id, reply_to)
         entry_id = str(uuid.uuid4())
-        vecs = await embed_texts([content])
+        embed_input = f"{claim}\n{content}" if claim else content
+        vecs = await embed_texts([embed_input])
         embedding = json.dumps(vecs[0]) if vecs else _ZERO_EMBEDDING
         await self._db.execute(
             text(
@@ -115,10 +148,12 @@ class Blackboard:
                 INSERT INTO draft_entries
                     (id, run_id, thread_id, round, author_id, entry_type,
                      content, content_embedding, reply_to, mention_agents,
-                     is_visible, last_cited_round)
+                     is_visible, last_cited_round, claim, stance, stance_target,
+                     evidence)
                 VALUES (:id, :run_id, :thread_id, :round, :author_id, :entry_type,
                         :content, :embedding, :reply_to, :mention_agents,
-                        :is_visible, :round)
+                        :is_visible, :round, :claim, :stance, :stance_target,
+                        :evidence)
                 """
             ),
             {
@@ -133,6 +168,10 @@ class Blackboard:
                 "reply_to": reply_to,
                 "mention_agents": json.dumps(mention_agents or []),
                 "is_visible": True,
+                "claim": claim,
+                "stance": stance,
+                "stance_target": stance_target,
+                "evidence": json.dumps(evidence or []),
             },
         )
         if mention_agents:
@@ -359,13 +398,24 @@ class Blackboard:
         entry_ids: list[str],
         round: int,
         citing_entry_id: str | None = None,
+        reasons: list[str] | None = None,
     ) -> dict[str, int]:
-        """Record citation endorsements. Skips self-citations server-side."""
+        """Record citation endorsements. Skips self-citations server-side.
+
+        ``reasons`` (contestable consensus, P-02/P-03 accountability) is parallel
+        to ``entry_ids``; when provided each citation row stores the caller's
+        justification. Optional so existing callers keep working unchanged.
+        """
         cited = 0
         skipped_self = 0
-        # De-duplicate while preserving order: an agent citing the same entry twice
-        # in one call would otherwise trip the UNIQUE(agent, entry, round) constraint.
-        for raw_id in dict.fromkeys(entry_ids):
+        reasons = reasons or []
+        # Pair ids with reasons before de-duplicating — a plain dict.fromkeys on
+        # entry_ids alone would discard which reason belongs to which id.
+        paired: dict[str, str | None] = {}
+        for i, raw_id in enumerate(entry_ids):
+            if raw_id not in paired:
+                paired[raw_id] = reasons[i] if i < len(reasons) else None
+        for raw_id, reason in paired.items():
             # The LLM cites the 8-char display id; resolve it so a valid endorsement
             # is not silently dropped (and a stale id is skipped, not FK-violated).
             entry_id = await self._resolve_entry_id(run_id, raw_id)
@@ -392,9 +442,9 @@ class Blackboard:
                             """
                             INSERT INTO citations
                                 (id, run_id, citing_agent_id, cited_entry_id,
-                                 citing_entry_id, round)
+                                 citing_entry_id, round, reason)
                             VALUES (:id, :run_id, :citing_agent_id, :cited_entry_id,
-                                    :citing_entry_id, :round)
+                                    :citing_entry_id, :round, :reason)
                             """
                         ),
                         {
@@ -404,6 +454,7 @@ class Blackboard:
                             "cited_entry_id": entry_id,
                             "citing_entry_id": citing_entry_id,
                             "round": round,
+                            "reason": reason,
                         },
                     )
                     await self._db.execute(
@@ -458,7 +509,12 @@ class Blackboard:
         run_id: str,
         thread_id: str | None = None,
     ) -> list[ConfirmedEntrySchema]:
-        """Return confirmed entries (anchors + promoted findings)."""
+        """Return confirmed entries (anchors + promoted findings).
+
+        Includes contested/retracted rows too (auditability by construction —
+        the client decides how to render each status); callers that need only
+        the currently-live layer filter on ``status == "confirmed"``.
+        """
         thread_clause = "AND thread_id = :thread_id" if thread_id is not None else ""
         params: dict[str, Any] = {"run_id": run_id}
         if thread_id is not None:
@@ -468,7 +524,7 @@ class Blackboard:
             text(
                 f"""
                 SELECT id, run_id, thread_id, source_draft_id, content,
-                       entry_type, citation_count, round_confirmed, created_at
+                       entry_type, citation_count, round_confirmed, created_at, status
                 FROM confirmed_entries
                 WHERE run_id = :run_id {thread_clause}
                 ORDER BY round_confirmed ASC, created_at ASC
@@ -480,6 +536,54 @@ class Blackboard:
         return [ConfirmedEntrySchema(**dict(row)) for row in rows]
 
     # ── Task 6 methods ────────────────────────────────────────────────────
+
+    async def _find_dedup_target(
+        self, *, run_id: str, thread_id: str, candidate_embedding: str | None
+    ) -> str | None:
+        """Return an existing non-retracted confirmed entry's id in this thread
+        whose source draft embedding is >= DEDUP_EPS cosine-similar to the
+        candidate, or None (no match, or embeddings unavailable — dedup is
+        skipped entirely rather than ever blocking promotion)."""
+        if not candidate_embedding:
+            return None
+        try:
+            cand_vec = json.loads(candidate_embedding)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not cand_vec or not any(cand_vec):
+            return None
+
+        rows = (
+            (
+                await self._db.execute(
+                    text(
+                        """
+                        SELECT ce.id AS id, de.content_embedding AS content_embedding
+                        FROM confirmed_entries ce
+                        JOIN draft_entries de ON de.id = ce.source_draft_id
+                        WHERE ce.run_id = :run_id AND ce.thread_id = :thread_id
+                          AND ce.status != 'retracted'
+                        """
+                    ),
+                    {"run_id": run_id, "thread_id": thread_id},
+                )
+            )
+            .mappings()
+            .fetchall()
+        )
+        for row in rows:
+            raw = row["content_embedding"]
+            if not raw:
+                continue
+            try:
+                existing_vec = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                continue
+            if not existing_vec or not any(existing_vec):
+                continue
+            if cosine(cand_vec, existing_vec) >= DEDUP_EPS:
+                return str(row["id"])
+        return None
 
     async def check_promotions(
         self,
@@ -493,7 +597,16 @@ class Blackboard:
         M = max(1, n_takers // 3 + 1) per thread, where n_takers is provided
         by the caller (auction.self_select result) rather than inferred from
         poster count. Already-promoted entries are skipped.
-        Returns the list of newly promoted ConfirmedEntry objects.
+
+        Promotion-time semantic dedup (contestable consensus): a candidate
+        whose embedding is near-identical (cosine >= DEDUP_EPS) to an already-
+        confirmed, non-retracted entry in the same thread is merged into it
+        instead of promoted separately — its citers reinforce the existing
+        finding's ``citation_count`` and ``draft_entries.merged_into`` records
+        the merge. Offline/missing embeddings skip the dedup check (never a
+        promotion blocker).
+
+        Returns the list of newly promoted (non-merged) ConfirmedEntry objects.
         """
         result = await self._db.execute(
             text(
@@ -508,7 +621,7 @@ class Blackboard:
             text(
                 """
                 SELECT de.id, de.thread_id, de.author_id, de.content,
-                       de.entry_type, de.round, de.created_at,
+                       de.content_embedding, de.entry_type, de.round, de.created_at,
                        COUNT(DISTINCT c.citing_agent_id) AS distinct_citers
                 FROM draft_entries de
                 JOIN citations c
@@ -530,40 +643,357 @@ class Blackboard:
                 continue
             n = (participants_by_thread or {}).get(row["thread_id"], 1)
             threshold = max(1, n // 3 + 1)
-            if row["distinct_citers"] >= threshold:
-                confirmed_id = str(uuid.uuid4())
+            if row["distinct_citers"] < threshold:
+                continue
+
+            merge_target = await self._find_dedup_target(
+                run_id=run_id,
+                thread_id=row["thread_id"],
+                candidate_embedding=row["content_embedding"],
+            )
+            if merge_target is not None:
+                await self._db.execute(
+                    text("UPDATE draft_entries SET merged_into = :cid WHERE id = :eid"),
+                    {"cid": merge_target, "eid": entry_id},
+                )
+                await self._db.execute(
+                    text(
+                        "UPDATE confirmed_entries SET citation_count = citation_count + :extra "
+                        "WHERE id = :cid"
+                    ),
+                    {"extra": row["distinct_citers"], "cid": merge_target},
+                )
                 await self._db.execute(
                     text(
                         """
-                        INSERT INTO confirmed_entries
-                            (id, run_id, thread_id, source_draft_id, content,
-                             entry_type, citation_count, round_confirmed)
-                        VALUES (:id, :run_id, :thread_id, :source_draft_id, :content,
-                                'finding', :citation_count, :round_confirmed)
+                        INSERT INTO draft_entries
+                            (id, run_id, thread_id, round, author_id, entry_type,
+                             content, content_embedding, is_visible, last_cited_round)
+                        VALUES (:id, :run_id, :thread_id, :round, :author_id, 'system',
+                                :content, :embedding, :is_visible, :round)
                         """
                     ),
                     {
-                        "id": confirmed_id,
+                        "id": str(uuid.uuid4()),
                         "run_id": run_id,
                         "thread_id": row["thread_id"],
-                        "source_draft_id": entry_id,
-                        "content": row["content"],
-                        "citation_count": row["distinct_citers"],
-                        "round_confirmed": current_round,
+                        "round": current_round,
+                        "author_id": row["author_id"],
+                        "content": "merged into an existing confirmed finding — reinforcing it",
+                        "embedding": _ZERO_EMBEDDING,
+                        "is_visible": True,
                     },
                 )
-                confirmed_result = await self._db.execute(
-                    text("SELECT * FROM confirmed_entries WHERE id = :id"),
-                    {"id": confirmed_id},
-                )
-                confirmed_row = confirmed_result.mappings().fetchone()
-                if confirmed_row is None:
-                    continue
-                newly_promoted.append(ConfirmedEntrySchema(**dict(confirmed_row)))
+                await self._db.commit()
+                continue
+
+            confirmed_id = str(uuid.uuid4())
+            await self._db.execute(
+                text(
+                    """
+                    INSERT INTO confirmed_entries
+                        (id, run_id, thread_id, source_draft_id, content,
+                         entry_type, citation_count, round_confirmed)
+                    VALUES (:id, :run_id, :thread_id, :source_draft_id, :content,
+                            'finding', :citation_count, :round_confirmed)
+                    """
+                ),
+                {
+                    "id": confirmed_id,
+                    "run_id": run_id,
+                    "thread_id": row["thread_id"],
+                    "source_draft_id": entry_id,
+                    "content": row["content"],
+                    "citation_count": row["distinct_citers"],
+                    "round_confirmed": current_round,
+                },
+            )
+            confirmed_result = await self._db.execute(
+                text("SELECT * FROM confirmed_entries WHERE id = :id"),
+                {"id": confirmed_id},
+            )
+            confirmed_row = confirmed_result.mappings().fetchone()
+            if confirmed_row is None:
+                continue
+            newly_promoted.append(ConfirmedEntrySchema(**dict(confirmed_row)))
 
         if newly_promoted:
             await self._db.commit()
         return newly_promoted
+
+    # ── Contestable consensus: dispute / contest / re-affirm ───────────────
+
+    async def dispute(
+        self,
+        *,
+        run_id: str,
+        disputing_agent_id: str,
+        confirmed_entry_id: str,
+        reason: str,
+        round: int,
+    ) -> dict[str, Any]:
+        """Record a mechanical challenge against a CONFIRMED entry.
+
+        Rejects: a target that does not exist or is not currently 'confirmed'
+        (``{"ok": False, "why": "not disputable"}``), self-dispute (the
+        confirmed entry's source draft was authored by the disputer), and a
+        second dispute from the same agent on the same entry (UNIQUE). Crossing
+        the democratic threshold is decided separately by ``contest_check`` at
+        end-of-round — this method only records the challenge.
+        """
+        row = (
+            (
+                await self._db.execute(
+                    text(
+                        """
+                        SELECT ce.status AS status, de.author_id AS author_id
+                        FROM confirmed_entries ce
+                        LEFT JOIN draft_entries de ON de.id = ce.source_draft_id
+                        WHERE ce.id = :id AND ce.run_id = :run_id
+                        """
+                    ),
+                    {"id": confirmed_entry_id, "run_id": run_id},
+                )
+            )
+            .mappings()
+            .fetchone()
+        )
+        if row is None or row["status"] != "confirmed":
+            return {"ok": False, "why": "not disputable"}
+        if row["author_id"] is not None and row["author_id"] == disputing_agent_id:
+            return {"ok": False, "why": "cannot dispute your own confirmed finding"}
+        try:
+            async with self._db.begin_nested():
+                await self._db.execute(
+                    text(
+                        """
+                        INSERT INTO disputes
+                            (id, run_id, disputing_agent_id, confirmed_entry_id, reason, round)
+                        VALUES
+                            (:id, :run_id, :disputing_agent_id, :confirmed_entry_id,
+                             :reason, :round)
+                        """
+                    ),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "run_id": run_id,
+                        "disputing_agent_id": disputing_agent_id,
+                        "confirmed_entry_id": confirmed_entry_id,
+                        "reason": reason,
+                        "round": round,
+                    },
+                )
+            await self._db.commit()
+            return {"ok": True}
+        except IntegrityError:
+            await self._db.rollback()
+            return {"ok": False, "why": "already disputed"}
+
+    async def contest_check(
+        self,
+        *,
+        run_id: str,
+        current_round: int,
+        participants_by_thread: dict[str, int] | None = None,
+    ) -> list[ConfirmedEntrySchema]:
+        """Flip over-threshold disputed CONFIRMED entries to 'contested'.
+
+        Threshold M mirrors promotion: ``max(1, n_thread_participants // 3 + 1)``
+        distinct disputers. Each flip also posts a system note on the board (the
+        status column alone would be invisible to the agents) and is returned
+        so the caller can emit a ``bb-contest`` step and count it toward
+        equilibrium activity (a contest forces at least one more round).
+        """
+        rows = (
+            (
+                await self._db.execute(
+                    text(
+                        """
+                        SELECT id, thread_id FROM confirmed_entries
+                        WHERE run_id = :run_id AND status = 'confirmed'
+                        """
+                    ),
+                    {"run_id": run_id},
+                )
+            )
+            .mappings()
+            .fetchall()
+        )
+
+        flipped: list[ConfirmedEntrySchema] = []
+        for row in rows:
+            entry_id = row["id"]
+            thread_id = row["thread_id"]
+            dispute_rows = (
+                (
+                    await self._db.execute(
+                        text(
+                            "SELECT DISTINCT disputing_agent_id, reason FROM disputes "
+                            "WHERE confirmed_entry_id = :id"
+                        ),
+                        {"id": entry_id},
+                    )
+                )
+                .mappings()
+                .fetchall()
+            )
+            distinct_disputers = {d["disputing_agent_id"] for d in dispute_rows}
+            if not distinct_disputers:
+                continue
+            n = (participants_by_thread or {}).get(thread_id, 1)
+            threshold = max(1, n // 3 + 1)
+            if len(distinct_disputers) < threshold:
+                continue
+
+            await self._db.execute(
+                text("UPDATE confirmed_entries SET status = 'contested' WHERE id = :id"),
+                {"id": entry_id},
+            )
+            reasons_excerpt = "; ".join(d["reason"][:80] for d in dispute_rows[:3])
+            await self._db.execute(
+                text(
+                    """
+                    INSERT INTO draft_entries
+                        (id, run_id, thread_id, round, author_id, entry_type,
+                         content, content_embedding, is_visible, last_cited_round)
+                    VALUES (:id, :run_id, :thread_id, :round, :author_id, 'system',
+                            :content, :embedding, :is_visible, :round)
+                    """
+                ),
+                {
+                    "id": str(uuid.uuid4()),
+                    "run_id": run_id,
+                    "thread_id": thread_id,
+                    "round": current_round,
+                    "author_id": next(iter(distinct_disputers)),
+                    "content": f"⚠ finding contested: {reasons_excerpt}",
+                    "embedding": _ZERO_EMBEDDING,
+                    "is_visible": True,
+                },
+            )
+            refreshed = (
+                (
+                    await self._db.execute(
+                        text("SELECT * FROM confirmed_entries WHERE id = :id"), {"id": entry_id}
+                    )
+                )
+                .mappings()
+                .fetchone()
+            )
+            if refreshed is not None:
+                flipped.append(ConfirmedEntrySchema(**dict(refreshed)))
+
+        if flipped:
+            await self._db.commit()
+        return flipped
+
+    async def reaffirm_check(
+        self,
+        *,
+        run_id: str,
+        participants_by_thread: dict[str, int] | None = None,
+    ) -> list[ConfirmedEntrySchema]:
+        """Flip 'contested' entries back to 'confirmed' via new citations.
+
+        A contested entry returns to confirmed once its source draft gains
+        ``>= M`` distinct *new* citers (``citations.round`` after the round it
+        was contested in) — the same democratic threshold that promoted and
+        then contested it, so no single actor decides the outcome either way.
+        """
+        rows = (
+            (
+                await self._db.execute(
+                    text(
+                        """
+                        SELECT id, thread_id, source_draft_id
+                        FROM confirmed_entries
+                        WHERE run_id = :run_id AND status = 'contested'
+                          AND source_draft_id IS NOT NULL
+                        """
+                    ),
+                    {"run_id": run_id},
+                )
+            )
+            .mappings()
+            .fetchall()
+        )
+
+        reaffirmed: list[ConfirmedEntrySchema] = []
+        for row in rows:
+            entry_id = row["id"]
+            thread_id = row["thread_id"]
+            source_draft_id = row["source_draft_id"]
+            contest_round_raw = (
+                await self._db.execute(
+                    text("SELECT MAX(round) FROM disputes WHERE confirmed_entry_id = :id"),
+                    {"id": entry_id},
+                )
+            ).scalar()
+            contest_round = int(contest_round_raw) if contest_round_raw is not None else 0
+
+            new_citers = (
+                await self._db.execute(
+                    text(
+                        """
+                        SELECT COUNT(DISTINCT citing_agent_id) FROM citations
+                        WHERE cited_entry_id = :source_draft_id AND round > :contest_round
+                        """
+                    ),
+                    {"source_draft_id": source_draft_id, "contest_round": contest_round},
+                )
+            ).scalar_one()
+            n = (participants_by_thread or {}).get(thread_id, 1)
+            threshold = max(1, n // 3 + 1)
+            if int(new_citers) < threshold:
+                continue
+
+            await self._db.execute(
+                text("UPDATE confirmed_entries SET status = 'confirmed' WHERE id = :id"),
+                {"id": entry_id},
+            )
+            author_id = (
+                await self._db.execute(
+                    text("SELECT author_id FROM draft_entries WHERE id = :id"),
+                    {"id": source_draft_id},
+                )
+            ).scalar()
+            if author_id is not None:
+                await self._db.execute(
+                    text(
+                        """
+                        INSERT INTO draft_entries
+                            (id, run_id, thread_id, round, author_id, entry_type,
+                             content, content_embedding, is_visible, last_cited_round)
+                        VALUES (:id, :run_id, :thread_id, :round, :author_id, 'system',
+                                :content, :embedding, :is_visible, :round)
+                        """
+                    ),
+                    {
+                        "id": str(uuid.uuid4()),
+                        "run_id": run_id,
+                        "thread_id": thread_id,
+                        "round": contest_round + 1,
+                        "author_id": author_id,
+                        "content": "✓ contested finding re-affirmed by new citations",
+                        "embedding": _ZERO_EMBEDDING,
+                        "is_visible": True,
+                    },
+                )
+            refreshed = (
+                (
+                    await self._db.execute(
+                        text("SELECT * FROM confirmed_entries WHERE id = :id"), {"id": entry_id}
+                    )
+                )
+                .mappings()
+                .fetchone()
+            )
+            if refreshed is not None:
+                reaffirmed.append(ConfirmedEntrySchema(**dict(refreshed)))
+
+        if reaffirmed:
+            await self._db.commit()
+        return reaffirmed
 
     async def soft_delete_stale(
         self,

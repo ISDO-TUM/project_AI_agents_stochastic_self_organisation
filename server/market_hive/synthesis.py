@@ -67,11 +67,25 @@ def fallback_answer(findings: list[ConfirmedEntrySchema]) -> str:
     return " ".join(f.content.strip() for f in ranked[:3] if f.content.strip()) or NO_ANSWER
 
 
-def _user_prompt(prompt: str, findings: list[ConfirmedEntrySchema]) -> str:
+def _user_prompt(
+    prompt: str,
+    findings: list[ConfirmedEntrySchema],
+    *,
+    objections: list[str] | None = None,
+) -> str:
     block = "\n".join(f"- {f.content.strip()}" for f in _ranked(findings)[:_MAX_FINDINGS])
+    objection_block = (
+        "\n\nThe takers reviewed this draft and objected: "
+        + "; ".join(objections)
+        + ". Revise to address these objections without inventing content beyond "
+        "the confirmed findings."
+        if objections
+        else ""
+    )
     return (
         f"User request:\n{prompt}\n\n"
-        f"Confirmed findings (most-endorsed first):\n{block}\n\n"
+        f"Confirmed findings (most-endorsed first):\n{block}"
+        f"{objection_block}\n\n"
         "Write the brief final answer to the user's request."
     )
 
@@ -79,7 +93,15 @@ def _user_prompt(prompt: str, findings: list[ConfirmedEntrySchema]) -> str:
 class FallbackAnswerSynthesizer:
     """No-LLM synthesizer: deterministic join of the confirmed findings."""
 
-    async def synthesize(self, *, prompt: str, findings: list[ConfirmedEntrySchema]) -> str:
+    async def synthesize(
+        self,
+        *,
+        prompt: str,
+        findings: list[ConfirmedEntrySchema],
+        objections: list[str] | None = None,
+    ) -> str:
+        # Deterministic join has no revision mechanism — objections are accepted
+        # for interface parity with AnswerSynthesizer but have nothing to act on.
         return fallback_answer(findings)
 
 
@@ -97,15 +119,26 @@ class AnswerSynthesizer:
         self._model = model
         self._timeout = timeout
 
-    async def synthesize(self, *, prompt: str, findings: list[ConfirmedEntrySchema]) -> str:
-        """One LLM call → brief answer. Falls back to the joiner on empty/failure."""
+    async def synthesize(
+        self,
+        *,
+        prompt: str,
+        findings: list[ConfirmedEntrySchema],
+        objections: list[str] | None = None,
+    ) -> str:
+        """One LLM call → brief answer. Falls back to the joiner on empty/failure.
+
+        ``objections`` (ratified synthesis): when the takers rejected a prior
+        draft, their reasons are appended to the prompt so the revision
+        specifically addresses them rather than starting from scratch.
+        """
         findings = _findings_only(findings)
         if not findings:
             return NO_ANSWER
         try:
             response, _ = await asyncio.wait_for(
                 call_agent(
-                    _user_prompt(prompt, findings),
+                    _user_prompt(prompt, findings, objections=objections),
                     provider=self._provider,
                     model=self._model,
                     system_prompt=_SYSTEM_PROMPT,

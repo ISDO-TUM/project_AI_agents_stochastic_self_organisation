@@ -24,7 +24,18 @@ from server.market_hive.auction import AuctionEngine
 from server.market_hive.blackboard import Blackboard
 from server.market_hive.orchestrator import AgentRunner, _default_agent_runner, run_swarm
 from server.market_hive.schemas import SimulationStep, SwarmRunConfig
-from server.market_hive.tools import PostToBlackboardInput, PostToBlackboardTool
+from server.market_hive.tools import (
+    ApproveSynthesisInput,
+    ApproveSynthesisTool,
+    CiteInput,
+    CiteTool,
+    DisputeInput,
+    DisputeTool,
+    PostToBlackboardInput,
+    PostToBlackboardTool,
+    ReviseSynthesisInput,
+    ReviseSynthesisTool,
+)
 from server.schemas import ToolCall
 
 
@@ -792,3 +803,214 @@ async def test_observer_trust_decremented_after_run(db: AsyncConnection) -> None
         score, runs = trust
         assert score < 0.5
         assert runs == 0
+
+
+# ── Tool-level unit tests: structured posts, citation cap, disputes,
+#    ratification (contestable-consensus / structured-contributions /
+#    ratified-synthesis) ────────────────────────────────────────────────────
+
+
+async def test_post_with_structured_fields_persists_them(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    tool = PostToBlackboardTool()
+    result = await tool.execute(
+        PostToBlackboardInput(
+            content="Full analysis of the pricing clause.",
+            entry_type="proposal",
+            thread_id="t1",
+            claim="§4.2 is an unenforceable penalty",
+            evidence=["contract.txt"],
+        ),
+        {
+            "db": db,
+            "run_id": "r1",
+            "agent_id": "a1",
+            "round": 1,
+            "files": {"contract.txt": "…"},
+        },
+    )
+    assert "entry_id" in result and "warning" not in result
+    row = (
+        await db.execute(
+            text("SELECT claim, evidence FROM draft_entries WHERE entry_type='proposal'")
+        )
+    ).mappings().fetchone()
+    assert row is not None
+    assert row["claim"] == "§4.2 is an unenforceable penalty"
+    assert json.loads(row["evidence"]) == ["contract.txt"]
+
+
+async def test_refutes_without_target_rejected(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    tool = PostToBlackboardTool()
+    result = await tool.execute(
+        PostToBlackboardInput(
+            content="x", entry_type="reply", thread_id="t1", reply_to="p1", stance="refutes"
+        ),
+        {"db": db, "run_id": "r1", "agent_id": "a1", "round": 2, "files": {}},
+    )
+    assert "error" in result
+    n = (await db.execute(text("SELECT COUNT(*) FROM draft_entries"))).scalar_one()
+    assert n == 0
+
+
+async def test_unknown_evidence_dropped_with_warning(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    tool = PostToBlackboardTool()
+    result = await tool.execute(
+        PostToBlackboardInput(
+            content="x",
+            entry_type="proposal",
+            thread_id="t1",
+            evidence=["contract.txt", "ghost.pdf"],
+        ),
+        {
+            "db": db,
+            "run_id": "r1",
+            "agent_id": "a1",
+            "round": 1,
+            "files": {"contract.txt": "…"},
+        },
+    )
+    assert "entry_id" in result and "ghost.pdf" in result and "warning" in result
+    row = (await db.execute(text("SELECT evidence FROM draft_entries"))).mappings().fetchone()
+    assert row is not None
+    assert json.loads(row["evidence"]) == ["contract.txt"]
+
+
+async def test_refutes_own_entry_rejected(db: AsyncConnection) -> None:
+    """Refuting your own entry is meaningless — rejected, only the original persists."""
+    await _insert_agent(db, "a1", "Alpha")
+    tool = PostToBlackboardTool()
+    first = await tool.execute(
+        PostToBlackboardInput(content="original claim", entry_type="proposal", thread_id="t1"),
+        {"db": db, "run_id": "r1", "agent_id": "a1", "round": 1, "files": {}},
+    )
+    entry_id = json.loads(first)["entry_id"]
+    result = await tool.execute(
+        PostToBlackboardInput(
+            content="self-refutation",
+            entry_type="reply",
+            thread_id="t1",
+            reply_to=entry_id,
+            stance="refutes",
+            stance_target=entry_id,
+        ),
+        {"db": db, "run_id": "r1", "agent_id": "a1", "round": 2, "files": {}},
+    )
+    assert "error" in result
+    n = (await db.execute(text("SELECT COUNT(*) FROM draft_entries"))).scalar_one()
+    assert n == 1
+
+
+async def test_cite_requires_reasons(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    tool = CiteTool()
+    result = await tool.execute(
+        CiteInput(entry_ids=["e1"], reasons=[]),
+        {"db": db, "run_id": "r1", "agent_id": "a1", "round": 2},
+    )
+    assert "error" in result
+    n = (await db.execute(text("SELECT COUNT(*) FROM citations"))).scalar_one()
+    assert n == 0
+
+
+async def _seed_citable_entries(
+    db: AsyncConnection, *, run_id: str, thread_id: str, author: str, count: int
+) -> list[str]:
+    bb = Blackboard(db)
+    return [
+        await bb.post(
+            run_id=run_id,
+            thread_id=thread_id,
+            author_id=author,
+            content=f"entry {i}",
+            entry_type="proposal",
+            round=1,
+        )
+        for i in range(count)
+    ]
+
+
+async def test_cite_cap_skips_excess(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+    ids = await _seed_citable_entries(db, run_id="r1", thread_id="t1", author="a2", count=5)
+    tool = CiteTool()
+    result = await tool.execute(
+        CiteInput(entry_ids=ids, reasons=[f"builds on {i}" for i in range(5)]),
+        {"db": db, "run_id": "r1", "agent_id": "a1", "round": 2},
+    )
+    assert '"cited": 3' in result and "cap" in result
+    n = (await db.execute(text("SELECT COUNT(*) FROM citations"))).scalar_one()
+    assert n == 3
+    reasons = (await db.execute(text("SELECT reason FROM citations"))).scalars().all()
+    assert all(r for r in reasons)
+
+
+async def test_cite_cap_counts_prior_calls_this_round(db: AsyncConnection) -> None:
+    """A second cite() call in the same round cannot bypass the per-round cap —
+    the tool counts what already landed before deciding how much of a later
+    list still fits."""
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+    ids = await _seed_citable_entries(db, run_id="r1", thread_id="t1", author="a2", count=4)
+    tool = CiteTool()
+    ctx = {"db": db, "run_id": "r1", "agent_id": "a1", "round": 2}
+    first = await tool.execute(CiteInput(entry_ids=ids[:2], reasons=["r0", "r1"]), ctx)
+    assert '"cited": 2' in first and "cap" not in first
+    second = await tool.execute(CiteInput(entry_ids=ids[2:], reasons=["r2", "r3"]), ctx)
+    assert '"cited": 1' in second and "cap" in second
+    n = (await db.execute(text("SELECT COUNT(*) FROM citations"))).scalar_one()
+    assert n == 3
+
+
+async def test_dispute_tool_rejects_missing_target(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    tool = DisputeTool()
+    result = await tool.execute(
+        DisputeInput(entry_id="nonexistent", reason="no evidence for this"),
+        {"db": db, "run_id": "r1", "agent_id": "a1", "round": 3},
+    )
+    assert '"ok": false' in result
+
+
+async def test_dispute_tool_records_valid_dispute(db: AsyncConnection) -> None:
+    """post -> cite to M=1 -> promote -> dispute, all through real tool/Blackboard calls."""
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+    run_id, thread_id = "r1", "t1"
+    bb = Blackboard(db)
+    entry_id = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id="a1",
+        content="finding",
+        entry_type="proposal",
+        round=1,
+    )
+    await bb.cite(run_id=run_id, citing_agent_id="a2", entry_ids=[entry_id], round=2)
+    promoted = await bb.check_promotions(
+        run_id=run_id, current_round=2, participants_by_thread={thread_id: 2}
+    )
+    assert len(promoted) == 1
+
+    tool = DisputeTool()
+    result = await tool.execute(
+        DisputeInput(entry_id=promoted[0].id, reason="contradicted by later evidence"),
+        {"db": db, "run_id": run_id, "agent_id": "a2", "round": 3},
+    )
+    assert '"ok": true' in result
+
+
+async def test_ratification_tools_record_votes() -> None:
+    votes: dict[str, str | None] = {}
+    ok = await ApproveSynthesisTool().execute(
+        ApproveSynthesisInput(), {"agent_id": "a1", "ratification_votes": votes}
+    )
+    rev = await ReviseSynthesisTool().execute(
+        ReviseSynthesisInput(reason="misses the §7.1 pricing risk"),
+        {"agent_id": "a2", "ratification_votes": votes},
+    )
+    assert '"ok": true' in ok and '"ok": true' in rev
+    assert votes == {"a1": None, "a2": "misses the §7.1 pricing risk"}
