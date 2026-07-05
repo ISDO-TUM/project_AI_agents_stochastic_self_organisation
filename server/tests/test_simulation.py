@@ -1544,11 +1544,12 @@ async def test_swarm_run_with_no_agents_returns_422(client: AsyncClient) -> None
 
 
 @pytest.mark.asyncio
-async def test_delete_agent_clears_swarm_data(client: AsyncClient) -> None:
-    """An agent that joined a swarm run can still be deleted (re-import flow).
+async def test_delete_agent_preserves_swarm_data(client: AsyncClient) -> None:
+    """Deleting an agent that joined a swarm run leaves the run's history intact.
 
-    The swarm tables reference agents without ON DELETE CASCADE, so deletion must
-    clear the run data first rather than failing on the foreign key.
+    The swarm tables carry no foreign keys to agents (their id columns are
+    denormalised snapshots), so the audit trail survives the canvas being
+    cleared — mirroring how topology trial history is preserved.
     """
     from sqlalchemy import text
 
@@ -1572,8 +1573,8 @@ async def test_delete_agent_clears_swarm_data(client: AsyncClient) -> None:
     async with get_engine().connect() as conn:
         bids = (await conn.execute(text("SELECT COUNT(*) FROM bids"))).scalar_one()
         runs = (await conn.execute(text("SELECT COUNT(*) FROM swarm_runs"))).scalar_one()
-    assert bids == 0
-    assert runs == 0
+    assert bids == 1
+    assert runs == 1
 
 
 @pytest.mark.asyncio
@@ -1724,3 +1725,62 @@ async def test_run_metrics_endpoint_returns_snapshot_after_termination(client: A
 async def test_run_metrics_endpoint_404s_for_unknown_run(client: AsyncClient) -> None:
     resp = await client.get("/api/simulation/does-not-exist/metrics")
     assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_swarm_run_creates_linked_experiment_and_trial(client: AsyncClient) -> None:
+    """A swarm run joins the shared history: one experiment + one trial per click,
+    with the ids handed to the orchestrator config for linkage."""
+    from sqlalchemy import text
+
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    seen_configs: list[Any] = []
+
+    def fake_run_swarm(config: Any, db: Any, **kwargs: Any) -> AsyncIterator[SimulationStep]:
+        seen_configs.append(config)
+
+        async def stream() -> AsyncIterator[SimulationStep]:
+            yield SimulationStep(type="system", msg="Run started")
+
+        return stream()
+
+    with patch("server.routes.simulation.run_swarm", new=fake_run_swarm):
+        resp = await client.post(
+            "/api/simulation/run",
+            json={"engine": "swarm", "prompt": "Analyze this contract"},
+            headers={"X-User-Id": "user-alice"},
+        )
+    assert resp.status_code == 200
+
+    async with get_engine().connect() as conn:
+        trial = (
+            (
+                await conn.execute(
+                    text("SELECT id, mode, experiment_id, user_prompt, user_id FROM trials")
+                )
+            )
+            .mappings()
+            .fetchone()
+        )
+        experiment = (
+            (await conn.execute(text("SELECT id, user_id FROM experiments"))).mappings().fetchone()
+        )
+
+    assert trial is not None and experiment is not None
+    assert trial["mode"] == "swarm"
+    assert trial["user_prompt"] == "Analyze this contract"
+    assert trial["experiment_id"] == experiment["id"]
+    assert trial["user_id"] == "user-alice"
+    assert experiment["user_id"] == "user-alice"
+
+    # The orchestrator config carries the linkage + owner for the run row.
+    assert len(seen_configs) == 1
+    config = seen_configs[0]
+    assert config.trial_id == trial["id"]
+    assert config.experiment_id == experiment["id"]
+    assert config.user_id == "user-alice"

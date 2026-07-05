@@ -216,16 +216,23 @@ class Blackboard:
         embed_input = f"{claim}\n{content}" if claim else content
         vecs = await embed_texts([embed_input])
         embedding = json.dumps(vecs[0]) if vecs else _ZERO_EMBEDDING
+        # Snapshot the author's display name at write time so the board stays
+        # readable after the agent is deleted (the run outlives the canvas).
+        author_name = (
+            await self._db.execute(
+                text("SELECT name FROM agents WHERE id = :id"), {"id": author_id}
+            )
+        ).scalar_one_or_none()
         await self._db.execute(
             text(
                 """
                 INSERT INTO draft_entries
-                    (id, run_id, thread_id, round, author_id, entry_type,
+                    (id, run_id, thread_id, round, author_id, author_name, entry_type,
                      content, content_embedding, reply_to, mention_agents,
                      is_visible, last_cited_round, claim, stance, stance_target,
                      evidence)
-                VALUES (:id, :run_id, :thread_id, :round, :author_id, :entry_type,
-                        :content, :embedding, :reply_to, :mention_agents,
+                VALUES (:id, :run_id, :thread_id, :round, :author_id, :author_name,
+                        :entry_type, :content, :embedding, :reply_to, :mention_agents,
                         :is_visible, :round, :claim, :stance, :stance_target,
                         :evidence)
                 """
@@ -236,6 +243,7 @@ class Blackboard:
                 "thread_id": thread_id,
                 "round": round,
                 "author_id": author_id,
+                "author_name": author_name,
                 "entry_type": entry_type,
                 "content": content,
                 "embedding": embedding,
@@ -254,11 +262,11 @@ class Blackboard:
                 text(
                     """
                     INSERT INTO draft_entries
-                        (id, run_id, thread_id, round, author_id, entry_type,
+                        (id, run_id, thread_id, round, author_id, author_name, entry_type,
                          content, content_embedding, reply_to, mention_agents,
                          is_visible, last_cited_round)
-                    VALUES (:id, :run_id, :thread_id, :round, :author_id, 'system',
-                            :content, :embedding, :reply_to, :mention_agents,
+                    VALUES (:id, :run_id, :thread_id, :round, :author_id, :author_name,
+                            'system', :content, :embedding, :reply_to, :mention_agents,
                             :is_visible, :round)
                     """
                 ),
@@ -268,6 +276,7 @@ class Blackboard:
                     "thread_id": thread_id,
                     "round": round,
                     "author_id": author_id,
+                    "author_name": author_name,
                     "content": f"mentioned: {mention_list}",
                     "embedding": _ZERO_EMBEDDING,
                     "reply_to": entry_id,
@@ -311,7 +320,7 @@ class Blackboard:
             text(
                 f"""
                 SELECT de.id, de.run_id, de.thread_id, de.round, de.author_id,
-                       COALESCE(a.name, de.author_id) AS author_name,
+                       COALESCE(de.author_name, a.name, de.author_id) AS author_name,
                        de.entry_type, de.content, de.content_embedding,
                        de.reply_to, de.mention_agents, de.is_visible,
                        de.deleted_at, de.last_cited_round, de.created_at,
@@ -388,7 +397,7 @@ class Blackboard:
             text(
                 f"""
                 SELECT de.id, de.run_id, de.thread_id, de.round, de.author_id,
-                       COALESCE(a.name, de.author_id) AS author_name,
+                       COALESCE(de.author_name, a.name, de.author_id) AS author_name,
                        de.entry_type, de.content,
                        de.reply_to, de.mention_agents, de.is_visible,
                        de.deleted_at, de.last_cited_round, de.created_at,

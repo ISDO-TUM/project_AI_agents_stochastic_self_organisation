@@ -8,7 +8,7 @@ import uuid
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy import delete, insert, select, text, update
+from sqlalchemy import delete, insert, select, update
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.db import (
@@ -37,6 +37,7 @@ from server.schemas import (
     AgentUpdate,
     KnowledgeFileResponse,
 )
+from server.users import UserIdDep, scoped
 
 logger = logging.getLogger(__name__)
 
@@ -67,7 +68,7 @@ _MARKET_HIVE_AUTO_TOOLS: tuple[str, ...] = (
     summary="Create a new agent",
     description="Persist a new agent and return it with its generated UUID.",
 )
-async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
+async def create_agent(body: AgentCreate, db: DBDep, user_id: UserIdDep = None) -> AgentResponse:
     """Create a new agent and persist it to the database.
 
     Honours an optional caller-supplied ``id`` so canvas imports can preserve
@@ -76,6 +77,7 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
     Args:
         body: Agent creation payload.
         db: Shared database connection injected by FastAPI.
+        user_id: Anonymous owner id (X-User-Id header), stamped onto the row.
 
     Returns:
         The newly created agent including its UUID.
@@ -107,6 +109,7 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
             tools=json.dumps(tools),
             connections=json.dumps(body.connections),
             capability_embedding=capability_embedding,
+            user_id=user_id,
         )
     )
     await db.commit()
@@ -122,16 +125,17 @@ async def create_agent(body: AgentCreate, db: DBDep) -> AgentResponse:
     response_model=list[AgentResponse],
     summary="List all agents",
 )
-async def list_agents(db: DBDep) -> list[AgentResponse]:
-    """Return all agents in the database.
+async def list_agents(db: DBDep, user_id: UserIdDep = None) -> list[AgentResponse]:
+    """Return the caller's agents (plus shared rows without an owner).
 
     Args:
         db: Shared database connection injected by FastAPI.
+        user_id: Anonymous owner id (X-User-Id header); ``None`` returns all.
 
     Returns:
-        A list of all agents, possibly empty.
+        A list of agents, possibly empty.
     """
-    result = await db.execute(select(agents))
+    result = await db.execute(scoped(select(agents), agents.c.user_id, user_id))
     rows = result.mappings().all()
     return [AgentResponse(**deserialise_agent_row(row)) for row in rows]
 
@@ -261,52 +265,23 @@ async def update_agent(agent_id: str, body: AgentUpdate, db: DBDep) -> AgentResp
     return AgentResponse(**deserialise_agent_row(row))
 
 
-# ECSAS swarm-run tables that reference agents (directly, or via draft entries).
-# Listed leaf-first so the deletes respect the foreign keys between them.
-_SWARM_TABLES_DELETE_ORDER: tuple[str, ...] = (
-    "citations",
-    "votes",
-    "confirmed_entries",
-    "bids",
-    "amendments",
-    "reputation",
-    "draft_entries",
-    "agent_trust",
-    "threads",
-    "contracts",
-    "swarm_runs",
-)
-
-
-async def _clear_swarm_data(db: AsyncConnection) -> None:
-    """Delete all swarm-run rows so agents referenced by them can be removed.
-
-    The ECSAS tables reference ``agents`` without ``ON DELETE CASCADE``, so an
-    agent that joined a swarm run cannot be deleted while those rows exist. Swarm
-    runs are transient experiments, so clearing them on a board reset / re-import
-    is the intended behavior (unlike topology trial history, which is preserved).
-    """
-    for table in _SWARM_TABLES_DELETE_ORDER:
-        await db.execute(text(f"DELETE FROM {table}"))  # noqa: S608 — table from constant list
-
-
 @router.delete(
     "",
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Clear the canvas: delete all agents and knowledge files",
 )
-async def delete_all(db: DBDep) -> None:
-    """Clear the board — delete every agent and knowledge file.
+async def delete_all(db: DBDep, user_id: UserIdDep = None) -> None:
+    """Clear the board — delete the caller's agents and knowledge files.
 
-    Topology run history (trials, rounds, connections, messages) is preserved:
-    its agent foreign keys are ``ON DELETE SET NULL`` and names are snapshotted.
-    Swarm-run data is cleared first because its foreign keys to ``agents`` have no
-    cascade and would otherwise block deletion. Deleting agents cascades to
-    ``agent_files``; knowledge files are then removed explicitly.
+    Run history is preserved on both engines: the topology history (trials,
+    rounds, connections, messages) and the swarm-run audit trail carry no agent
+    foreign keys — agent ids/names are denormalised snapshots — so deleting the
+    agents leaves past results intact. Deleting agents cascades to
+    ``agent_files``; knowledge files are then removed explicitly. With a user id
+    only that user's rows (plus shared ones) are cleared.
     """
-    await _clear_swarm_data(db)
-    await db.execute(delete(agents))
-    await db.execute(delete(knowledge_files))
+    await db.execute(scoped(delete(agents), agents.c.user_id, user_id))
+    await db.execute(scoped(delete(knowledge_files), knowledge_files.c.user_id, user_id))
     await db.commit()
 
 
@@ -328,9 +303,6 @@ async def delete_agent(agent_id: str, db: DBDep) -> None:
     existing = await db.execute(select(agents.c.id).where(agents.c.id == agent_id))
     if existing.first() is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Agent not found.")
-    # Swarm-run rows reference agents without cascade; clear them so the delete
-    # is not blocked once this agent has participated in a run.
-    await _clear_swarm_data(db)
     await db.execute(delete(agents).where(agents.c.id == agent_id))
     await db.commit()
 

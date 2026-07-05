@@ -374,6 +374,22 @@ export function App({ onModeSelected }: AppProps = {}) {
   const exportCanvas = useCallback(() => {
     const payload: CanvasState = { agents, sources, edges };
     if (selectedRules.size > 0) payload.selectedRules = [...selectedRules];
+    // Embed the last completed Market Hive run so its results can be saved
+    // alongside the setup and compared against later runs.
+    if (swarm.state.done && swarm.state.runId) {
+      const board = swarm.state.blackboard;
+      payload.swarmResults = {
+        runId: swarm.state.runId,
+        trialId: swarm.state.trialId,
+        experimentId: swarm.state.experimentId,
+        prompt: pendingSwarmPrompt || null,
+        exportedAt: new Date().toISOString(),
+        finalAnswer: swarm.state.finalAnswer,
+        threads: board.threads,
+        confirmed: board.confirmed,
+        draft: board.draft,
+      };
+    }
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
       type: "application/json",
     });
@@ -383,7 +399,7 @@ export function App({ onModeSelected }: AppProps = {}) {
     a.download = "canvas.json";
     a.click();
     URL.revokeObjectURL(url);
-  }, [agents, sources, edges, selectedRules]);
+  }, [agents, sources, edges, selectedRules, swarm.state, pendingSwarmPrompt]);
 
   const showImportError = useCallback((msg: string) => {
     if (importErrorTimerRef.current) clearTimeout(importErrorTimerRef.current);
@@ -974,8 +990,8 @@ export function App({ onModeSelected }: AppProps = {}) {
           >
             <div
               style={{
-                width: "min(1100px, 92vw)",
-                height: "min(820px, 88vh)",
+                width: "min(1240px, 94vw)",
+                height: "min(840px, 90vh)",
                 borderRadius: 16,
                 overflow: "hidden",
                 boxShadow: dark

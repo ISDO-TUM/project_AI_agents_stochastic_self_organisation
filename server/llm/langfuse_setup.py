@@ -99,6 +99,29 @@ def langfuse_metadata(metadata: dict[str, Any]) -> Iterator[None]:
         _metadata.reset(token)
 
 
+def agent_trace_metadata(
+    trial_id: str | None,
+    agent: dict[str, Any],
+    **extra: Any,
+) -> dict[str, Any]:
+    """Build the standard metadata dict attached to an agent LLM call.
+
+    Shared by both reasoning engines (topology and market hive) so every
+    generation lands in Langfuse with the same shape: the trial id doubles as
+    the session id, and the per-trial statistics endpoints aggregate on
+    ``agent_id``/``agent_name`` plus the optional ``round_index``/``phase``
+    passed through ``extra``.
+    """
+    return {
+        "trial_id": trial_id,
+        "agent_id": str(agent["id"]),
+        "agent_name": str(agent["name"]),
+        "provider": str(agent["provider"]),
+        "model": str(agent["model"]),
+        **extra,
+    }
+
+
 def update_current_generation(
     *,
     model: str | None,
@@ -135,6 +158,7 @@ def update_current_generation(
 
 
 __all__ = [
+    "agent_trace_metadata",
     "configure_langfuse",
     "langfuse_context",
     "langfuse_metadata",

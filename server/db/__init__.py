@@ -18,7 +18,7 @@ from collections.abc import AsyncGenerator
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from sqlalchemy import RowMapping, delete, event, select, text
+from sqlalchemy import RowMapping, event, select, text
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from sqlalchemy.pool import StaticPool
@@ -76,93 +76,9 @@ def _build_engine(url: str) -> AsyncEngine:
     return engine
 
 
-# Default history-retention limits (see prune_trials). Bounded so a busy
-# instance on Railway cannot grow the database without limit, while still
-# keeping enough recent runs around to compare against.
-MAX_RETAINED_TRIALS = 50
-MAX_TRIAL_AGE_DAYS = 30
-
-
-async def cleanup_stale_data(engine: AsyncEngine, max_age_hours: int = 24) -> int:
-    """Delete agents (and their now-orphaned knowledge files) older than *max_age_hours*.
-
-    This is *canvas hygiene* only — it removes abandoned agents/files but leaves
-    the run history (trials → rounds → connections → messages) untouched. Agent
-    ids and names are snapshotted into the history, so deleting the agents keeps
-    the statistics intact. History size is bounded separately by
-    :func:`prune_trials`.
-
-    Returns:
-        Number of agents deleted.
-    """
-    cutoff = datetime.now(UTC) - timedelta(hours=max_age_hours)
-
-    async with engine.begin() as conn:
-        stale_result = await conn.execute(select(agents.c.id).where(agents.c.created_at < cutoff))
-        stale_agent_ids = [row.id for row in stale_result]
-
-        if not stale_agent_ids:
-            return 0
-
-        # Deleting agents cascades to agent_files; the history tables no longer
-        # reference agents, so they are deliberately left in place.
-        await conn.execute(delete(agents).where(agents.c.id.in_(stale_agent_ids)))
-
-        # Knowledge files no longer attached to any agent
-        await conn.execute(
-            delete(knowledge_files).where(
-                knowledge_files.c.id.not_in(select(agent_files.c.file_id))
-            )
-        )
-
-    logger.info(
-        "Cleanup removed %d stale agent(s) (older than %dh)", len(stale_agent_ids), max_age_hours
-    )
-    return len(stale_agent_ids)
-
-
-async def prune_trials(
-    engine: AsyncEngine,
-    max_trials: int | None = MAX_RETAINED_TRIALS,
-    max_age_days: int | None = MAX_TRIAL_AGE_DAYS,
-) -> int:
-    """Bound the run history: keep the newest *max_trials* and drop those older
-    than *max_age_days*.
-
-    A trial owns all of its history through ``ON DELETE CASCADE``
-    (trials → rounds → connections → messages), so deleting the trial rows
-    removes everything beneath them. Agents and knowledge files are untouched.
-    Pass ``None`` to disable either cap.
-
-    Returns:
-        Number of trials deleted.
-    """
-    async with engine.begin() as conn:
-        ids_to_delete: set[str] = set()
-
-        if max_age_days is not None:
-            cutoff = (datetime.now(UTC) - timedelta(days=max_age_days)).isoformat(
-                timespec="seconds"
-            )
-            aged = await conn.execute(select(trials.c.id).where(trials.c.created_at < cutoff))
-            ids_to_delete.update(row.id for row in aged)
-
-        if max_trials is not None:
-            # Skip the newest max_trials rows; everything after is surplus.
-            surplus = await conn.execute(
-                select(trials.c.id)
-                .order_by(trials.c.created_at.desc(), trials.c.id.desc())
-                .offset(max_trials)
-            )
-            ids_to_delete.update(row.id for row in surplus)
-
-        if not ids_to_delete:
-            return 0
-
-        await conn.execute(delete(trials).where(trials.c.id.in_(ids_to_delete)))
-
-    logger.info("Pruned %d trial(s) from run history", len(ids_to_delete))
-    return len(ids_to_delete)
+# NOTE: the periodic retention sweep (``cleanup_stale_data`` for stale agents and
+# ``prune_trials`` for old run history) was removed on purpose: all data now
+# persists until the user deletes it via the explicit delete endpoints.
 
 
 async def _apply_column_migrations(conn: AsyncConnection) -> None:
@@ -219,6 +135,60 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             "ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_to_agent_id_fkey",
             # ECSAS: synthesised final answer persisted at run completion
             "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS final_answer TEXT",
+            # Swarm ↔ history linkage: every swarm run gets a trials row.
+            "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS trial_id TEXT",
+            "CREATE INDEX IF NOT EXISTS idx_swarm_runs_trial ON swarm_runs (trial_id)",
+            # Snapshot the author's display name so the board survives agent deletion.
+            "ALTER TABLE draft_entries ADD COLUMN IF NOT EXISTS author_name TEXT",
+            # Drop the agent foreign keys on the ECSAS run tables: like the topology
+            # history above, a swarm run is an immutable audit trail that must
+            # survive agents being deleted (clearing the canvas). The id columns
+            # stay as denormalised snapshots. Constraint names are PostgreSQL's
+            # defaults (<table>_<column>_fkey).
+            "ALTER TABLE draft_entries DROP CONSTRAINT IF EXISTS draft_entries_author_id_fkey",
+            "ALTER TABLE citations DROP CONSTRAINT IF EXISTS citations_citing_agent_id_fkey",
+            "ALTER TABLE votes DROP CONSTRAINT IF EXISTS votes_voter_agent_id_fkey",
+            "ALTER TABLE bids DROP CONSTRAINT IF EXISTS bids_agent_id_fkey",
+            "ALTER TABLE reputation DROP CONSTRAINT IF EXISTS reputation_agent_id_fkey",
+            "ALTER TABLE amendments DROP CONSTRAINT IF EXISTS amendments_proposing_agent_id_fkey",
+            "ALTER TABLE agent_trust DROP CONSTRAINT IF EXISTS agent_trust_agent_id_fkey",
+            # Anonymous per-browser ownership (no auth): NULL = legacy/shared rows.
+            "ALTER TABLE agents ADD COLUMN IF NOT EXISTS user_id TEXT",
+            "ALTER TABLE knowledge_files ADD COLUMN IF NOT EXISTS user_id TEXT",
+            "ALTER TABLE experiments ADD COLUMN IF NOT EXISTS user_id TEXT",
+            "ALTER TABLE trials ADD COLUMN IF NOT EXISTS user_id TEXT",
+            "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS user_id TEXT",
+            "CREATE INDEX IF NOT EXISTS idx_agents_user ON agents (user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_knowledge_files_user ON knowledge_files (user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_experiments_user ON experiments (user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_trials_user ON trials (user_id)",
+            "CREATE INDEX IF NOT EXISTS idx_swarm_runs_user ON swarm_runs (user_id)",
+            # Rebuild the history-chain cascades. Databases created before the
+            # ON DELETE CASCADE declarations in tables.py carry plain FKs (and
+            # messages.round_id has none at all), so deleting a trial raised an
+            # FK violation — the clear-history endpoints were broken on
+            # PostgreSQL while passing on SQLite's freshly-created schema.
+            # DROP + ADD is the PostgreSQL idiom for "ensure constraint shape"
+            # (there is no ADD CONSTRAINT IF NOT EXISTS); dangling rows that
+            # would fail validation are removed first — they are invisible to
+            # every reader anyway (all queries join through the chain).
+            "DELETE FROM rounds WHERE trial_id NOT IN (SELECT id FROM trials)",
+            "DELETE FROM connections WHERE round_id NOT IN (SELECT id FROM rounds)",
+            "DELETE FROM messages WHERE connection_id NOT IN (SELECT id FROM connections)",
+            "DELETE FROM messages WHERE round_id IS NOT NULL"
+            " AND round_id NOT IN (SELECT id FROM rounds)",
+            "ALTER TABLE rounds DROP CONSTRAINT IF EXISTS rounds_trial_id_fkey",
+            "ALTER TABLE rounds ADD CONSTRAINT rounds_trial_id_fkey"
+            " FOREIGN KEY (trial_id) REFERENCES trials(id) ON DELETE CASCADE",
+            "ALTER TABLE connections DROP CONSTRAINT IF EXISTS connections_round_id_fkey",
+            "ALTER TABLE connections ADD CONSTRAINT connections_round_id_fkey"
+            " FOREIGN KEY (round_id) REFERENCES rounds(id) ON DELETE CASCADE",
+            "ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_connection_id_fkey",
+            "ALTER TABLE messages ADD CONSTRAINT messages_connection_id_fkey"
+            " FOREIGN KEY (connection_id) REFERENCES connections(id) ON DELETE CASCADE",
+            "ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_round_id_fkey",
+            "ALTER TABLE messages ADD CONSTRAINT messages_round_id_fkey"
+            " FOREIGN KEY (round_id) REFERENCES rounds(id) ON DELETE CASCADE",
             # ECSAS: documents an agent consulted (via files()) while producing a post
             "ALTER TABLE draft_entries ADD COLUMN IF NOT EXISTS"
             " documents_used TEXT NOT NULL DEFAULT '[]'",
@@ -276,6 +246,13 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             ("messages", "from_agent_name", "TEXT"),
             ("messages", "to_agent_name", "TEXT"),
             ("swarm_runs", "final_answer", "TEXT"),
+            ("swarm_runs", "trial_id", "TEXT"),
+            ("draft_entries", "author_name", "TEXT"),
+            ("agents", "user_id", "TEXT"),
+            ("knowledge_files", "user_id", "TEXT"),
+            ("experiments", "user_id", "TEXT"),
+            ("trials", "user_id", "TEXT"),
+            ("swarm_runs", "user_id", "TEXT"),
             ("draft_entries", "documents_used", "TEXT NOT NULL DEFAULT '[]'"),
             # Structured contributions
             ("draft_entries", "claim", "TEXT"),
@@ -554,26 +531,28 @@ async def resolve_experiment(
     fanout: int,
     agent_context: dict[str, str] | None,
     reuse_existing: bool = True,
+    user_id: str | None = None,
 ) -> str:
     """Return an experiment id for the given run setup.
 
     When ``reuse_existing`` is true, matching setup hashes are grouped into the
     same experiment. Normal user-triggered runs pass ``reuse_existing=False`` so
     each click creates a fresh experiment while that run's iterations share it.
+    The agent snapshot only covers agents visible to *user_id* (plus shared
+    rows), matching the pool the run itself will use.
     """
-    agent_rows = (
-        await conn.execute(
-            select(
-                agents.c.id,
-                agents.c.name,
-                agents.c.system_prompt,
-                agents.c.provider,
-                agents.c.model,
-                agents.c.tools,
-                agents.c.connections,
-            ).order_by(agents.c.id)
-        )
-    ).all()
+    agent_stmt = select(
+        agents.c.id,
+        agents.c.name,
+        agents.c.system_prompt,
+        agents.c.provider,
+        agents.c.model,
+        agents.c.tools,
+        agents.c.connections,
+    ).order_by(agents.c.id)
+    if user_id is not None:
+        agent_stmt = agent_stmt.where((agents.c.user_id == user_id) | (agents.c.user_id.is_(None)))
+    agent_rows = (await conn.execute(agent_stmt)).all()
 
     file_rows = (
         await conn.execute(
@@ -635,6 +614,7 @@ async def resolve_experiment(
             agent_snapshot=json.dumps(agent_snapshot),
             simulation_params=json.dumps(canonical["params"]),
             created_at=_now_iso(),
+            user_id=user_id,
         )
     )
     await conn.commit()
@@ -647,6 +627,7 @@ async def create_trial(
     description: str,
     mode: str,
     experiment_id: str | None = None,
+    user_id: str | None = None,
 ) -> str:
     """Create a trial row for one simulation run and return its id."""
     trial_id = str(uuid.uuid4())
@@ -659,6 +640,7 @@ async def create_trial(
             mode=mode,
             status="running",
             created_at=_now_iso(),
+            user_id=user_id,
         )
     )
     await conn.commit()
@@ -671,7 +653,7 @@ async def update_trial_status(
     status: str,
 ) -> None:
     """Update a trial's execution status."""
-    completed_at = _now_iso() if status in {"completed", "failed"} else None
+    completed_at = _now_iso() if status in {"completed", "failed", "aborted"} else None
     await conn.execute(
         trials.update()
         .where(trials.c.id == trial_id)

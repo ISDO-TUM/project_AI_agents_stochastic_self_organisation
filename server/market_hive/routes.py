@@ -76,7 +76,7 @@ async def _fetch_draft_entries(
         text(
             f"""
             SELECT de.id, de.run_id, de.thread_id, de.round, de.author_id,
-                   COALESCE(a.name, de.author_id) AS author_name,
+                   COALESCE(de.author_name, a.name, de.author_id) AS author_name,
                    de.entry_type, de.content,
                    de.reply_to, de.mention_agents, de.is_visible,
                    de.deleted_at, de.last_cited_round, de.created_at,

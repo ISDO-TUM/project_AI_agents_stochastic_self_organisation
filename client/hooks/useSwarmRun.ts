@@ -10,6 +10,7 @@ import {
 } from "@/lib/types";
 import { useApiKeys, apiKeyHeaders } from "@/lib/api-keys-context";
 import { loadSession, saveSession } from "@/lib/session-persist";
+import { userIdHeaders } from "@/lib/user-id";
 
 // SSE goes through the Next rewrite proxy by default (relative ""). If that proxy
 // buffers the stream, set NEXT_PUBLIC_API_URL (e.g. http://localhost:8000) to hit
@@ -38,6 +39,10 @@ export interface SwarmRunState {
   active: boolean;
   done: boolean;
   runId: string | null;
+  // Shared-history linkage emitted on the run's first frame: the trial row
+  // mirroring this run and the experiment grouping it on the statistics page.
+  trialId: string | null;
+  experimentId: string | null;
   blackboard: BlackboardState;
   // Agent IDs currently producing a turn (their LLM call is in flight). Drives
   // the "is responding…" pulse on the agent dock chips.
@@ -56,6 +61,8 @@ const IDLE: SwarmRunState = {
   active: false,
   done: false,
   runId: null,
+  trialId: null,
+  experimentId: null,
   blackboard: EMPTY_BOARD,
   responding: [],
   finalAnswer: null,
@@ -77,7 +84,12 @@ function loadPersisted(): SwarmRunState {
 
 type Action =
   | { type: "BEGIN" }
-  | { type: "RUN_ID"; runId: string }
+  | {
+      type: "RUN_ID";
+      runId: string;
+      trialId?: string | null;
+      experimentId?: string | null;
+    }
   | { type: "THREADS"; threads: ThreadInfo[] }
   | { type: "POST"; entry: DraftEntry }
   | { type: "CITE"; entryId: string; citerName: string; round: number }
@@ -145,7 +157,12 @@ function reducer(state: SwarmRunState, action: Action): SwarmRunState {
     case "BEGIN":
       return { ...IDLE, active: true };
     case "RUN_ID":
-      return { ...state, runId: action.runId };
+      return {
+        ...state,
+        runId: action.runId,
+        trialId: action.trialId ?? state.trialId,
+        experimentId: action.experimentId ?? state.experimentId,
+      };
     case "THREADS":
       return { ...state, blackboard: { ...bb, threads: action.threads } };
     case "POST":
@@ -262,6 +279,7 @@ export function useSwarmRun(): {
             headers: {
               "Content-Type": "application/json",
               ...apiKeyHeaders(keys),
+              ...userIdHeaders(),
             },
             body: JSON.stringify({
               engine: "swarm",
@@ -340,8 +358,24 @@ function applyStep(
   step: SwarmStreamStep,
 ): void {
   const d = step.data ?? {};
-  if (typeof d.run_id === "string")
-    dispatch({ type: "RUN_ID", runId: d.run_id });
+  if (typeof d.run_id === "string") {
+    dispatch({
+      type: "RUN_ID",
+      runId: d.run_id,
+      trialId: typeof d.trial_id === "string" ? d.trial_id : undefined,
+      experimentId:
+        typeof d.experiment_id === "string" ? d.experiment_id : undefined,
+    });
+  }
+  // Mirror useSimulation: remember the newest experiment so the statistics
+  // page opens on this run.
+  if (typeof d.experiment_id === "string" && d.experiment_id) {
+    try {
+      window.localStorage.setItem("latestExperimentId", d.experiment_id);
+    } catch {
+      // Storage unavailable — the stats page just won't preselect this run.
+    }
+  }
   if (Array.isArray(d.threads)) {
     dispatch({ type: "THREADS", threads: d.threads as ThreadInfo[] });
   }

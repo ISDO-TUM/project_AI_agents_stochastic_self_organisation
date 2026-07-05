@@ -29,10 +29,12 @@ from server.db import deserialise_agent_row, hint_files_in_prompt, load_agent_fi
 from server.db.tables import agents as agents_table
 from server.guardrails import build_guarded_system_prompt
 from server.llm import call_agent
+from server.llm.langfuse_setup import agent_trace_metadata, langfuse_metadata
 from server.market_hive.auction import AuctionEngine, Invitation
 from server.market_hive.blackboard import Blackboard, carry_forward_findings, format_entries_digest
 from server.market_hive.contract_source import FallbackContractSource
 from server.market_hive.convergence import ConvergenceEngine
+from server.market_hive.history import SwarmHistoryRecorder
 from server.market_hive.journal import RunJournal
 from server.market_hive.metrics import compute_run_metrics
 from server.market_hive.prompts import (
@@ -191,14 +193,24 @@ async def _default_agent_runner(
         system_prompt = build_guarded_system_prompt(
             hint_files_in_prompt(combined, list(files), effective_tools)
         )
-        response, tools_used = await call_agent(
-            user_prompt,
-            provider=agent["provider"],
-            model=agent["model"],
-            system_prompt=system_prompt,
-            tool_names=effective_tools,
-            tool_context={**tool_context, "files": files},
+        # Tag the generation with the run's trial id (= Langfuse session id) and
+        # the agent/round/phase metadata the statistics views aggregate on —
+        # exactly the shape the topology engine emits.
+        trace = agent_trace_metadata(
+            tool_context.get("trial_id"),
+            agent,
+            round_index=int(tool_context.get("round") or 0),
+            phase=str(tool_context.get("phase") or "swarm"),
         )
+        with langfuse_metadata(trace):
+            response, tools_used = await call_agent(
+                user_prompt,
+                provider=agent["provider"],
+                model=agent["model"],
+                system_prompt=system_prompt,
+                tool_names=effective_tools,
+                tool_context={**tool_context, "files": files},
+            )
         return response, tools_used
     finally:
         # A tool whose DB write failed (e.g. the LLM passed a bad thread_id/entry_id)
@@ -326,6 +338,7 @@ def _auction_turn(
     run_id: str,
     contract: ContractSchema,
     agent_runner: AgentRunner,
+    trial_id: str | None,
 ) -> _Turn:
     """Build one auction self-selection turn (bid vs. abstain)."""
 
@@ -344,6 +357,8 @@ def _auction_turn(
                 "agent_id": invitation.agent_id,
                 "contract_id": contract.id,
                 "preliminary_score": invitation.preliminary_score,
+                "trial_id": trial_id,
+                "phase": "auction",
             },
         )
         return _auction_events(invitation, agent, tools_used)
@@ -362,6 +377,7 @@ def _board_turn(
     round: int,
     journal: RunJournal,
     phase: str,
+    trial_id: str | None = None,
     user_prompt: str | None = None,
     prompt_builder: Callable[[AsyncConnection], Awaitable[str]] | None = None,
 ) -> _Turn:
@@ -397,6 +413,8 @@ def _board_turn(
                         "agent_id": agent["id"],
                         "thread_id": thread_id,
                         "round": round,
+                        "phase": phase,
+                        "trial_id": trial_id,
                     },
                 ),
                 timeout=TURN_TIMEOUT_S,
@@ -434,6 +452,8 @@ async def _create_run(
     *,
     session_id: str | None = None,
     parent_run_id: str | None = None,
+    trial_id: str | None = None,
+    user_id: str | None = None,
 ) -> None:
     """Persist a new run, including its config (resilient runs): a resumed run
     must use the SAME knobs as the original, not silently-different defaults.
@@ -441,12 +461,18 @@ async def _create_run(
     ``session_id``/``parent_run_id`` (multi-turn contract sessions): the first
     run in a session mints ``session_id = its own id``; a follow-up run
     inherits the parent's ``session_id`` and records ``parent_run_id``.
+
+    ``trial_id``/``user_id`` link the run into the shared history/statistics
+    world and scope it to the browser that started it, exactly like every
+    other user-scoped table.
     """
     await db.execute(
         text(
             "INSERT INTO swarm_runs "
-            "(id, status, mode, config, heartbeat_at, session_id, parent_run_id) "
-            "VALUES (:id, 'running', 'swarm', :config, :now, :session_id, :parent_run_id)"
+            "(id, status, mode, config, heartbeat_at, session_id, parent_run_id, "
+            " trial_id, user_id) "
+            "VALUES (:id, 'running', 'swarm', :config, :now, :session_id, :parent_run_id, "
+            " :trial_id, :user_id)"
         ),
         {
             "id": run_id,
@@ -454,6 +480,8 @@ async def _create_run(
             "now": datetime.now(UTC),
             "session_id": session_id or run_id,
             "parent_run_id": parent_run_id,
+            "trial_id": trial_id,
+            "user_id": user_id,
         },
     )
     await db.commit()
@@ -513,9 +541,18 @@ async def _persist_run_metrics(db: AsyncConnection, run_id: str, metrics: dict[s
     await db.commit()
 
 
-async def _load_agents(db: AsyncConnection) -> dict[str, dict[str, Any]]:
-    """Return ``{agent_id: agent_dict}`` for every agent in the DB."""
-    rows = (await db.execute(select(agents_table))).mappings().all()
+async def _load_agents(
+    db: AsyncConnection, user_id: str | None = None
+) -> dict[str, dict[str, Any]]:
+    """Return ``{agent_id: agent_dict}`` for the run's agent pool.
+
+    When the run carries a user id only that user's agents (plus legacy/shared
+    rows with no owner) may join the swarm; without one, every agent qualifies.
+    """
+    stmt = select(agents_table)
+    if user_id is not None:
+        stmt = stmt.where((agents_table.c.user_id == user_id) | (agents_table.c.user_id.is_(None)))
+    rows = (await db.execute(stmt)).mappings().all()
     return {row["id"]: deserialise_agent_row(row) for row in rows}
 
 
@@ -564,7 +601,7 @@ async def _draft_entry_payload(db: AsyncConnection, entry_id: str) -> dict[str, 
                 text(
                     """
                     SELECT de.id, de.run_id, de.thread_id, de.round, de.author_id,
-                           COALESCE(a.name, de.author_id) AS author_name,
+                           COALESCE(de.author_name, a.name, de.author_id) AS author_name,
                            de.entry_type, de.content, de.reply_to, de.mention_agents,
                            de.documents_used, de.is_visible, de.last_cited_round, de.created_at,
                            de.claim, de.stance, de.stance_target, de.evidence
@@ -751,13 +788,14 @@ async def _run_auction(
     contract: ContractSchema,
     agents_by_id: dict[str, dict[str, Any]],
     agent_runner: AgentRunner,
+    trial_id: str | None,
 ) -> AsyncIterator[SimulationStep]:
     """Invite agents, drive self-selection, and select takers (PRD §6.2)."""
     invitations = await auction.invite(run_id=run_id, contract_id=contract.id)
     yield _step("system", f"Auction open. {len(invitations)} agent(s) invited.")
 
     turns = [
-        _auction_turn(invitation, agent, run_id, contract, agent_runner)
+        _auction_turn(invitation, agent, run_id, contract, agent_runner, trial_id)
         for invitation in invitations
         if (agent := agents_by_id.get(invitation.agent_id)) is not None
     ]
@@ -790,7 +828,7 @@ async def _round1_proposals(
                 text(
                     """
                     SELECT de.id AS id,
-                           COALESCE(a.name, de.author_id) AS name,
+                           COALESCE(de.author_name, a.name, de.author_id) AS name,
                            de.content AS content
                     FROM draft_entries de
                     LEFT JOIN agents a ON a.id = de.author_id
@@ -867,6 +905,7 @@ async def _run_round_one(
                         round=1,
                         journal=journal,
                         phase="round_1",
+                        trial_id=config.trial_id,
                     )
                 )
         return turns
@@ -899,6 +938,7 @@ async def _run_vote_subround(
     agents_by_id: dict[str, dict[str, Any]],
     agent_runner: AgentRunner,
     journal: RunJournal,
+    trial_id: str | None,
 ) -> AsyncIterator[SimulationStep]:
     """Each taker votes on the round-1 proposals it endorses (PRD §9.4)."""
     yield _step("system", "Vote sub-round. Agents review Round 1 proposals.")
@@ -924,6 +964,7 @@ async def _run_vote_subround(
                     round=1,
                     journal=journal,
                     phase="vote",
+                    trial_id=trial_id,
                 )
             )
     async for step in _run_turns(db, turns, journal=journal):
@@ -1075,6 +1116,7 @@ async def _run_discussion_round(
                     round=round,
                     journal=journal,
                     phase=phase,
+                    trial_id=config.trial_id,
                 )
             )
     async for step in _run_turns(db, turns, journal=journal):
@@ -1368,6 +1410,7 @@ async def run_swarm(
     synthesizer: Synthesizer | None = None,
     resume_run_id: str | None = None,
     parent_run_id: str | None = None,
+    recorder: SwarmHistoryRecorder | None = None,
 ) -> AsyncIterator[SimulationStep]:
     """Drive one swarm run end-to-end, yielding ``SimulationStep`` events.
 
@@ -1384,15 +1427,74 @@ async def run_swarm(
     provenance) and scopes the contract/auction against that context. Mutually
     exclusive with ``resume_run_id`` in practice (a resumed run already has its
     session recorded).
-    """
-    contract_source = contract_source or FallbackContractSource()
-    terminator = terminator or MaxRoundsTerminator()
-    trust = trust or DefaultTrustRegistry.from_config(config)
-    agent_runner = agent_runner or _default_agent_runner
-    # No-LLM default so the run loop and tests stay offline; routes inject the real
-    # AnswerSynthesizer (one LLM call) exactly as they inject the Market Maker.
-    synthesizer = synthesizer or FallbackAnswerSynthesizer()
 
+    With a ``recorder`` every emitted step is also mirrored into the shared
+    history tables (trials → rounds → messages), and a mid-run crash is turned
+    into a final ``system`` frame — with the run and its trial marked failed —
+    instead of a broken stream and a row stuck on 'running'.
+    """
+    run_id = resume_run_id or str(uuid.uuid4())
+    steps = _run_swarm_steps(
+        config,
+        db,
+        run_id,
+        contract_source=contract_source or FallbackContractSource(),
+        terminator=terminator or MaxRoundsTerminator(),
+        trust=trust or DefaultTrustRegistry.from_config(config),
+        agent_runner=agent_runner or _default_agent_runner,
+        amendment_processor=amendment_processor,
+        # No-LLM default so the run loop and tests stay offline; routes inject the
+        # real AnswerSynthesizer (one LLM call) exactly as they inject the Market
+        # Maker.
+        synthesizer=synthesizer or FallbackAnswerSynthesizer(),
+        resume_run_id=resume_run_id,
+        parent_run_id=parent_run_id,
+        recorder=recorder,
+    )
+    try:
+        async for step in steps:
+            if recorder is not None:
+                await recorder.record(step)
+            yield step
+    except Exception:
+        logger.exception("Swarm run %s failed mid-run", run_id)
+        failure = _step("system", "Run failed — see server logs.", data={"run_id": run_id})
+        try:
+            await _reset_transaction(db)
+            await _complete_run(db, run_id, status="failed", reason="error", round=0)
+            if recorder is not None:
+                await recorder.record(failure)
+                await recorder.finish("failed")
+        except Exception:
+            logger.exception("Failed to mark swarm run %s as failed", run_id)
+        yield failure
+        # Re-raise (rather than swallow): resilient runs need callers — tests,
+        # or a caller driving `resume_run_id` — to see that the run actually
+        # crashed. A live SSE consumer already gets the graceful frame above;
+        # this only changes what happens after it (a clean disconnect instead
+        # of one masquerading as a normal stream end). A genuinely-orphaned
+        # process death (no chance to even reach this handler) is instead
+        # caught later by `reap_stale_runs` flipping the stale 'running' row
+        # to 'interrupted' for resume.
+        raise
+
+
+async def _run_swarm_steps(
+    config: SwarmRunConfig,
+    db: AsyncConnection,
+    run_id: str,
+    *,
+    contract_source: ContractSource,
+    terminator: Terminator,
+    trust: TrustRegistry,
+    agent_runner: AgentRunner,
+    amendment_processor: AmendmentProcessor | None,
+    synthesizer: Synthesizer,
+    resume_run_id: str | None,
+    parent_run_id: str | None,
+    recorder: SwarmHistoryRecorder | None,
+) -> AsyncIterator[SimulationStep]:
+    """The run loop proper. ``run_swarm`` wraps it with mirroring/failure handling."""
     dropped: set[str] = set()
     announced_dropouts: set[str] = set()
     resume_from = -1
@@ -1414,7 +1516,6 @@ async def run_swarm(
         )
         if run_row is None or run_row["status"] != "interrupted":
             raise ValueError(f"run {resume_run_id!r} is not resumable")
-        run_id = resume_run_id
         if run_row["config"]:
             config = SwarmRunConfig(**json.loads(run_row["config"]))
         await db.execute(
@@ -1427,7 +1528,6 @@ async def run_swarm(
             "system", f"Run resumed at phase {run_row['phase']!r}.", data={"run_id": run_id}
         )
     else:
-        run_id = str(uuid.uuid4())
         session_id = run_id
         if parent_run_id is not None:
             parent_row = (
@@ -1442,10 +1542,16 @@ async def run_swarm(
                 raise ValueError(f"parent run {parent_run_id!r} is still running")
             session_id = parent_row["session_id"] or parent_run_id
         await _create_run(
-            db, run_id, config, session_id=session_id, parent_run_id=parent_run_id
+            db,
+            run_id,
+            config,
+            session_id=session_id,
+            parent_run_id=parent_run_id,
+            trial_id=config.trial_id,
+            user_id=config.user_id,
         )
 
-    agents_by_id = await _load_agents(db)
+    agents_by_id = await _load_agents(db, config.user_id)
     journal = RunJournal(run_id)
 
     # Consensus observability: optional Langfuse tracing, flag-gated to a no-op
@@ -1512,10 +1618,28 @@ async def run_swarm(
         # LLM call below is the first slow step, and some clients/proxies don't render
         # the stream until the first real ``data:`` frame arrives (a comment is not
         # enough). This also confirms liveness while the contract is being drafted.
-        yield _step("system", "Run started — drafting the contract…", data={"run_id": run_id})
-        contract, threads = await contract_source.make_contract(
-            config.prompt, run_id, db, session_context=session_context
+        if recorder is not None:
+            recorder.set_phase(0, "contract")
+        yield _step(
+            "system",
+            "Run started — drafting the contract…",
+            data={
+                "run_id": run_id,
+                "trial_id": config.trial_id,
+                "experiment_id": config.experiment_id,
+            },
         )
+        mm_trace = {
+            "trial_id": config.trial_id,
+            "agent_id": "market-maker",
+            "agent_name": "Market Maker",
+            "round_index": 0,
+            "phase": "contract",
+        }
+        with langfuse_metadata(mm_trace):
+            contract, threads = await contract_source.make_contract(
+                config.prompt, run_id, db, session_context=session_context
+            )
         yield _step(
             "system",
             f"Contract created: {contract.task_type}, {contract.task_nature}, "
@@ -1535,17 +1659,23 @@ async def run_swarm(
         )
 
     # ── Auction (Market Hive §6.2) ───────────────────────────────────────────
+    if recorder is not None:
+        recorder.set_phase(0, "auction")
     auction = AuctionEngine.from_config(db, config)
     if _phase_index("auction", config.max_rounds) >= resume_from:
         await journal.phase(db, "auction")
         _enter_phase("auction")
-        async for step in _run_auction(db, auction, run_id, contract, agents_by_id, agent_runner):
+        async for step in _run_auction(
+            db, auction, run_id, contract, agents_by_id, agent_runner, config.trial_id
+        ):
             yield step
 
     takers = await auction.get_takers(run_id=run_id)
     if not takers:
         await _complete_run(db, run_id, status="aborted", reason="no_takers", round=0)
         _exit_tracing()
+        if recorder is not None:
+            await recorder.finish("aborted")
         return
     if resume_run_id is not None:
         # Reconstruct the dropout set the interrupted run had already recorded
@@ -1555,6 +1685,8 @@ async def run_swarm(
         takers = [t for t in takers if t not in dropped]
 
     # ── Round 1 — opening proposals (§9.3) ───────────────────────────────────
+    if recorder is not None:
+        recorder.set_phase(1, "proposals")
     convergence = ConvergenceEngine.from_config(db, config)
     if _phase_index("round_1", config.max_rounds) >= resume_from:
         await journal.phase(db, "round_1", 1)
@@ -1569,10 +1701,12 @@ async def run_swarm(
 
     # ── Vote sub-round → cold-start confidence/temperature (§9.4, §6.4) ───────
     if _phase_index("vote", config.max_rounds) >= resume_from:
+        if recorder is not None:
+            recorder.set_phase(1, "vote")
         await journal.phase(db, "vote", 1)
         _enter_phase("vote")
         async for step in _run_vote_subround(
-            db, run_id, threads, takers, agents_by_id, agent_runner, journal
+            db, run_id, threads, takers, agents_by_id, agent_runner, journal, config.trial_id
         ):
             yield step
         for step in await _apply_dropouts(db, run_id, agents_by_id, dropped, announced_dropouts):
@@ -1596,6 +1730,8 @@ async def run_swarm(
     )
     for round in range(discussion_start, config.max_rounds + 1):
         last_round = round
+        if recorder is not None:
+            recorder.set_phase(round, "discussion")
         await journal.phase(db, f"round_{round}", round)
         _enter_phase(f"round_{round}")
         async for step in _run_discussion_round(
@@ -1645,6 +1781,8 @@ async def run_swarm(
             break
 
     # ── Finalize: select + synthesize the answer, update trust, emit (§6.6, §6.7) ─
+    if recorder is not None:
+        recorder.set_phase(last_round, "final")
     await journal.phase(db, "synthesis", last_round)
     _enter_phase("synthesis")
     output = await terminator.format_output(
@@ -1658,8 +1796,16 @@ async def run_swarm(
     live_findings = [f for f in output.confirmed_layer if f.status == "confirmed"]
     ratification: dict[str, Any] | None = None
     final_answer = output.final_answer
+    synth_trace = {
+        "trial_id": config.trial_id,
+        "agent_id": "synthesizer",
+        "agent_name": "Answer Synthesizer",
+        "round_index": last_round,
+        "phase": "final",
+    }
     if live_findings and threads:
-        candidate = await synthesizer.synthesize(prompt=config.prompt, findings=live_findings)
+        with langfuse_metadata(synth_trace):
+            candidate = await synthesizer.synthesize(prompt=config.prompt, findings=live_findings)
         await _post_synthesis_candidate(db, run_id, threads[0].id, last_round, candidate)
         steps, approvals, voters, objections = await _run_ratification(
             db, run_id, candidate, takers, dropped, agents_by_id, agent_runner
@@ -1676,9 +1822,10 @@ async def run_swarm(
                 "objections": objections,
             }
         else:
-            revised = await synthesizer.synthesize(
-                prompt=config.prompt, findings=live_findings, objections=objections
-            )
+            with langfuse_metadata(synth_trace):
+                revised = await synthesizer.synthesize(
+                    prompt=config.prompt, findings=live_findings, objections=objections
+                )
             await _post_synthesis_candidate(db, run_id, threads[0].id, last_round, revised)
             steps2, approvals2, voters2, objections2 = await _run_ratification(
                 db, run_id, revised, takers, dropped, agents_by_id, agent_runner
@@ -1706,6 +1853,8 @@ async def run_swarm(
         final_answer=output.final_answer,
         ratification=ratification,
     )
+    if recorder is not None:
+        await recorder.finish("completed")
 
     # Consensus observability: one metrics snapshot per terminated run, computed
     # after the run's terminal state (ratification, final_answer) is persisted
