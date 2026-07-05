@@ -70,18 +70,22 @@ async def carry_forward_findings(
         await db.rollback()
 
     rows = (
-        await db.execute(
-            text(
-                f"""
+        (
+            await db.execute(
+                text(
+                    f"""
                 SELECT id, thread_id, content, citation_count
                 FROM confirmed_entries
                 WHERE run_id = :parent AND entry_type = 'finding' {status_filter}
                 ORDER BY citation_count DESC, round_confirmed ASC
                 """
-            ),
-            {"parent": parent_run_id},
+                ),
+                {"parent": parent_run_id},
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
 
     carried: list[ConfirmedEntrySchema] = []
     for row in rows:
@@ -114,6 +118,8 @@ async def carry_forward_findings(
             .mappings()
             .fetchone()
         )
+        if fetched is None:
+            raise RuntimeError(f"carried-forward entry {new_id!r} vanished after insert")
         carried.append(ConfirmedEntrySchema(**dict(fetched)))
     await db.commit()
     return carried

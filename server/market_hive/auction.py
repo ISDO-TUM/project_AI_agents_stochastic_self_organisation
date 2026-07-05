@@ -422,9 +422,10 @@ class AuctionEngine:
         """Map of agent_id → trust_score for this contract (only agents with
         ledger history). Similarity-weighted against ``contract_embedding``
         when present; falls back to exact domain-label matching offline."""
-        return await trust_for_all(
+        scores: dict[str, float] = await trust_for_all(
             self._db, contract_embedding=contract_embedding, domain_label=domain
         )
+        return scores
 
     async def _insert_bid(
         self,

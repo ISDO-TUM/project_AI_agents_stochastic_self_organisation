@@ -114,18 +114,20 @@ async def _call(
     text directly into the prompt rather than offering file-reading tools,
     keeping all four modes' inputs identical (PRD "same inputs" constraint)."""
     if agent_runner is not None:
-        response, _ = await agent_runner(
+        runner_response: str
+        runner_response, _ = await agent_runner(
             {"id": agent_id, "name": agent_name, "provider": "openai", "model": "gpt-4o"},
             user_prompt=user_prompt,
             system_suffix=system_suffix,
             tool_names=[],
             tool_context={},
         )
-        return response
-    response, _ = await call_agent(
+        return runner_response
+    call_response: str
+    call_response, _ = await call_agent(
         user_prompt, provider="openai", model="gpt-4o", system_prompt=system_suffix
     )
-    return response
+    return call_response
 
 
 class B01SingleAgent:
@@ -165,9 +167,7 @@ async def _last_round_answer(db: AsyncConnection, trial_id: str) -> str:
     """Concatenate every message from a trial's final round as its answer."""
     round_id = (
         await db.execute(
-            text(
-                "SELECT id FROM rounds WHERE trial_id = :t ORDER BY round_index DESC LIMIT 1"
-            ),
+            text("SELECT id FROM rounds WHERE trial_id = :t ORDER BY round_index DESC LIMIT 1"),
             {"t": trial_id},
         )
     ).scalar()
@@ -208,10 +208,12 @@ class B02Topology:
             responses = []
             for aid in agent_ids:
                 row = (
-                    await db.execute(
-                        text("SELECT name FROM agents WHERE id = :id"), {"id": aid}
-                    )
-                ).mappings().fetchone()
+                    (await db.execute(text("SELECT name FROM agents WHERE id = :id"), {"id": aid}))
+                    .mappings()
+                    .fetchone()
+                )
+                if row is None:
+                    raise RuntimeError(f"seeded agent {aid!r} vanished")
                 name = row["name"]
                 if fail_agent is not None and name == fail_agent:
                     responses.append(f"{name}: [failed to respond]")
@@ -249,7 +251,7 @@ class B02Topology:
 
 _PLANNER_PROMPT = (
     "You are a project planner. Given a task and a roster of specialist agents, "
-    'break the task into subtasks, one per relevant agent. Respond with ONLY a '
+    "break the task into subtasks, one per relevant agent. Respond with ONLY a "
     'JSON array of objects: [{"subtask": "...", "agent_name": "..."}, ...]. '
     "Use only agent names from the roster, and cover every agent whose expertise "
     "is relevant."
@@ -293,7 +295,9 @@ class B03MinimalSupervisor:
         completed: list[str] = []
         for item in subtasks:
             agent_name = item.get("agent_name") if isinstance(item, dict) else None
-            agent = agents_by_name.get(agent_name) if agent_name else None
+            if not isinstance(agent_name, str):
+                continue
+            agent = agents_by_name.get(agent_name)
             if agent is None:
                 continue
             subtask_text = item.get("subtask", "") if isinstance(item, dict) else ""
@@ -357,7 +361,8 @@ class B04Swarm:
             async def _ablated(agent: dict[str, Any], **kw: Any) -> tuple[str, list[Any]]:
                 if agent.get("name") == fail_agent and "submit_bid" not in kw["tool_names"]:
                     raise RuntimeError(f"{fail_agent} is down")
-                return await inner(agent, **kw)
+                ablated_result: tuple[str, list[Any]] = await inner(agent, **kw)
+                return ablated_result
 
             runner = _ablated
 

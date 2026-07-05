@@ -57,7 +57,6 @@ export function AgentTrustPanel({
         onOpenChange?.(open);
       }}
     >
-
       <PopoverTrigger asChild>{trigger}</PopoverTrigger>
       <PopoverContent>
         <div

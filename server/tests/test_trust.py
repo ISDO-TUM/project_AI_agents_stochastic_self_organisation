@@ -189,9 +189,9 @@ def test_recency_decay_prefers_fresh_evidence() -> None:
     fresh_bad = [TrustEvent("entry_evaporated", 0.0, 0.4, None, "analysis", 0)] + [
         TrustEvent("finding_confirmed", 1.0, 1.0, None, "analysis", i + 1) for i in range(5)
     ]
-    old_bad = [
-        TrustEvent("finding_confirmed", 1.0, 1.0, None, "analysis", i) for i in range(5)
-    ] + [TrustEvent("entry_evaporated", 0.0, 0.4, None, "analysis", 6)]
+    old_bad = [TrustEvent("finding_confirmed", 1.0, 1.0, None, "analysis", i) for i in range(5)] + [
+        TrustEvent("entry_evaporated", 0.0, 0.4, None, "analysis", 6)
+    ]
     assert score_events(old_bad, contract_embedding=None) > score_events(
         fresh_bad, contract_embedding=None
     )

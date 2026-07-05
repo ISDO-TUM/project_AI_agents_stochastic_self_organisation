@@ -257,9 +257,7 @@ async def get_run_metrics(run_id: str, db: DBDep) -> dict[str, Any]:
     observability). 404s both when the run doesn't exist and when it hasn't
     terminated yet — metrics are computed exactly once, at the end."""
     row = (
-        await db.execute(
-            text("SELECT metrics FROM run_metrics WHERE run_id = :id"), {"id": run_id}
-        )
+        await db.execute(text("SELECT metrics FROM run_metrics WHERE run_id = :id"), {"id": run_id})
     ).fetchone()
     if row is None:
         raise HTTPException(

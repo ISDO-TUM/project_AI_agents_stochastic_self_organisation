@@ -270,5 +270,6 @@ async def test_reaper_marks_stale_running_runs_interrupted(db: AsyncConnection) 
     await db.commit()
     n = await reap_stale_runs(db)
     assert n == 1
-    rows = dict((await db.execute(text("SELECT id, status FROM swarm_runs"))).fetchall())
+    status_rows = (await db.execute(text("SELECT id, status FROM swarm_runs"))).fetchall()
+    rows = {r[0]: r[1] for r in status_rows}
     assert rows["stale"] == "interrupted" and rows["fresh"] == "running"

@@ -515,7 +515,9 @@ async def test_format_output_retracts_contested_entries_and_excludes_from_synthe
 
     # The DB row itself was updated, not deleted.
     row_count = (
-        await db.execute(text("SELECT COUNT(*) FROM confirmed_entries WHERE run_id = :r"), {"r": run_id})
+        await db.execute(
+            text("SELECT COUNT(*) FROM confirmed_entries WHERE run_id = :r"), {"r": run_id}
+        )
     ).scalar_one()
     assert row_count == 2
 

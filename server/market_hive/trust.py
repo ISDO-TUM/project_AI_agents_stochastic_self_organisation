@@ -91,7 +91,7 @@ def _similarity(ev: TrustEvent, contract_embedding: list[float] | None) -> float
     """
     if contract_embedding is None or ev.domain_embedding is None:
         return 1.0
-    return max(0.0, cosine(ev.domain_embedding, contract_embedding)) ** 2
+    return float(max(0.0, cosine(ev.domain_embedding, contract_embedding)) ** 2)
 
 
 def score_events(
@@ -213,17 +213,19 @@ class TrustRegistry:
     async def _count_confirmed_findings(
         self, db: AsyncConnection, *, run_id: str, agent_id: str
     ) -> int:
-        return (
-            await db.execute(
-                text(
-                    "SELECT COUNT(*) FROM confirmed_entries ce "
-                    "JOIN draft_entries de ON de.id = ce.source_draft_id "
-                    "WHERE ce.run_id = :run_id AND ce.entry_type = 'finding' "
-                    "AND de.author_id = :agent_id"
-                ),
-                {"run_id": run_id, "agent_id": agent_id},
-            )
-        ).scalar_one()
+        return int(
+            (
+                await db.execute(
+                    text(
+                        "SELECT COUNT(*) FROM confirmed_entries ce "
+                        "JOIN draft_entries de ON de.id = ce.source_draft_id "
+                        "WHERE ce.run_id = :run_id AND ce.entry_type = 'finding' "
+                        "AND de.author_id = :agent_id"
+                    ),
+                    {"run_id": run_id, "agent_id": agent_id},
+                )
+            ).scalar_one()
+        )
 
     async def _count_citations_received(
         self, db: AsyncConnection, *, run_id: str, agent_id: str
@@ -231,17 +233,19 @@ class TrustRegistry:
         """Citations received on entries this agent authored that are still
         visible — a soft-deleted (evaporated) entry's earlier citations don't
         count as ongoing evidence of quality."""
-        return (
-            await db.execute(
-                text(
-                    "SELECT COUNT(*) FROM citations c "
-                    "JOIN draft_entries d ON d.id = c.cited_entry_id "
-                    "WHERE c.run_id = :run_id AND d.author_id = :agent_id "
-                    "AND d.is_visible = true"
-                ),
-                {"run_id": run_id, "agent_id": agent_id},
-            )
-        ).scalar_one()
+        return int(
+            (
+                await db.execute(
+                    text(
+                        "SELECT COUNT(*) FROM citations c "
+                        "JOIN draft_entries d ON d.id = c.cited_entry_id "
+                        "WHERE c.run_id = :run_id AND d.author_id = :agent_id "
+                        "AND d.is_visible = true"
+                    ),
+                    {"run_id": run_id, "agent_id": agent_id},
+                )
+            ).scalar_one()
+        )
 
     async def _count_evaporated(self, db: AsyncConnection, *, run_id: str, agent_id: str) -> int:
         """Entries this agent authored that were soft-deleted as stale — but
@@ -250,43 +254,50 @@ class TrustRegistry:
         databases have no ``merged_into`` column, so every invisible entry
         counts as evaporated there."""
         try:
-            return (
-                await db.execute(
-                    text(
-                        "SELECT COUNT(*) FROM draft_entries "
-                        "WHERE run_id = :run_id AND author_id = :agent_id "
-                        "AND is_visible = false AND merged_into IS NULL"
-                    ),
-                    {"run_id": run_id, "agent_id": agent_id},
-                )
-            ).scalar_one()
+            return int(
+                (
+                    await db.execute(
+                        text(
+                            "SELECT COUNT(*) FROM draft_entries "
+                            "WHERE run_id = :run_id AND author_id = :agent_id "
+                            "AND is_visible = false AND merged_into IS NULL"
+                        ),
+                        {"run_id": run_id, "agent_id": agent_id},
+                    )
+                ).scalar_one()
+            )
         except Exception:
             await db.rollback()
-            return (
-                await db.execute(
-                    text(
-                        "SELECT COUNT(*) FROM draft_entries "
-                        "WHERE run_id = :run_id AND author_id = :agent_id AND is_visible = false"
-                    ),
-                    {"run_id": run_id, "agent_id": agent_id},
-                )
-            ).scalar_one()
+            return int(
+                (
+                    await db.execute(
+                        text(
+                            "SELECT COUNT(*) FROM draft_entries "
+                            "WHERE run_id = :run_id AND author_id = :agent_id "
+                            "AND is_visible = false"
+                        ),
+                        {"run_id": run_id, "agent_id": agent_id},
+                    )
+                ).scalar_one()
+            )
 
     async def _count_retracted(self, db: AsyncConnection, *, run_id: str, agent_id: str) -> int:
         """Findings this agent authored that were retracted (contestable
         consensus). Feature-detected: 0 when the ``status`` column doesn't exist."""
         try:
-            return (
-                await db.execute(
-                    text(
-                        "SELECT COUNT(*) FROM confirmed_entries ce "
-                        "JOIN draft_entries de ON de.id = ce.source_draft_id "
-                        "WHERE ce.run_id = :run_id AND de.author_id = :agent_id "
-                        "AND ce.status = 'retracted'"
-                    ),
-                    {"run_id": run_id, "agent_id": agent_id},
-                )
-            ).scalar_one()
+            return int(
+                (
+                    await db.execute(
+                        text(
+                            "SELECT COUNT(*) FROM confirmed_entries ce "
+                            "JOIN draft_entries de ON de.id = ce.source_draft_id "
+                            "WHERE ce.run_id = :run_id AND de.author_id = :agent_id "
+                            "AND ce.status = 'retracted'"
+                        ),
+                        {"run_id": run_id, "agent_id": agent_id},
+                    )
+                ).scalar_one()
+            )
         except Exception:
             await db.rollback()
             return 0
@@ -303,9 +314,7 @@ class TrustRegistry:
         ).fetchone()
         return str(row[0]) if row is not None else None
 
-    async def _contract_embedding(
-        self, *, run_id: str, db: AsyncConnection
-    ) -> list[float] | None:
+    async def _contract_embedding(self, *, run_id: str, db: AsyncConnection) -> list[float] | None:
         row = (
             await db.execute(
                 text("SELECT contract_embedding FROM contracts WHERE run_id = :run_id LIMIT 1"),
@@ -409,15 +418,19 @@ class TrustRegistry:
         self, db: AsyncConnection, *, agent_id: str, domain: str
     ) -> list[TrustEvent]:
         rows = (
-            await db.execute(
-                text(
-                    "SELECT kind, outcome, weight, domain_label, domain_embedding "
-                    "FROM trust_events WHERE agent_id = :agent_id AND domain_label = :domain "
-                    "ORDER BY created_at DESC"
-                ),
-                {"agent_id": agent_id, "domain": domain},
+            (
+                await db.execute(
+                    text(
+                        "SELECT kind, outcome, weight, domain_label, domain_embedding "
+                        "FROM trust_events WHERE agent_id = :agent_id AND domain_label = :domain "
+                        "ORDER BY created_at DESC"
+                    ),
+                    {"agent_id": agent_id, "domain": domain},
+                )
             )
-        ).mappings().all()
+            .mappings()
+            .all()
+        )
         events: list[TrustEvent] = []
         for age, row in enumerate(rows):
             emb = json.loads(row["domain_embedding"]) if row["domain_embedding"] else None
@@ -451,13 +464,17 @@ async def trust_for_all(
     from the result; the caller defaults them to ``DEFAULT_TRUST``.
     """
     rows = (
-        await db.execute(
-            text(
-                "SELECT agent_id, kind, outcome, weight, domain_label, domain_embedding "
-                "FROM trust_events ORDER BY agent_id, created_at DESC"
+        (
+            await db.execute(
+                text(
+                    "SELECT agent_id, kind, outcome, weight, domain_label, domain_embedding "
+                    "FROM trust_events ORDER BY agent_id, created_at DESC"
+                )
             )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
 
     by_agent: dict[str, list[TrustEvent]] = {}
     for row in rows:
@@ -495,10 +512,14 @@ async def migrate_agent_trust_to_ledger(conn: AsyncConnection) -> None:
     pre-check instead.
     """
     rows = (
-        await conn.execute(
-            text("SELECT agent_id, domain, trust_score, runs_participated FROM agent_trust")
+        (
+            await conn.execute(
+                text("SELECT agent_id, domain, trust_score, runs_participated FROM agent_trust")
+            )
         )
-    ).mappings().all()
+        .mappings()
+        .all()
+    )
     for row in rows:
         existing = (
             await conn.execute(

@@ -194,7 +194,9 @@ export function generateDummyRun(
       round: 1,
       thread_id: threadIds[i % threadIds.length],
       documents_used:
-        i === 0 ? ["master-services-agreement.pdf", "sla-appendix.pdf"] : undefined,
+        i === 0
+          ? ["master-services-agreement.pdf", "sla-appendix.pdf"]
+          : undefined,
     });
     proposalIds.push(entry.id);
     events.push({ kind: "post", delay: t, entry });

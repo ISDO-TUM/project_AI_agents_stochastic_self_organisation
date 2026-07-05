@@ -45,20 +45,28 @@ async def test_phase_updates_phase_and_round(db: AsyncConnection) -> None:
 
     await journal.phase(db, "round_1", 1)
     row = (
-        await db.execute(
-            text("SELECT phase, current_round FROM swarm_runs WHERE id = :id"), {"id": run_id}
+        (
+            await db.execute(
+                text("SELECT phase, current_round FROM swarm_runs WHERE id = :id"), {"id": run_id}
+            )
         )
-    ).mappings().fetchone()
+        .mappings()
+        .fetchone()
+    )
     assert row is not None
     assert row["phase"] == "round_1"
     assert row["current_round"] == 1
 
     await journal.phase(db, "done")
     row2 = (
-        await db.execute(
-            text("SELECT phase, current_round FROM swarm_runs WHERE id = :id"), {"id": run_id}
+        (
+            await db.execute(
+                text("SELECT phase, current_round FROM swarm_runs WHERE id = :id"), {"id": run_id}
+            )
         )
-    ).mappings().fetchone()
+        .mappings()
+        .fetchone()
+    )
     assert row2 is not None
     assert row2["phase"] == "done"
     assert row2["current_round"] is None  # round defaults to None when omitted
@@ -90,7 +98,9 @@ async def test_turn_records_status(db: AsyncConnection) -> None:
     await journal.turn(db, agent_id="a1", phase="round_2", round=2, status="done")
 
     row = (
-        await db.execute(text("SELECT status FROM turn_log WHERE run_id = :r AND agent_id = 'a1'"), {"r": run_id})
+        await db.execute(
+            text("SELECT status FROM turn_log WHERE run_id = :r AND agent_id = 'a1'"), {"r": run_id}
+        )
     ).scalar_one()
     assert row == "done"
 
@@ -108,7 +118,8 @@ async def test_turn_is_idempotent_on_reentry(db: AsyncConnection) -> None:
 
     count = (
         await db.execute(
-            text("SELECT COUNT(*) FROM turn_log WHERE run_id = :r AND agent_id = 'a1'"), {"r": run_id}
+            text("SELECT COUNT(*) FROM turn_log WHERE run_id = :r AND agent_id = 'a1'"),
+            {"r": run_id},
         )
     ).scalar_one()
     assert count == 1
@@ -127,7 +138,8 @@ async def test_turn_overwrites_status_on_retry_success(db: AsyncConnection) -> N
 
     count = (
         await db.execute(
-            text("SELECT COUNT(*) FROM turn_log WHERE run_id = :r AND agent_id = 'a1'"), {"r": run_id}
+            text("SELECT COUNT(*) FROM turn_log WHERE run_id = :r AND agent_id = 'a1'"),
+            {"r": run_id},
         )
     ).scalar_one()
     assert count == 1

@@ -244,9 +244,17 @@ export function ConfirmedCard({
                 width: 18,
                 height: 18,
                 borderRadius: "50%",
-                background: `${agentColor(source.author_id, agents, promotedAgentIds)}26`,
+                background: `${agentColor(
+                  source.author_id,
+                  agents,
+                  promotedAgentIds,
+                )}26`,
                 color: agentColor(source.author_id, agents, promotedAgentIds),
-                border: `1px solid ${agentColor(source.author_id, agents, promotedAgentIds)}55`,
+                border: `1px solid ${agentColor(
+                  source.author_id,
+                  agents,
+                  promotedAgentIds,
+                )}55`,
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
@@ -276,10 +284,11 @@ export function ConfirmedCard({
                   color: t.textDim,
                   fontWeight: 600,
                 }}
-                title={`${collaborators.length} collaborator${collaborators.length === 1 ? "" : "s"}`}
+                title={`${collaborators.length} collaborator${
+                  collaborators.length === 1 ? "" : "s"
+                }`}
               >
-                <Users size={9} strokeWidth={2} />+
-                {collaborators.length} et al.
+                <Users size={9} strokeWidth={2} />+{collaborators.length} et al.
                 <motion.span
                   animate={{ rotate: showCollaborators ? 90 : 0 }}
                   transition={{ duration: 0.15 }}

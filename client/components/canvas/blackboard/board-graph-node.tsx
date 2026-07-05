@@ -13,7 +13,11 @@ import {
 import { useTheme } from "@/lib/theme-context";
 import { getTheme } from "@/lib/theme";
 import { truncate } from "@/lib/blackboard-utils";
-import { GraphAgentHub, GraphEntryNode, HUB_RADIUS } from "@/lib/board-graph-layout";
+import {
+  GraphAgentHub,
+  GraphEntryNode,
+  HUB_RADIUS,
+} from "@/lib/board-graph-layout";
 import { AgentTrustPanel } from "./agent-trust-panel";
 
 const GOLD = "#b5860d";
@@ -199,7 +203,9 @@ export function GraphEntryCard({
           padding: "0 10px",
           borderRadius: 100,
           background: dark ? "rgba(61,186,140,0.10)" : "rgba(61,186,140,0.08)",
-          border: `1.5px solid ${selected ? "#3dba8c" : "rgba(61,186,140,0.4)"}`,
+          border: `1.5px solid ${
+            selected ? "#3dba8c" : "rgba(61,186,140,0.4)"
+          }`,
           cursor: "pointer",
           boxShadow: selected ? "0 0 12px rgba(61,186,140,0.35)" : "none",
         }}
@@ -251,8 +257,12 @@ export function GraphEntryCard({
           gap: 5,
           padding: "0 8px",
           borderRadius: 7,
-          background: dark ? "rgba(123,158,192,0.08)" : "rgba(123,158,192,0.07)",
-          border: `1px dashed ${selected ? "#7b9ec0" : "rgba(123,158,192,0.4)"}`,
+          background: dark
+            ? "rgba(123,158,192,0.08)"
+            : "rgba(123,158,192,0.07)",
+          border: `1px dashed ${
+            selected ? "#7b9ec0" : "rgba(123,158,192,0.4)"
+          }`,
           cursor: "pointer",
         }}
       >
@@ -298,26 +308,30 @@ export function GraphEntryCard({
         borderRadius: 10,
         background: cardBg,
         border: `1.5px solid ${
-          node.confirmedRound !== null
-            ? GOLD
-            : selected
-              ? color
-              : `${color}55`
+          node.confirmedRound !== null ? GOLD : selected ? color : `${color}55`
         }`,
-        boxShadow: node.confirmedRound !== null
-          ? `0 0 14px rgba(181,134,13,0.35)`
-          : selected
-            ? `0 0 14px ${color}55`
-            : dark
-              ? "0 3px 12px rgba(0,0,0,0.35)"
-              : "0 3px 10px rgba(0,0,0,0.08)",
+        boxShadow:
+          node.confirmedRound !== null
+            ? `0 0 14px rgba(181,134,13,0.35)`
+            : selected
+              ? `0 0 14px ${color}55`
+              : dark
+                ? "0 3px 12px rgba(0,0,0,0.35)"
+                : "0 3px 10px rgba(0,0,0,0.08)",
         cursor: "pointer",
         padding: "7px 9px 6px",
         display: "flex",
         flexDirection: "column",
       }}
     >
-      <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 3 }}>
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 5,
+          marginBottom: 3,
+        }}
+      >
         <span
           style={{
             width: 16,
@@ -350,7 +364,12 @@ export function GraphEntryCard({
         >
           {entry.author_name}
         </span>
-        <Icon size={10} strokeWidth={2} color={`${color}cc`} style={{ flexShrink: 0 }} />
+        <Icon
+          size={10}
+          strokeWidth={2}
+          color={`${color}cc`}
+          style={{ flexShrink: 0 }}
+        />
         <span
           style={{
             fontSize: 8.5,
@@ -362,7 +381,12 @@ export function GraphEntryCard({
           R{entry.round}
         </span>
         {!entry.is_visible && (
-          <EyeOff size={10} strokeWidth={2} color={t.textDim} style={{ flexShrink: 0 }} />
+          <EyeOff
+            size={10}
+            strokeWidth={2}
+            color={t.textDim}
+            style={{ flexShrink: 0 }}
+          />
         )}
         <button
           onMouseDown={(e) => e.stopPropagation()}

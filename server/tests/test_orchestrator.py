@@ -252,8 +252,11 @@ async def test_draft_entries_documents_used_defaults_to_empty_list(db: AsyncConn
     )
     await db.commit()
     row = (
-        await db.execute(text("SELECT documents_used FROM draft_entries WHERE id = 'e1'"))
-    ).mappings().fetchone()
+        (await db.execute(text("SELECT documents_used FROM draft_entries WHERE id = 'e1'")))
+        .mappings()
+        .fetchone()
+    )
+    assert row is not None
     assert row["documents_used"] == "[]"
 
 
@@ -380,13 +383,14 @@ def _prompt_capturing_runner(
             captured.append((agent["name"], user_prompt))
             if not wave2_posts and "second wave" in user_prompt:
                 return "", []  # wave-2 agent agrees in full: posts nothing
-        return await inner(
+        turn_result: tuple[str, list[ToolCall]] = await inner(
             agent,
             user_prompt=user_prompt,
             system_suffix=system_suffix,
             tool_names=tool_names,
             tool_context=tool_context,
         )
+        return turn_result
 
     return runner
 
@@ -537,10 +541,15 @@ async def test_documents_used_captured_from_files_tool_calls(db: AsyncConnection
     assert post_steps[0].data["documents_used"] == ["contract.txt"]
 
     row = (
-        await db.execute(
-            text("SELECT documents_used FROM draft_entries WHERE entry_type = 'proposal'")
+        (
+            await db.execute(
+                text("SELECT documents_used FROM draft_entries WHERE entry_type = 'proposal'")
+            )
         )
-    ).mappings().fetchone()
+        .mappings()
+        .fetchone()
+    )
+    assert row is not None
     assert json.loads(row["documents_used"]) == ["contract.txt"]
 
 
@@ -843,13 +852,14 @@ async def test_discussion_prompts_carry_injected_relevant_posts(db: AsyncConnect
     ) -> tuple[str, list[ToolCall]]:
         if "cite" in tool_names:  # discussion rounds only
             captured.append(user_prompt)
-        return await inner(
+        turn_result: tuple[str, list[ToolCall]] = await inner(
             agent,
             user_prompt=user_prompt,
             system_suffix=system_suffix,
             tool_names=tool_names,
             tool_context=tool_context,
         )
+        return turn_result
 
     await _drain(
         SwarmRunConfig(prompt="Analyze this contract", max_rounds=2),
@@ -884,13 +894,14 @@ async def test_dropout_after_consecutive_failures_shrinks_promotion_denominator(
     ) -> tuple[str, list[ToolCall]]:
         if agent["name"] == "Foxtrot" and "submit_bid" not in tool_names:
             raise RuntimeError("provider down")
-        return await inner(
+        turn_result: tuple[str, list[ToolCall]] = await inner(
             agent,
             user_prompt=user_prompt,
             system_suffix=system_suffix,
             tool_names=tool_names,
             tool_context=tool_context,
         )
+        return turn_result
 
     steps = await _drain(
         SwarmRunConfig(prompt="Analyze this contract", max_rounds=3, max_takers=6),
@@ -927,13 +938,14 @@ async def test_retry_succeeds_without_dropout(db: AsyncConnection) -> None:
         if agent["name"] == "Beta" and "cite" in tool_names and calls["n"] == 0:
             calls["n"] += 1
             raise RuntimeError("transient error")
-        return await inner(
+        turn_result: tuple[str, list[ToolCall]] = await inner(
             agent,
             user_prompt=user_prompt,
             system_suffix=system_suffix,
             tool_names=tool_names,
             tool_context=tool_context,
         )
+        return turn_result
 
     steps = await _drain(
         SwarmRunConfig(prompt="Analyze this contract", max_rounds=2),
@@ -942,13 +954,17 @@ async def test_retry_succeeds_without_dropout(db: AsyncConnection) -> None:
     )
     assert not any("dropped out" in s.msg for s in steps if s.type == "system")
     statuses = (
-        await db.execute(
-            text(
-                "SELECT status FROM turn_log WHERE agent_id = 'a2' AND phase = 'round_2' "
-                "ORDER BY created_at"
+        (
+            await db.execute(
+                text(
+                    "SELECT status FROM turn_log WHERE agent_id = 'a2' AND phase = 'round_2' "
+                    "ORDER BY created_at"
+                )
             )
         )
-    ).scalars().all()
+        .scalars()
+        .all()
+    )
     assert statuses[-1] == "done"
 
 
@@ -1032,13 +1048,14 @@ async def test_follow_up_run_sees_carried_anchors(db: AsyncConnection) -> None:
             bb = Blackboard(tool_context["db"])
             entries = await bb.get_confirmed(run_id=tool_context["run_id"], thread_id=None)
             captured.extend(e.content for e in entries)
-        return await inner(
+        turn_result: tuple[str, list[ToolCall]] = await inner(
             agent,
             user_prompt=user_prompt,
             system_suffix=system_suffix,
             tool_names=tool_names,
             tool_context=tool_context,
         )
+        return turn_result
 
     await _drain(
         SwarmRunConfig(prompt="Now check the pricing follow-up", max_rounds=2),
@@ -1053,6 +1070,7 @@ async def test_follow_up_run_sees_carried_anchors(db: AsyncConnection) -> None:
             text("SELECT session_id, parent_run_id FROM swarm_runs WHERE parent_run_id IS NOT NULL")
         )
     ).fetchone()
+    assert session is not None
     assert session[0] == parent_id  # first run minted session_id = its own id
     assert session[1] == parent_id
 
@@ -1366,10 +1384,14 @@ async def test_post_with_structured_fields_persists_them(db: AsyncConnection) ->
     )
     assert "entry_id" in result and "warning" not in result
     row = (
-        await db.execute(
-            text("SELECT claim, evidence FROM draft_entries WHERE entry_type='proposal'")
+        (
+            await db.execute(
+                text("SELECT claim, evidence FROM draft_entries WHERE entry_type='proposal'")
+            )
         )
-    ).mappings().fetchone()
+        .mappings()
+        .fetchone()
+    )
     assert row is not None
     assert row["claim"] == "§4.2 is an unenforceable penalty"
     assert json.loads(row["evidence"]) == ["contract.txt"]
@@ -1555,11 +1577,7 @@ async def test_dispute_flip_emits_bb_contest_step(db: AsyncConnection) -> None:
         tool_names: list[str],
         tool_context: dict[str, Any],
     ) -> tuple[str, list[ToolCall]]:
-        if (
-            "dispute" in tool_names
-            and tool_context["round"] == 3
-            and len(disputers_used) < 2
-        ):
+        if "dispute" in tool_names and tool_context["round"] == 3 and len(disputers_used) < 2:
             db_ = tool_context["db"]
             run_id = tool_context["run_id"]
             agent_id = tool_context["agent_id"]
@@ -1578,11 +1596,7 @@ async def test_dispute_flip_emits_bb_contest_step(db: AsyncConnection) -> None:
                 .mappings()
                 .fetchone()
             )
-            if (
-                row is not None
-                and row["author_id"] != agent_id
-                and agent_id not in disputers_used
-            ):
+            if row is not None and row["author_id"] != agent_id and agent_id not in disputers_used:
                 bb = Blackboard(db_)
                 result = await bb.dispute(
                     run_id=run_id,
@@ -1596,13 +1610,14 @@ async def test_dispute_flip_emits_bb_contest_step(db: AsyncConnection) -> None:
                     return "", [
                         ToolCall(name="dispute", input={"entry_id": row["id"]}, output="{}")
                     ]
-        return await inner(
+        turn_result: tuple[str, list[ToolCall]] = await inner(
             agent,
             user_prompt=user_prompt,
             system_suffix=system_suffix,
             tool_names=tool_names,
             tool_context=tool_context,
         )
+        return turn_result
 
     steps = await _drain(
         SwarmRunConfig(prompt="Analyze this contract", max_rounds=4), db, agent_runner=runner
@@ -1699,13 +1714,14 @@ async def test_unanimous_approval_ships_ratified(db: AsyncConnection) -> None:
         if "approve_synthesis" in tool_names:
             tool_context["ratification_votes"][agent["id"]] = None
             return "", [ToolCall(name="approve_synthesis", input={}, output='{"ok": true}')]
-        return await inner(
+        turn_result: tuple[str, list[ToolCall]] = await inner(
             agent,
             user_prompt=user_prompt,
             system_suffix=system_suffix,
             tool_names=tool_names,
             tool_context=tool_context,
         )
+        return turn_result
 
     steps = await _drain(
         SwarmRunConfig(prompt="Analyze this contract", max_rounds=2), db, agent_runner=runner
@@ -1734,13 +1750,14 @@ async def test_double_rejection_ships_flagged_with_objections(db: AsyncConnectio
             reason = f"{agent['name']} objects"
             tool_context["ratification_votes"][agent["id"]] = reason
             return "", [ToolCall(name="revise_synthesis", input={"reason": reason}, output="{}")]
-        return await inner(
+        turn_result: tuple[str, list[ToolCall]] = await inner(
             agent,
             user_prompt=user_prompt,
             system_suffix=system_suffix,
             tool_names=tool_names,
             tool_context=tool_context,
         )
+        return turn_result
 
     class _CountingSynthesizer:
         def __init__(self) -> None:

@@ -211,11 +211,15 @@ async def run_simulation(
             # Pre-validate before opening the SSE stream — an SSE response can't
             # 404/409 mid-stream once headers are sent, so fail fast here.
             parent = (
-                await db.execute(
-                    text("SELECT status FROM swarm_runs WHERE id = :id"),
-                    {"id": body.parent_run_id},
+                (
+                    await db.execute(
+                        text("SELECT status FROM swarm_runs WHERE id = :id"),
+                        {"id": body.parent_run_id},
+                    )
                 )
-            ).mappings().fetchone()
+                .mappings()
+                .fetchone()
+            )
             if parent is None:
                 raise HTTPException(
                     status_code=status.HTTP_404_NOT_FOUND,

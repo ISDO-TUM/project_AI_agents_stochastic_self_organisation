@@ -48,9 +48,11 @@ def build_report(rows: list[dict[str, Any]]) -> str:
         lines.append("")
         for row in sorted(task_rows, key=lambda r: (r["result"]["mode"], r["result"]["trial"])):
             r, s = row["result"], row["score"]
-            flag = " (judge parse failed)" if row["score"].get("metadata", {}).get(
-                "judge_parse_failed"
-            ) else ""
+            flag = (
+                " (judge parse failed)"
+                if row["score"].get("metadata", {}).get("judge_parse_failed")
+                else ""
+            )
             lines.append(
                 f"- {r['mode']} trial {r['trial']}: coverage={s['coverage_score']:.3f}, "
                 f"contradictions={s['contradictions']}{flag}"
