@@ -793,8 +793,8 @@ export function App({ onModeSelected }: AppProps = {}) {
           onResetContext={resetContext}
           onOpenKeys={() => setShowTweaks(true)}
           iterations={iterations}
-          onIterationsChange={setIterations}
-          batchProgress={batchProgress}
+          onIterationsChange={appMode === "swarm" ? undefined : setIterations}
+          batchProgress={appMode === "swarm" ? null : batchProgress}
           onHeightChange={setPromptBarHeight}
         />
       </div>
