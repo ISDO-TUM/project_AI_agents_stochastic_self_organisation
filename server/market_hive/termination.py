@@ -26,7 +26,7 @@ from server.market_hive.schemas import ConfirmedEntrySchema, SwarmFinalOutput, S
 
 logger = logging.getLogger(__name__)
 
-TerminationReason = Literal["equilibrium", "max_rounds", "budget"]
+TerminationReason = Literal["equilibrium", "max_rounds", "budget", "quiescence"]
 
 
 class Synthesizer(Protocol):
@@ -50,7 +50,7 @@ class Synthesizer(Protocol):
 # minimum of 2 would let equilibrium fire on the very first discussion round, before
 # deliberation has happened. 3 requires at least two real discussion rounds first.
 DEFAULT_MIN_ROUNDS = 3
-DEFAULT_MAX_ROUNDS = 10
+DEFAULT_MAX_ROUNDS = 5
 DEFAULT_K_CONSECUTIVE = 2
 DEFAULT_EPSILON_ENTROPY = 0
 DEFAULT_TOKEN_BUDGET = 50_000

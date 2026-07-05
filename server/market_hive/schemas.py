@@ -22,7 +22,7 @@ class SwarmRunConfig(BaseModel):
     min_takers: int = Field(default=2, ge=1, le=10)
     max_takers: int = Field(default=5, ge=1, le=20)
     min_rounds: int = Field(default=3, ge=1, le=5)
-    max_rounds: int = Field(default=10, ge=2, le=20)
+    max_rounds: int = Field(default=5, ge=2, le=20)
     token_budget: int = Field(default=50_000, ge=5_000, le=500_000)
     enable_token_budget: bool = True
     max_amendments: int = Field(default=2, ge=0, le=5)
@@ -267,7 +267,7 @@ class SwarmFinalOutput(BaseModel):
     # findings. ``None`` only on legacy runs persisted before synthesis existed.
     final_answer: str | None = None
     termination_round: int
-    termination_reason: Literal["equilibrium", "max_rounds", "budget"]
+    termination_reason: Literal["equilibrium", "max_rounds", "budget", "quiescence"]
     metadata: dict[str, Any] = {}
     # Ratified synthesis: takers' approve/revise vote on ``final_answer``. None
     # on runs predating the feature (or when ratification was skipped).
