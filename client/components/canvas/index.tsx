@@ -688,14 +688,14 @@ export function Canvas({
             position: "absolute",
             bottom: 16,
             left: 16,
-            background: dark ? "rgba(6,5,12,0.8)" : "rgba(255,255,255,0.85)",
+            background: dark ? "rgba(35,31,49,0.8)" : "rgba(255,255,255,0.85)",
             border: `1px solid ${
               dark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.08)"
             }`,
             borderRadius: 7,
             padding: "3px 9px",
             fontSize: 10,
-            color: dark ? "#3e3c52" : "#6b6880",
+            color: dark ? "#8c89a8" : "#6b6880",
             fontFamily: "'JetBrains Mono', monospace",
             backdropFilter: "blur(8px)",
             zIndex: 20,
