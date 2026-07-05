@@ -26,6 +26,20 @@ from server.routes import (
 from server.topology.benchmarks import benchmark_router
 from server.topology.routes import history_router, rules_router, statistics_router
 
+# Uvicorn's own dictConfig (Config.configure_logging(), run before this module
+# is imported) only touches its own "uvicorn"/"uvicorn.error"/"uvicorn.access"
+# loggers — it never sets a level or handler on the root logger. Without this,
+# every `logging.getLogger(__name__).info(...)` in server/* (swarm promotion,
+# equilibrium, and termination decisions included) silently resolves to
+# root's default WARNING threshold and never reaches the terminal, even with
+# --reload running in the foreground. LOG_LEVEL lets DEBUG be dialed in for a
+# specific run without a code change.
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+
 logger = logging.getLogger(__name__)
 
 

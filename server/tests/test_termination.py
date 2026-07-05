@@ -324,6 +324,74 @@ async def test_equilibrium_true_after_confirmation_then_quiet_rounds(db: AsyncCo
     assert await eng.check_equilibrium(run_id=run_id, current_round=5)
 
 
+async def _add_thread(db: AsyncConnection, *, contract_id: str, run_id: str, title: str) -> str:
+    thread_id = str(uuid.uuid4())
+    await db.execute(
+        text(
+            "INSERT INTO threads (id, contract_id, run_id, title, description) "
+            "VALUES (:id, :contract_id, :run_id, :title, 'thread')"
+        ),
+        {"id": thread_id, "contract_id": contract_id, "run_id": run_id, "title": title},
+    )
+    await db.commit()
+    return thread_id
+
+
+async def test_equilibrium_without_thread_ids_uses_whole_run_scope(db: AsyncConnection) -> None:
+    """Backward-compat fallback: a caller that doesn't pass ``thread_ids`` (single-
+    thread callers, older callers) keeps the pre-multi-thread whole-run scoping.
+    Only ``thread_ids`` opts a caller into per-thread equilibrium."""
+    run_id, contract_id, thread_a = await _seed_run(db)
+    await _add_thread(db, contract_id=contract_id, run_id=run_id, title="Other")
+
+    # Only thread A ever confirms anything — a second thread exists but never
+    # confirms, as if it were still actively accumulating citations toward its
+    # own threshold.
+    await _confirmed(
+        db, run_id=run_id, thread_id=thread_a, content="thread A's answer", round_confirmed=2
+    )
+    eng = TerminationEngine(db, min_rounds=3, k_consecutive=2, epsilon_entropy=0)
+
+    assert await eng.check_equilibrium(run_id=run_id, current_round=4)
+
+
+async def test_equilibrium_per_thread_waits_for_every_thread_to_confirm(
+    db: AsyncConnection,
+) -> None:
+    """Regression for the reported bug: a 4-thread run ending with 1 confirmed
+    entry and the other 3 threads full of un-promoted, decayed proposals. One
+    thread confirming a finding early must never starve another thread's
+    quiet-round counter — passing ``thread_ids`` requires EVERY thread to have
+    confirmed at least one finding and gone quiet before the run converges."""
+    run_id, contract_id, thread_a = await _seed_run(db)
+    thread_b = await _add_thread(db, contract_id=contract_id, run_id=run_id, title="Other")
+    eng = TerminationEngine(db, min_rounds=3, k_consecutive=2, epsilon_entropy=0)
+
+    # Only thread A confirms — thread B is still actively discussing (nothing
+    # confirmed for it yet). Per-thread equilibrium must not fire.
+    await _confirmed(
+        db, run_id=run_id, thread_id=thread_a, content="thread A's answer", round_confirmed=2
+    )
+    assert not await eng.check_equilibrium(
+        run_id=run_id, current_round=4, thread_ids=[thread_a, thread_b]
+    )
+    assert not await eng.check_equilibrium(
+        run_id=run_id, current_round=10, thread_ids=[thread_a, thread_b]
+    )
+
+    # Thread B finally confirms its own finding, then goes quiet for k_consecutive
+    # rounds — only now should the run as a whole be allowed to converge.
+    await _confirmed(
+        db, run_id=run_id, thread_id=thread_b, content="thread B's answer", round_confirmed=11
+    )
+    assert not await eng.check_equilibrium(
+        run_id=run_id, current_round=12, thread_ids=[thread_a, thread_b]
+    )
+    assert await eng.check_equilibrium(
+        run_id=run_id, current_round=13, thread_ids=[thread_a, thread_b]
+    )
+
+
 async def test_has_confirmed_findings_ignores_non_findings(db: AsyncConnection) -> None:
     run_id, _, thread_id = await _seed_run(db)
     eng = TerminationEngine(db)

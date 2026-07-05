@@ -6,7 +6,7 @@ import { BlackboardState } from "@/lib/types";
 import { useTheme } from "@/lib/theme-context";
 import { getTheme, BURG_LT } from "@/lib/theme";
 import { Layers, Maximize2, Network, Rows3, X } from "lucide-react";
-import { computePromotionThreshold } from "@/lib/blackboard-utils";
+import { computePromotionThreshold, countEntries } from "@/lib/blackboard-utils";
 import { ThreadFilterDropdown } from "./blackboard/thread-filter-dropdown";
 import { BoardGraphView } from "./blackboard/board-graph-view";
 import { ContractCard } from "./blackboard/contract-card";
@@ -196,6 +196,11 @@ export function DraftBoard({
   // its own history (what was tried and didn't stick) is the point of it.
   const renderedDraft = filteredDraft;
   const hasContent = renderedDraft.length > 0;
+  // Replies are nested under their parent's `children`, not appended to the
+  // top-level array — counting `renderedDraft.length` alone misses every new
+  // reply, so the "N new" scroll-nudge badge below only ever fired for new
+  // top-level proposals.
+  const totalEntryCount = countEntries(renderedDraft);
   const threshold = computePromotionThreshold(filteredDraft);
   // Referentially stable across renders so the graph view's layout memo holds
   // between streaming ticks (rebuilding this Map every render forced a full
@@ -219,16 +224,22 @@ export function DraftBoard({
   ).length;
   const totalThreads = state.threads.length;
 
-  // Track new entries arriving while the user is scrolled up
+  // Track new entries (proposals AND replies) arriving while the user is
+  // scrolled up. Guarded against `activeThreadId` changes: switching the
+  // thread filter changes `totalEntryCount` on its own and must reset the
+  // baseline, not be mistaken for a burst of new entries.
+  const prevThreadIdRef = useRef(activeThreadId);
   useEffect(() => {
-    const diff = renderedDraft.length - prevLengthRef.current;
-    prevLengthRef.current = renderedDraft.length;
-    if (diff <= 0) return;
+    const filterChanged = prevThreadIdRef.current !== activeThreadId;
+    prevThreadIdRef.current = activeThreadId;
+    const diff = totalEntryCount - prevLengthRef.current;
+    prevLengthRef.current = totalEntryCount;
+    if (filterChanged || diff <= 0) return;
     const el = bodyRef.current;
     if (!el) return;
     const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
     if (!atBottom) setNewCount((n) => n + diff);
-  }, [renderedDraft.length]);
+  }, [totalEntryCount, activeThreadId]);
 
   const handleScrollToNew = () => {
     bodyRef.current?.scrollTo({

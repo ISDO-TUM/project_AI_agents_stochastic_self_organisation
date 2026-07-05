@@ -110,6 +110,7 @@ class Terminator(Protocol):
         config: SwarmRunConfig,
         db: AsyncConnection,
         status_flips: int = 0,
+        thread_ids: list[str] | None = None,
     ) -> bool:
         raise NotImplementedError
 
@@ -1359,6 +1360,18 @@ async def _end_of_round(
         deleted_draft_ids=deleted_ids,
     )
 
+    logger.info(
+        "End of round %d (run=%s): %d promoted, %d contested, %d reaffirmed, "
+        "%d soft-deleted (evaporated) — participants_by_thread=%s",
+        round,
+        run_id,
+        len(promoted),
+        len(contested),
+        len(reaffirmed),
+        len(deleted_ids),
+        participants_by_thread,
+    )
+
 
 async def _next_temperatures(
     db: AsyncConnection,
@@ -2026,7 +2039,12 @@ async def _run_swarm_steps(
                 )
 
         if await terminator.should_terminate(
-            run_id=run_id, round=round, config=config, db=db, status_flips=status_flips["n"]
+            run_id=run_id,
+            round=round,
+            config=config,
+            db=db,
+            status_flips=status_flips["n"],
+            thread_ids=[t.id for t in threads],
         ):
             termination_reason = "equilibrium"
             break
@@ -2054,6 +2072,22 @@ async def _run_swarm_steps(
     live_findings = [
         f for f in output.confirmed_layer if f.status == "confirmed" and f.entry_type == "finding"
     ]
+    if not live_findings:
+        by_status: dict[str, int] = {}
+        for f in output.confirmed_layer:
+            by_status[f.status] = by_status.get(f.status, 0) + 1
+        logger.warning(
+            "Swarm run %s finalizing round=%s reason=%s with ZERO live findings — no synthesis "
+            "will run, final_answer stays empty. confirmed_layer had %d row(s) total (%s), none "
+            "with status='confirmed' AND entry_type='finding'. Check the "
+            "'check_promotions'/'check_equilibrium' logs above for why nothing got promoted, or "
+            "whether every promoted row was an anchor/system row instead of a real finding.",
+            run_id,
+            last_round,
+            termination_reason,
+            len(output.confirmed_layer),
+            by_status or "no rows at all",
+        )
     findings_for_ratify = [(f.id, f.content) for f in live_findings]
     ratification: dict[str, Any] | None = None
     final_answer = output.final_answer

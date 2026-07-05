@@ -479,7 +479,10 @@ class SubmitBidInput(BaseModel):
     justification: str = Field(description="Your reasoning for participating.")
     thread_id: str | None = Field(
         default=None,
-        description="Thread to bid on. None for contract-level bid.",
+        description=(
+            "The thread's bracketed id, e.g. \"3f9a...\" — never its title. "
+            "None for a contract-level bid."
+        ),
     )
 
 
@@ -487,7 +490,10 @@ class AbstainInput(BaseModel):
     reason: str = Field(description="Why you are opting out.")
     thread_id: str | None = Field(
         default=None,
-        description="Thread to abstain from. None for full contract abstention.",
+        description=(
+            "The thread's bracketed id, e.g. \"3f9a...\" — never its title. "
+            "None for full contract abstention."
+        ),
     )
 
 
@@ -510,11 +516,14 @@ class SubmitBidTool(Tool):
         preliminary_score: float = ctx.get("preliminary_score", 0.0)
 
         engine = AuctionEngine(db)
+        thread_id = await engine.resolve_thread_id(
+            contract_id=contract_id, thread_id=validated_input.thread_id
+        )
         await engine.record_bid(
             run_id=run_id,
             agent_id=agent_id,
             contract_id=contract_id,
-            thread_id=validated_input.thread_id,
+            thread_id=thread_id,
             justification=validated_input.justification,
             preliminary_score=preliminary_score,
         )
@@ -538,11 +547,14 @@ class AbstainTool(Tool):
         contract_id: str | None = ctx.get("contract_id")
 
         engine = AuctionEngine(db)
+        thread_id = await engine.resolve_thread_id(
+            contract_id=contract_id, thread_id=validated_input.thread_id
+        )
         await engine.record_abstention(
             run_id=run_id,
             agent_id=agent_id,
             contract_id=contract_id,
-            thread_id=validated_input.thread_id,
+            thread_id=thread_id,
             reason=validated_input.reason,
         )
         return '{"ok": true}'

@@ -231,6 +231,52 @@ async def test_invite_is_inclusive_without_contract_embedding(db: AsyncConnectio
     assert {i.agent_id for i in invited} == {a, b}
 
 
+# ── Phase 2: thread_id resolution (defense-in-depth against FK-violating LLM output) ──
+
+
+async def test_resolve_thread_id_passes_through_valid_id(db: AsyncConnection) -> None:
+    run_id = str(uuid.uuid4())
+    contract_id = str(uuid.uuid4())
+    thread_id = str(uuid.uuid4())
+    await _seed_run(db, run_id)
+    await _seed_contract(db, run_id=run_id, contract_id=contract_id)
+    await _seed_thread(db, run_id=run_id, contract_id=contract_id, thread_id=thread_id)
+
+    eng = AuctionEngine(db)
+    resolved = await eng.resolve_thread_id(contract_id=contract_id, thread_id=thread_id)
+
+    assert resolved == thread_id
+
+
+async def test_resolve_thread_id_degrades_hallucinated_id_to_none(db: AsyncConnection) -> None:
+    """An LLM that echoes a thread's title (or invents an id) instead of copying
+    the real id must not FK-violate the bids insert — it degrades to a
+    contract-level bid instead of crashing the turn."""
+    run_id = str(uuid.uuid4())
+    contract_id = str(uuid.uuid4())
+    await _seed_run(db, run_id)
+    await _seed_contract(db, run_id=run_id, contract_id=contract_id)
+    await _seed_thread(
+        db,
+        run_id=run_id,
+        contract_id=contract_id,
+        thread_id=str(uuid.uuid4()),
+        title="Legal and Contractual Risk Analysis",
+    )
+
+    eng = AuctionEngine(db)
+    resolved = await eng.resolve_thread_id(
+        contract_id=contract_id, thread_id="Legal and Contractual Risk Analysis"
+    )
+
+    assert resolved is None
+
+
+async def test_resolve_thread_id_passes_through_none(db: AsyncConnection) -> None:
+    eng = AuctionEngine(db)
+    assert await eng.resolve_thread_id(contract_id=str(uuid.uuid4()), thread_id=None) is None
+
+
 # ── Phase 3: taker selection ────────────────────────────────────────────────────
 
 

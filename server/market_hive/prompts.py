@@ -39,9 +39,13 @@ def _thread_listing(contract: ContractSchema) -> str:
     lines = []
     for t in contract.threads:
         expertise = ", ".join(t.required_expertise) or "any relevant expertise"
-        lines.append(f"- {t.title} [{expertise}]: {t.description}")
-    return "PLANNED WORK THREADS (you will be matched to the one(s) fitting you):\n" + "\n".join(
-        lines
+        lines.append(f'- [{t.id}] {t.title} [{expertise}]: {t.description}')
+    return (
+        "PLANNED WORK THREADS (you will be matched to the one(s) fitting you):\n"
+        + "\n".join(lines)
+        + "\n\nWhen bidding or abstaining on a specific thread, pass its bracketed "
+        "id verbatim as thread_id (e.g. thread_id=\"" + contract.threads[0].id + "\") — "
+        "never the thread's title."
     )
 
 

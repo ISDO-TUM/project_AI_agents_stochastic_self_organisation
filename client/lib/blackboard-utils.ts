@@ -19,6 +19,17 @@ export function computePromotionThreshold(draft: DraftEntry[]): number {
   return Math.max(1, Math.floor(authors.size / 3) + 1);
 }
 
+/** Total entry count including nested replies — ``draft.length`` alone only
+ *  counts top-level proposals, since replies are nested under their parent's
+ *  ``children`` rather than appended to the top-level array. */
+export function countEntries(entries: DraftEntry[]): number {
+  let count = 0;
+  for (const e of entries) {
+    count += 1 + countEntries(e.children);
+  }
+  return count;
+}
+
 export function findDraftEntry(
   entries: DraftEntry[],
   targetId: string,

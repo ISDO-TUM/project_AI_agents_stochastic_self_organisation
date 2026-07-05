@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import math
 import uuid
 from datetime import UTC, datetime
@@ -18,6 +19,8 @@ from server.market_hive.schemas import (
     ConfirmedEntrySchema,
     DraftEntrySchema,
 )
+
+logger = logging.getLogger(__name__)
 
 _ZERO_EMBEDDING = json.dumps([0.0] * 1536)
 
@@ -760,6 +763,13 @@ class Blackboard:
             dict(row) for row in result.mappings().fetchall() if row["id"] not in already_promoted
         ]
         if not candidates:
+            logger.info(
+                "check_promotions run=%s round=%s: no citable, not-yet-promoted entries "
+                "(either nothing has been cited by anyone other than its own author yet, "
+                "or every cited entry is already promoted)",
+                run_id,
+                current_round,
+            )
             return []
 
         citer_result = await self._db.execute(
@@ -787,6 +797,16 @@ class Blackboard:
         for thread_id, members in by_thread.items():
             n = (participants_by_thread or {}).get(thread_id, 1)
             threshold = max(1, n // 3 + 1)
+            logger.info(
+                "check_promotions run=%s round=%s thread=%s: %d participants -> "
+                "threshold=%d distinct citers, %d cited candidate(s) to evaluate",
+                run_id,
+                current_round,
+                thread_id,
+                n,
+                threshold,
+                len(members),
+            )
 
             # Union-find: cluster members whose embeddings are near-identical.
             parent = {m["id"]: m["id"] for m in members}
@@ -819,6 +839,16 @@ class Blackboard:
                 for m in cluster_members:
                     pooled |= citers_by_entry.get(m["id"], set())
                 if len(pooled) < threshold:
+                    logger.info(
+                        "check_promotions run=%s round=%s thread=%s: entry cluster %s short of "
+                        "threshold (%d/%d distinct citers) — not promoted this round",
+                        run_id,
+                        current_round,
+                        thread_id,
+                        [m["id"][:8] for m in cluster_members],
+                        len(pooled),
+                        threshold,
+                    )
                     continue
 
                 ordered = sorted(
@@ -837,6 +867,17 @@ class Blackboard:
                     ),
                 )
                 if merge_target is not None:
+                    logger.info(
+                        "check_promotions run=%s round=%s thread=%s: cluster %s cleared "
+                        "threshold (%d/%d citers) but merged into confirmed entry %s (dup)",
+                        run_id,
+                        current_round,
+                        thread_id,
+                        [m["id"][:8] for m in cluster_members],
+                        len(pooled),
+                        threshold,
+                        merge_target[:8],
+                    )
                     for m in cluster_members:
                         await self._db.execute(
                             text(
@@ -877,6 +918,17 @@ class Blackboard:
                     continue
 
                 confirmed_id = str(uuid.uuid4())
+                logger.info(
+                    "check_promotions run=%s round=%s thread=%s: PROMOTING entry %s -> "
+                    "confirmed %s (%d/%d citers)",
+                    run_id,
+                    current_round,
+                    thread_id,
+                    representative["id"][:8],
+                    confirmed_id[:8],
+                    len(pooled),
+                    threshold,
+                )
                 await self._db.execute(
                     text(
                         """
