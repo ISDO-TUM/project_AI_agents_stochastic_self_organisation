@@ -49,9 +49,9 @@ import {
   subscribeAppMode,
 } from "@/components/mode-gate";
 import {
-  SwarmConfigModal,
   SwarmRunConfig,
-} from "@/components/swarm-config-modal";
+  DEFAULT_SWARM_CONFIG,
+} from "@/components/swarm-config";
 import { useDummySwarm } from "@/hooks/useDummySwarm";
 import { useSwarmRun } from "@/hooks/useSwarmRun";
 import { FinalAnswerReveal } from "@/components/canvas/final-answer-reveal";
@@ -171,8 +171,9 @@ export function App({ onModeSelected }: AppProps = {}) {
     () => true,
     () => false,
   );
-  const [swarmConfigOpen, setSwarmConfigOpen] = useState(false);
   const [pendingSwarmPrompt, setPendingSwarmPrompt] = useState("");
+  const [swarmConfig, setSwarmConfig] =
+    useState<SwarmRunConfig>(DEFAULT_SWARM_CONFIG);
   const [topbarWidth, setTopbarWidth] = useState<number | null>(null);
   const [topbarHeight, setTopbarHeight] = useState<number | null>(null);
   const [promptBarHeight, setPromptBarHeight] = useState<number | null>(null);
@@ -181,7 +182,7 @@ export function App({ onModeSelected }: AppProps = {}) {
   // (draft → confirmed), like the dummy — no REST re-fetch, no activity log.
   const swarm = useSwarmRun();
   // The completion answer overlay shows once per run; dismissing it sets this so
-  // it stays closed until the next run resets it (see handleSwarmConfigConfirm).
+  // it stays closed until the next run resets it (see handleRun's swarm branch).
   const [answerDismissed, setAnswerDismissed] = useState(false);
   // First-run consent for an "answer ready" browser notification.
   const [notifyConsentOpen, setNotifyConsentOpen] = useState(false);
@@ -234,7 +235,25 @@ export function App({ onModeSelected }: AppProps = {}) {
     (prompt: string) => {
       if (appMode === "swarm") {
         setPendingSwarmPrompt(prompt);
-        setSwarmConfigOpen(true);
+        if (prompt.trim().toLowerCase() === "test_mohamed") {
+          swarm.reset();
+          const fixture = generateDummyRun(
+            { takers: swarmConfig.takersMax, rounds: swarmConfig.roundsMax },
+            agents,
+          );
+          dummy.start(fixture);
+          setRunId(fixture.runId);
+          return;
+        }
+        dummy.reset();
+        setRunId(null);
+        setAnswerDismissed(false);
+        // First swarm run, notifications available, never asked → request consent.
+        // Non-blocking: the run starts regardless of the user's choice.
+        if (notificationsSupported() && readNotifyPref() === null) {
+          setNotifyConsentOpen(true);
+        }
+        swarm.start(prompt);
         return;
       }
       const active = rules.filter((r) => selectedRules.has(r.id));
@@ -246,6 +265,10 @@ export function App({ onModeSelected }: AppProps = {}) {
     },
     [
       appMode,
+      swarmConfig,
+      agents,
+      dummy,
+      swarm,
       rules,
       selectedRules,
       runSim,
@@ -254,32 +277,6 @@ export function App({ onModeSelected }: AppProps = {}) {
       fanout,
       iterations,
     ],
-  );
-
-  const handleSwarmConfigConfirm = useCallback(
-    (config: SwarmRunConfig) => {
-      setSwarmConfigOpen(false);
-      if (pendingSwarmPrompt.trim().toLowerCase() === "test_mohamed") {
-        swarm.reset();
-        const fixture = generateDummyRun(
-          { takers: config.takersMax, rounds: config.roundsMax },
-          agents,
-        );
-        dummy.start(fixture);
-        setRunId(fixture.runId);
-        return;
-      }
-      dummy.reset();
-      setRunId(null);
-      setAnswerDismissed(false);
-      // First swarm run, notifications available, never asked → request consent.
-      // Non-blocking: the run starts regardless of the user's choice.
-      if (notificationsSupported() && readNotifyPref() === null) {
-        setNotifyConsentOpen(true);
-      }
-      swarm.start(pendingSwarmPrompt);
-    },
-    [pendingSwarmPrompt, agents, dummy, swarm],
   );
 
   const handleNotifyDecision = useCallback(
@@ -469,13 +466,24 @@ export function App({ onModeSelected }: AppProps = {}) {
           ...existingFiles.map((f) => deleteFileApi(f.id).catch(() => {})),
         ]);
 
+        // Defensively delete-by-id before each create: imported files/agents
+        // often carry fixed ids (so a demo's internal edges resolve), and a
+        // stale row with that same id may not be visible in existingAgents/
+        // existingFiles above (e.g. it was scoped to a different session) —
+        // without this the create below 409s on an id it can't see to clean up.
         await Promise.all(
           data.sources.map((s) =>
-            createFile(s.name, s.content, s.id).catch(() => {}),
+            deleteFileApi(s.id)
+              .catch(() => {})
+              .then(() => createFile(s.name, s.content, s.id).catch(() => {})),
           ),
         );
         await Promise.all(
-          data.agents.map((a) => createAgent(a, { preserveId: true })),
+          data.agents.map((a) =>
+            deleteAgentApi(a.id)
+              .catch(() => {})
+              .then(() => createAgent(a, { preserveId: true })),
+          ),
         );
         const fileIds = new Set(data.sources.map((s) => s.id));
         await Promise.all(
@@ -829,13 +837,8 @@ export function App({ onModeSelected }: AppProps = {}) {
           simRunning={simMode}
           onClose={() => setShowTweaks(false)}
           appMode={appMode}
-        />
-      )}
-
-      {swarmConfigOpen && (
-        <SwarmConfigModal
-          onCancel={() => setSwarmConfigOpen(false)}
-          onConfirm={handleSwarmConfigConfirm}
+          swarmConfig={swarmConfig}
+          onSwarmConfigChange={setSwarmConfig}
         />
       )}
 
