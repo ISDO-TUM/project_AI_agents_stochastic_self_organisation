@@ -92,8 +92,11 @@ def round_one_system_suffix(temperature_instruction: str) -> str:
         "ROUND 1 INSTRUCTION: Write your opening proposal for this thread — but only "
         "the part of the analysis that genuinely calls for YOUR specific expertise; "
         "do not re-cover ground better owned by a co-worker's specialty just to be "
-        "thorough. When you do post, include (1) why you are qualified, (2) your "
-        "initial analysis and answer, and (3) the key clauses or evidence you rely on. "
+        "thorough. Be concise: lead with your one-sentence claim, then only the "
+        "points that need your expertise.\n"
+        "FORMAT: write clean GitHub-flavored Markdown — use `###` sub-headers, "
+        "`**bold**` labels, and `-` bullet lists (not run-on paragraphs). State your "
+        "qualification in ONE short sentence, not a paragraph.\n"
         "Fill the claim field with your one-sentence thesis, evidence with the file "
         "names you relied on, and stance ('new' for an opening proposal).\n\n"
         f"{temperature_instruction}"
@@ -166,7 +169,7 @@ def round_one_wave2_user_prompt(
         "not covered above: a different clause, a different risk, a disagreement, "
         "or new evidence. A proposal that mostly repeats what's already posted, "
         "reworded, is not a new proposal. If nothing is left to add, make no tool "
-        "call. To post, call "
+        "call. Keep it concise and in Markdown. To post, call "
         f'post_to_blackboard(entry_type="proposal", thread_id="{thread.id}").'
     )
 
@@ -228,7 +231,16 @@ def rounds_system_suffix(temperature_instruction: str) -> str:
         "- If the work is blocked by an expertise NOBODY on the team has, you may "
         "call request_expertise(domain, reason, thread_id) to propose recruiting "
         "it — this triggers a team vote and is capped per run, so use it only for "
-        "a genuine, blocking gap, not for topics the team can reasonably cover.\n\n"
+        "a genuine, blocking gap, not for topics the team can reasonably cover.\n"
+        "- BREVITY: a reply must be a DELTA — exactly one new point, one "
+        "disagreement, or one piece of new evidence. Do NOT restate or reword "
+        "analysis already on the board; rewording is noise and over-long posts are "
+        "rejected. Do NOT re-state your qualifications — that was round 1.\n"
+        "- If you have nothing material to add on this thread, call "
+        "stand_down(reason) instead of posting. When every taker has stood down, "
+        "the run ends — this is how the team finishes instead of repeating itself.\n"
+        "- FORMAT every post as clean GitHub-flavored Markdown: `**bold**` labels, "
+        "`-` bullet lists, short paragraphs.\n\n"
         f"{temperature_instruction}"
     )
 
@@ -272,7 +284,10 @@ def rounds_user_prompt(
         "the excerpts above, then "
         f'post_to_blackboard(entry_type="reply", reply_to=..., thread_id="{thread.id}") '
         "with your analysis, and cite(entry_ids=[...]) every entry your reply "
-        "supports or builds on — that is what lets the team's agreement be confirmed."
+        "supports or builds on — that is what lets the team's agreement be confirmed.\n\n"
+        "If nothing above needs a new point, disagreement, or fresh evidence from "
+        "you, call stand_down(reason) rather than restating. Keep any reply short "
+        "and in Markdown."
     )
 
 
