@@ -1234,6 +1234,103 @@ async def test_check_promotions_dedup_merges_near_duplicate(db: AsyncConnection)
     assert note is not None
 
 
+async def test_check_promotions_pools_citations_across_near_duplicate_cluster(
+    db: AsyncConnection,
+) -> None:
+    """Three specialists independently write near-identical proposals about the
+    same point (same embedding). Two different agents each cite a *different*
+    one of the three — no single proposal individually reaches the M=2
+    threshold for this 5-participant thread, but the cluster's combined,
+    distinct citers (2) do. This is the citation-fragmentation failure mode:
+    real, broad agreement in the room that never registers as promoted
+    because it landed on separate near-duplicate entries instead of one.
+    """
+    import json as json_lib
+
+    from sqlalchemy import text
+
+    run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+    agent_c = str(uuid.uuid4())
+    agent_d = str(uuid.uuid4())
+    agent_e = str(uuid.uuid4())
+    for aid, name in [(agent_c, "C"), (agent_d, "D"), (agent_e, "E")]:
+        await _add_agent(db, aid, name)
+
+    bb = Blackboard(db)
+    vec = json_lib.dumps([1.0, 0.0, 0.0])
+    entry_a = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_a,
+        content="Lawyer's phrasing of the same clause risk",
+        entry_type="proposal",
+        round=1,
+    )
+    entry_b = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_b,
+        content="Financial analyst's phrasing of the same clause risk",
+        entry_type="proposal",
+        round=1,
+    )
+    entry_c = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_c,
+        content="Regulator's phrasing of the same clause risk",
+        entry_type="proposal",
+        round=1,
+    )
+    for eid in (entry_a, entry_b, entry_c):
+        await db.execute(
+            text("UPDATE draft_entries SET content_embedding = :emb WHERE id = :id"),
+            {"emb": vec, "id": eid},
+        )
+    await db.commit()
+
+    # Two different agents, each citing a different one of the three — no
+    # single entry gets more than 1 distinct citer.
+    await bb.cite(run_id=run_id, citing_agent_id=agent_d, entry_ids=[entry_a], round=2)
+    await bb.cite(run_id=run_id, citing_agent_id=agent_e, entry_ids=[entry_b], round=2)
+    # entry_c gets no citation at all.
+
+    promoted = await bb.check_promotions(
+        run_id=run_id,
+        current_round=2,
+        # 5 participants: M = max(1, 5 // 3 + 1) = 2.
+        participants_by_thread={thread_id: 5},
+    )
+
+    assert len(promoted) == 1
+    assert promoted[0].citation_count == 2
+
+    confirmed_rows = await bb.get_confirmed(run_id=run_id, thread_id=thread_id)
+    assert len(confirmed_rows) == 1
+
+    # Only entries with at least one citation are clustering candidates — no
+    # reason to run embedding comparisons against something nobody engaged
+    # with. entry_a/entry_b each had exactly one citer, so whichever wasn't
+    # picked as the representative must be marked merged into it.
+    other_cited_id = {entry_a, entry_b} - {promoted[0].source_draft_id}
+    assert len(other_cited_id) == 1
+    merged_into = (
+        await db.execute(
+            text("SELECT merged_into FROM draft_entries WHERE id = :id"),
+            {"id": next(iter(other_cited_id))},
+        )
+    ).scalar_one()
+    assert merged_into == promoted[0].id
+
+    # entry_c had zero citations — it never entered the candidate pool, so it
+    # legitimately stays untouched rather than being swept in.
+    entry_c_merged = (
+        await db.execute(text("SELECT merged_into FROM draft_entries WHERE id = :id"), {"id": entry_c})
+    ).scalar_one()
+    assert entry_c_merged is None
+
+
 async def test_check_promotions_dedup_skipped_when_embeddings_zero(db: AsyncConnection) -> None:
     """Zero/offline embeddings must never block promotion — dedup is a pure gate,
     never a blocker, when no real vectors are available."""

@@ -683,6 +683,18 @@ class Blackboard:
                 return str(row["id"])
         return None
 
+    @staticmethod
+    def _parse_embedding(raw: str | None) -> list[float] | None:
+        if not raw:
+            return None
+        try:
+            vec = json.loads(raw)
+        except (json.JSONDecodeError, TypeError):
+            return None
+        if not vec or not any(vec):
+            return None
+        return vec
+
     async def check_promotions(
         self,
         *,
@@ -701,13 +713,22 @@ class Blackboard:
         have decayed to invisible by the time the last citer pushes it over M —
         it must still promote, or a slow-but-real consensus is silently lost.
 
-        Promotion-time semantic dedup (contestable consensus): a candidate
-        whose embedding is near-identical (cosine >= DEDUP_EPS) to an already-
-        confirmed, non-retracted entry in the same thread is merged into it
-        instead of promoted separately — its citers reinforce the existing
-        finding's ``citation_count`` and ``draft_entries.merged_into`` records
-        the merge. Offline/missing embeddings skip the dedup check (never a
-        promotion blocker).
+        Citation pooling across near-duplicate clusters (contestable consensus):
+        several agents independently making the same point, each in their own
+        words, is real agreement that should promote — but as separate draft
+        entries, each one's citers were previously evaluated against M in
+        isolation, so real consensus split across near-duplicates could sit
+        forever just under the threshold on every single one of them, even
+        though the citer sets pooled together clearly cross it. Entries within
+        DEDUP_EPS cosine similarity of each other are now clustered first; a
+        cluster promotes once the *union* of its members' distinct citers
+        reaches M, using the most-individually-cited member (tie: earliest) as
+        the representative and merging the rest into it — the same
+        ``merged_into`` bookkeeping the single-entry dedup path already used.
+        A cluster whose representative is itself near-duplicate of an already-
+        confirmed entry from an earlier round still merges into that instead of
+        creating a new row. Offline/missing embeddings just mean every entry is
+        its own cluster of one — dedup is a pure bonus, never a blocker.
 
         Returns the list of newly promoted (non-merged) ConfirmedEntry objects.
         """
@@ -723,114 +744,184 @@ class Blackboard:
         result = await self._db.execute(
             text(
                 """
-                SELECT de.id, de.thread_id, de.author_id, de.content,
-                       de.content_embedding, de.entry_type, de.round, de.created_at,
-                       COUNT(DISTINCT c.citing_agent_id) AS distinct_citers
+                SELECT DISTINCT de.id, de.thread_id, de.author_id, de.content,
+                       de.content_embedding, de.round, de.created_at
                 FROM draft_entries de
                 JOIN citations c
                     ON c.cited_entry_id = de.id
                    AND c.citing_agent_id != de.author_id
                    AND c.run_id = de.run_id
                 WHERE de.run_id = :run_id
-                GROUP BY de.id
                 """
             ),
             {"run_id": run_id},
         )
-        rows = result.mappings().fetchall()
+        candidates = [
+            dict(row) for row in result.mappings().fetchall() if row["id"] not in already_promoted
+        ]
+        if not candidates:
+            return []
+
+        citer_result = await self._db.execute(
+            text(
+                """
+                SELECT c.cited_entry_id AS entry_id, c.citing_agent_id AS citer
+                FROM citations c
+                JOIN draft_entries de ON de.id = c.cited_entry_id
+                WHERE c.run_id = :run_id AND c.citing_agent_id != de.author_id
+                """
+            ),
+            {"run_id": run_id},
+        )
+        citers_by_entry: dict[str, set[str]] = {}
+        for row in citer_result.mappings().fetchall():
+            citers_by_entry.setdefault(row["entry_id"], set()).add(row["citer"])
+
+        embeddings = {c["id"]: self._parse_embedding(c["content_embedding"]) for c in candidates}
+
+        by_thread: dict[str, list[dict[str, Any]]] = {}
+        for c in candidates:
+            by_thread.setdefault(c["thread_id"], []).append(c)
 
         newly_promoted: list[ConfirmedEntrySchema] = []
-        for row in rows:
-            entry_id = row["id"]
-            if entry_id in already_promoted:
-                continue
-            n = (participants_by_thread or {}).get(row["thread_id"], 1)
+        for thread_id, members in by_thread.items():
+            n = (participants_by_thread or {}).get(thread_id, 1)
             threshold = max(1, n // 3 + 1)
-            if row["distinct_citers"] < threshold:
-                continue
 
-            merge_target = await self._find_dedup_target(
-                run_id=run_id,
-                thread_id=row["thread_id"],
-                candidate_embedding=row["content_embedding"],
-            )
-            if merge_target is not None:
-                await self._db.execute(
-                    text(
-                        "UPDATE draft_entries SET merged_into = :cid, is_visible = true "
-                        "WHERE id = :eid"
-                    ),
-                    {"cid": merge_target, "eid": entry_id},
+            # Union-find: cluster members whose embeddings are near-identical.
+            parent = {m["id"]: m["id"] for m in members}
+
+            def find(x: str) -> str:
+                while parent[x] != x:
+                    parent[x] = parent[parent[x]]
+                    x = parent[x]
+                return x
+
+            for i in range(len(members)):
+                vec_i = embeddings.get(members[i]["id"])
+                if not vec_i:
+                    continue
+                for j in range(i + 1, len(members)):
+                    vec_j = embeddings.get(members[j]["id"])
+                    if not vec_j:
+                        continue
+                    if cosine(vec_i, vec_j) >= DEDUP_EPS:
+                        ri, rj = find(members[i]["id"]), find(members[j]["id"])
+                        if ri != rj:
+                            parent[ri] = rj
+
+            clusters: dict[str, list[dict[str, Any]]] = {}
+            for m in members:
+                clusters.setdefault(find(m["id"]), []).append(m)
+
+            for cluster_members in clusters.values():
+                pooled: set[str] = set()
+                for m in cluster_members:
+                    pooled |= citers_by_entry.get(m["id"], set())
+                if len(pooled) < threshold:
+                    continue
+
+                ordered = sorted(
+                    cluster_members,
+                    key=lambda m: (-len(citers_by_entry.get(m["id"], set())), m["created_at"]),
                 )
-                await self._db.execute(
-                    text(
-                        "UPDATE confirmed_entries SET citation_count = citation_count + :extra "
-                        "WHERE id = :cid"
+                representative, others = ordered[0], ordered[1:]
+
+                merge_target = await self._find_dedup_target(
+                    run_id=run_id,
+                    thread_id=thread_id,
+                    candidate_embedding=(
+                        json.dumps(embeddings[representative["id"]])
+                        if embeddings.get(representative["id"])
+                        else None
                     ),
-                    {"extra": row["distinct_citers"], "cid": merge_target},
                 )
+                if merge_target is not None:
+                    for m in cluster_members:
+                        await self._db.execute(
+                            text(
+                                "UPDATE draft_entries SET merged_into = :cid, is_visible = true "
+                                "WHERE id = :eid"
+                            ),
+                            {"cid": merge_target, "eid": m["id"]},
+                        )
+                    await self._db.execute(
+                        text(
+                            "UPDATE confirmed_entries SET citation_count = citation_count + :extra "
+                            "WHERE id = :cid"
+                        ),
+                        {"extra": len(pooled), "cid": merge_target},
+                    )
+                    await self._db.execute(
+                        text(
+                            """
+                            INSERT INTO draft_entries
+                                (id, run_id, thread_id, round, author_id, entry_type,
+                                 content, content_embedding, is_visible, last_cited_round)
+                            VALUES (:id, :run_id, :thread_id, :round, :author_id, 'system',
+                                    :content, :embedding, :is_visible, :round)
+                            """
+                        ),
+                        {
+                            "id": str(uuid.uuid4()),
+                            "run_id": run_id,
+                            "thread_id": thread_id,
+                            "round": current_round,
+                            "author_id": representative["author_id"],
+                            "content": "merged into an existing confirmed finding — reinforcing it",
+                            "embedding": _ZERO_EMBEDDING,
+                            "is_visible": True,
+                        },
+                    )
+                    await self._db.commit()
+                    continue
+
+                confirmed_id = str(uuid.uuid4())
                 await self._db.execute(
                     text(
                         """
-                        INSERT INTO draft_entries
-                            (id, run_id, thread_id, round, author_id, entry_type,
-                             content, content_embedding, is_visible, last_cited_round)
-                        VALUES (:id, :run_id, :thread_id, :round, :author_id, 'system',
-                                :content, :embedding, :is_visible, :round)
+                        INSERT INTO confirmed_entries
+                            (id, run_id, thread_id, source_draft_id, content,
+                             entry_type, citation_count, round_confirmed)
+                        VALUES (:id, :run_id, :thread_id, :source_draft_id, :content,
+                                'finding', :citation_count, :round_confirmed)
                         """
                     ),
                     {
-                        "id": str(uuid.uuid4()),
+                        "id": confirmed_id,
                         "run_id": run_id,
-                        "thread_id": row["thread_id"],
-                        "round": current_round,
-                        "author_id": row["author_id"],
-                        "content": "merged into an existing confirmed finding — reinforcing it",
-                        "embedding": _ZERO_EMBEDDING,
-                        "is_visible": True,
+                        "thread_id": thread_id,
+                        "source_draft_id": representative["id"],
+                        "content": representative["content"],
+                        "citation_count": len(pooled),
+                        "round_confirmed": current_round,
                     },
                 )
-                await self._db.commit()
-                continue
+                # Graduating to Confirmed supersedes any staleness a cluster member
+                # picked up on the way there — showing "evaporated" on the Draft
+                # board while it's also part of a celebrated Confirmed finding is
+                # a straight contradiction, not just cosmetic.
+                await self._db.execute(
+                    text("UPDATE draft_entries SET is_visible = true WHERE id = :id"),
+                    {"id": representative["id"]},
+                )
+                for m in others:
+                    await self._db.execute(
+                        text(
+                            "UPDATE draft_entries SET merged_into = :cid, is_visible = true "
+                            "WHERE id = :eid"
+                        ),
+                        {"cid": confirmed_id, "eid": m["id"]},
+                    )
 
-            confirmed_id = str(uuid.uuid4())
-            await self._db.execute(
-                text(
-                    """
-                    INSERT INTO confirmed_entries
-                        (id, run_id, thread_id, source_draft_id, content,
-                         entry_type, citation_count, round_confirmed)
-                    VALUES (:id, :run_id, :thread_id, :source_draft_id, :content,
-                            'finding', :citation_count, :round_confirmed)
-                    """
-                ),
-                {
-                    "id": confirmed_id,
-                    "run_id": run_id,
-                    "thread_id": row["thread_id"],
-                    "source_draft_id": entry_id,
-                    "content": row["content"],
-                    "citation_count": row["distinct_citers"],
-                    "round_confirmed": current_round,
-                },
-            )
-            # Graduating to Confirmed supersedes any staleness the source draft
-            # picked up on the way there (crossing the threshold can take several
-            # rounds — see check_promotions' no-is_visible-filter note) — showing
-            # it as "evaporated" on the Draft board while it's also a celebrated
-            # Confirmed finding is a straight contradiction, not just cosmetic.
-            await self._db.execute(
-                text("UPDATE draft_entries SET is_visible = true WHERE id = :id"),
-                {"id": entry_id},
-            )
-            confirmed_result = await self._db.execute(
-                text("SELECT * FROM confirmed_entries WHERE id = :id"),
-                {"id": confirmed_id},
-            )
-            confirmed_row = confirmed_result.mappings().fetchone()
-            if confirmed_row is None:
-                continue
-            newly_promoted.append(ConfirmedEntrySchema(**dict(confirmed_row)))
+                confirmed_result = await self._db.execute(
+                    text("SELECT * FROM confirmed_entries WHERE id = :id"),
+                    {"id": confirmed_id},
+                )
+                confirmed_row = confirmed_result.mappings().fetchone()
+                if confirmed_row is None:
+                    continue
+                newly_promoted.append(ConfirmedEntrySchema(**dict(confirmed_row)))
 
         if newly_promoted:
             await self._db.commit()
