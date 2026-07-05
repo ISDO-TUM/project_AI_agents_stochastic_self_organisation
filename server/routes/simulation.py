@@ -20,12 +20,14 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 from server.db import create_trial, get_db, get_engine, resolve_experiment, update_trial_status
 from server.db.tables import agents
 from server.llm.credentials import RequestCredentials, current_credentials, use_credentials
+from server.market_hive.history import SwarmHistoryRecorder
 from server.market_hive.market_maker import MarketMaker
 from server.market_hive.orchestrator import run_swarm
 from server.market_hive.schemas import SwarmRunConfig
 from server.market_hive.synthesis import AnswerSynthesizer
 from server.schemas import SimulationRunRequest, SimulationStartResponse
 from server.topology import ConsensusMode, run_topology
+from server.users import UserIdDep, scoped
 
 logger = logging.getLogger(__name__)
 
@@ -44,6 +46,7 @@ async def _run_batch_background(
     topology: str,
     fanout: int,
     credentials: RequestCredentials,
+    user_id: str | None,
 ) -> None:
     """Run trial_ids sequentially, marking each completed or failed."""
     # Re-publish the request credentials onto the ContextVar so that
@@ -69,6 +72,7 @@ async def _run_batch_background(
                         ruleset=ruleset,
                         topology=topology,
                         fanout=fanout,
+                        user_id=user_id,
                     )
                 except Exception:
                     logger.exception("Trial %s failed", trial_id)
@@ -103,8 +107,17 @@ async def _swarm_event_stream(
             # findings into a brief final answer. Both fall back to their no-LLM
             # stand-ins internally on failure, so a run never blocks. Tests drive
             # run_swarm on the no-LLM defaults.
+            #
+            # The recorder mirrors the run into the shared history tables so it
+            # shows up on the history page and statistics dashboards like any
+            # topology trial.
+            recorder = SwarmHistoryRecorder(db, config.trial_id) if config.trial_id else None
             async for step in run_swarm(
-                config, db, contract_source=MarketMaker(), synthesizer=AnswerSynthesizer()
+                config,
+                db,
+                contract_source=MarketMaker(),
+                synthesizer=AnswerSynthesizer(),
+                recorder=recorder,
             ):
                 yield f"data: {step.model_dump_json()}\n\n"
     finally:
@@ -126,8 +139,10 @@ async def run_simulation(
     body: SimulationRunRequest,
     db: DBDep,
     background_tasks: BackgroundTasks,
+    user_id: UserIdDep = None,
 ) -> SimulationStartResponse | StreamingResponse:
-    result = await db.execute(select(func.count()).select_from(agents))
+    count_stmt = scoped(select(func.count()).select_from(agents), agents.c.user_id, user_id)
+    result = await db.execute(count_stmt)
     if result.scalar_one() == 0:
         raise HTTPException(
             status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
@@ -136,7 +151,28 @@ async def run_simulation(
 
     # ── Swarm (ECSAS) engine: stream the run's events as SSE ──────────────────
     if body.engine == "swarm":
-        config = SwarmRunConfig(prompt=body.prompt)
+        # Swarm runs join the shared history/statistics world exactly like
+        # topology runs: one experiment + one trial per click. The trial id also
+        # becomes the Langfuse session id for every LLM call in the run.
+        experiment_id = await resolve_experiment(
+            db,
+            prompt=body.prompt,
+            rounds_count=body.rounds,
+            mode="swarm",
+            ruleset=None,
+            topology="swarm",
+            fanout=0,
+            agent_context=None,
+            reuse_existing=False,
+            user_id=user_id,
+        )
+        trial_id = await create_trial(db, body.prompt, "swarm run", "swarm", experiment_id, user_id)
+        config = SwarmRunConfig(
+            prompt=body.prompt,
+            trial_id=trial_id,
+            experiment_id=experiment_id,
+            user_id=user_id,
+        )
         return StreamingResponse(
             _swarm_event_stream(config, current_credentials()),
             media_type="text/event-stream",
@@ -159,10 +195,11 @@ async def run_simulation(
         fanout=body.fanout,
         agent_context=body.agent_context,
         reuse_existing=False,
+        user_id=user_id,
     )
 
     trial_ids = [
-        await create_trial(db, body.prompt, f"{body.mode} run", body.mode, experiment_id)
+        await create_trial(db, body.prompt, f"{body.mode} run", body.mode, experiment_id, user_id)
         for _ in range(body.iterations)
     ]
 
@@ -178,6 +215,7 @@ async def run_simulation(
         body.topology,
         body.fanout,
         captured_creds,
+        user_id,
     )
     return SimulationStartResponse(
         experiment_id=experiment_id,
