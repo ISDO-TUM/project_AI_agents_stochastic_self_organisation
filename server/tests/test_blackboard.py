@@ -1239,8 +1239,9 @@ async def _seed_anchor(conn: AsyncConnection, *, run_id: str, thread_id: str, co
 async def test_carry_forward_brings_findings_as_anchors_with_provenance(
     db: AsyncConnection,
 ) -> None:
-    from server.market_hive.blackboard import carry_forward_findings
     from sqlalchemy import text
+
+    from server.market_hive.blackboard import carry_forward_findings
 
     run_id, thread_id, agent_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
     await _seed_run(db, run_id, thread_id, agent_id)
@@ -1272,8 +1273,9 @@ async def test_carry_forward_brings_findings_as_anchors_with_provenance(
 async def test_carry_forward_is_not_transitive(db: AsyncConnection) -> None:
     """r1 → r2 (carried anchor) → r3: r3 gets r2's *own* finding only — r2's
     carried anchor (entry_type='anchor') does not re-carry."""
-    from server.market_hive.blackboard import carry_forward_findings
     from sqlalchemy import text
+
+    from server.market_hive.blackboard import carry_forward_findings
 
     r1, thread_id, agent_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
     await _seed_run(db, r1, thread_id, agent_id)
@@ -1302,8 +1304,9 @@ async def test_carry_forward_is_not_transitive(db: AsyncConnection) -> None:
 
 
 async def test_carry_forward_excludes_retracted_findings(db: AsyncConnection) -> None:
-    from server.market_hive.blackboard import carry_forward_findings
     from sqlalchemy import text
+
+    from server.market_hive.blackboard import carry_forward_findings
 
     run_id, thread_id, agent_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
     await _seed_run(db, run_id, thread_id, agent_id)
@@ -1330,8 +1333,9 @@ async def test_carried_anchors_visible_via_get_confirmed_across_threads(
 ) -> None:
     """Carried anchors reference the parent's thread_id, which does not belong
     to the child run — get_confirmed(thread_id=None) must still surface them."""
-    from server.market_hive.blackboard import carry_forward_findings
     from sqlalchemy import text
+
+    from server.market_hive.blackboard import carry_forward_findings
 
     run_id, thread_id, agent_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
     await _seed_run(db, run_id, thread_id, agent_id)

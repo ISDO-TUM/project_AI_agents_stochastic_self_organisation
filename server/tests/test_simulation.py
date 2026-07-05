@@ -1631,7 +1631,10 @@ async def test_swarm_run_still_running_parent_returns_409(client: AsyncClient) -
 
     async with get_engine().connect() as conn:
         await conn.execute(
-            text("INSERT INTO swarm_runs (id, status, mode) VALUES ('still-running', 'running', 'swarm')")
+            text(
+                "INSERT INTO swarm_runs (id, status, mode) "
+                "VALUES ('still-running', 'running', 'swarm')"
+            )
         )
         await conn.commit()
 
@@ -1654,7 +1657,10 @@ async def test_swarm_run_valid_parent_carries_session(client: AsyncClient) -> No
 
     async with get_engine().connect() as conn:
         await conn.execute(
-            text("INSERT INTO swarm_runs (id, status, mode) VALUES ('parent-done', 'completed', 'swarm')")
+            text(
+                "INSERT INTO swarm_runs (id, status, mode) "
+                "VALUES ('parent-done', 'completed', 'swarm')"
+            )
         )
         await conn.commit()
 
@@ -1696,7 +1702,10 @@ async def test_run_metrics_endpoint_returns_snapshot_after_termination(client: A
 
     async with get_engine().connect() as conn:
         await conn.execute(
-            text("INSERT INTO swarm_runs (id, status, mode) VALUES ('done-run', 'completed', 'swarm')")
+            text(
+                "INSERT INTO swarm_runs (id, status, mode) "
+                "VALUES ('done-run', 'completed', 'swarm')"
+            )
         )
         await conn.execute(
             text("INSERT INTO run_metrics (run_id, metrics) VALUES ('done-run', :m)"),

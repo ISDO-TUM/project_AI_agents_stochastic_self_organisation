@@ -31,11 +31,10 @@ from server.guardrails import build_guarded_system_prompt
 from server.llm import call_agent
 from server.market_hive.auction import AuctionEngine, Invitation
 from server.market_hive.blackboard import Blackboard, carry_forward_findings, format_entries_digest
-from server.market_hive.metrics import compute_run_metrics
-from server.market_hive.tracing import get_tracer
 from server.market_hive.contract_source import FallbackContractSource
 from server.market_hive.convergence import ConvergenceEngine
 from server.market_hive.journal import RunJournal
+from server.market_hive.metrics import compute_run_metrics
 from server.market_hive.prompts import (
     AUCTION_SYSTEM_SUFFIX,
     RATIFY_SYSTEM_SUFFIX,
@@ -58,6 +57,7 @@ from server.market_hive.schemas import (
 )
 from server.market_hive.synthesis import FallbackAnswerSynthesizer
 from server.market_hive.termination import MaxRoundsTerminator, Synthesizer
+from server.market_hive.tracing import get_tracer
 from server.market_hive.trust import TrustRegistry as DefaultTrustRegistry
 from server.schemas import ToolCall
 
@@ -1423,7 +1423,9 @@ async def run_swarm(
         await db.commit()
         resume_from = _phase_index(run_row["phase"], config.max_rounds)
         recorded_round = run_row["current_round"] or 1
-        yield _step("system", f"Run resumed at phase {run_row['phase']!r}.", data={"run_id": run_id})
+        yield _step(
+            "system", f"Run resumed at phase {run_row['phase']!r}.", data={"run_id": run_id}
+        )
     else:
         run_id = str(uuid.uuid4())
         session_id = run_id
@@ -1616,7 +1618,15 @@ async def run_swarm(
 
         status_flips = {"n": 0}
         async for step in _end_of_round(
-            db, run_id, threads, takers, round, convergence, contract.task_type, config, status_flips
+            db,
+            run_id,
+            threads,
+            takers,
+            round,
+            convergence,
+            contract.task_type,
+            config,
+            status_flips,
         ):
             yield step
 

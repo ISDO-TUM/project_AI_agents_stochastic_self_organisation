@@ -206,7 +206,7 @@ def test_domain_similarity_gates_transfer() -> None:
 
 
 def test_bounds_hold_for_random_sequences() -> None:
-    rng = random.Random(7)
+    rng = random.Random(7)  # noqa: S311 — deterministic test-fixture data, not cryptographic
     for _ in range(200):
         evs = [
             TrustEvent("x", rng.random(), rng.random() * 2, None, "d", i)

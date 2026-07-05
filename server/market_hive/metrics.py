@@ -201,7 +201,7 @@ async def _participation_block(db: AsyncConnection, run_id: str) -> dict[str, An
             {"r": run_id},
         )
     ).fetchall()
-    posts_by_agent = {author_id: n for author_id, n in post_rows}
+    posts_by_agent = dict(post_rows)
 
     total_bids = (
         await db.execute(text("SELECT COUNT(*) FROM bids WHERE run_id = :r"), {"r": run_id})

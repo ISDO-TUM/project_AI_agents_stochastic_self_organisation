@@ -194,7 +194,7 @@ async def test_participation_block_reports_posts_and_abstention(db: AsyncConnect
 
 
 async def test_contestation_present_when_disputes_exist(db: AsyncConnection) -> None:
-    run_id, e1, _e3 = await _seed_fixture_run(db)
+    run_id, _e1, _e3 = await _seed_fixture_run(db)
     confirmed_id = (
         await db.execute(
             text("SELECT id FROM confirmed_entries WHERE run_id = :r"), {"r": run_id}

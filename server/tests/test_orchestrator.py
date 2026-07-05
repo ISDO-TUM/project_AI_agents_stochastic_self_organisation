@@ -884,7 +884,10 @@ async def test_follow_up_run_with_no_parent_findings_runs_normally(db: AsyncConn
     await _insert_agent(db, "a1", "Alpha")
     await _insert_agent(db, "a2", "Beta")
     await db.execute(
-        text("INSERT INTO swarm_runs (id, status, mode) VALUES ('empty-parent', 'completed', 'swarm')")
+        text(
+            "INSERT INTO swarm_runs (id, status, mode) "
+            "VALUES ('empty-parent', 'completed', 'swarm')"
+        )
     )
     await db.commit()
 
@@ -913,7 +916,9 @@ async def test_unknown_parent_run_id_raises(db: AsyncConnection) -> None:
 async def test_running_parent_run_id_raises(db: AsyncConnection) -> None:
     await _insert_agent(db, "a1", "Alpha")
     await db.execute(
-        text("INSERT INTO swarm_runs (id, status, mode) VALUES ('still-running', 'running', 'swarm')")
+        text(
+            "INSERT INTO swarm_runs (id, status, mode) VALUES ('still-running', 'running', 'swarm')"
+        )
     )
     await db.commit()
     with pytest.raises(ValueError):
