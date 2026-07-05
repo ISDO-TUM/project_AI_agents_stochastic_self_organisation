@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator
 from typing import Any
@@ -1603,6 +1604,171 @@ async def test_swarm_run_streams_simulation_steps_as_sse(client: AsyncClient) ->
     assert "data: " in body
     assert "Contract created" in body
     assert "convergence" in body
+
+
+@pytest.mark.asyncio
+async def test_with_keepalive_pads_slow_gaps_without_cancelling_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tick during a slow step must interleave a keepalive comment, not
+    abort the step. Regression: wrapping ``it.__anext__()`` directly in
+    ``asyncio.wait_for`` cancels the wrapped coroutine on every timeout tick —
+    that would silently kill a genuinely slow (not hung) swarm turn instead of
+    just padding the gap around it, exactly the bug this wrapper exists to
+    avoid on the *proxy* side."""
+    import server.routes.simulation as sim_routes
+
+    monkeypatch.setattr(sim_routes, "_SSE_KEEPALIVE_S", 0.05)
+
+    async def slow_steps() -> AsyncIterator[str]:
+        await asyncio.sleep(0.2)
+        yield "data: real\n\n"
+
+    frames = [frame async for frame in sim_routes._with_keepalive(slow_steps())]
+
+    assert frames.count(": keepalive\n\n") >= 2
+    assert frames[-1] == "data: real\n\n"
+
+
+@pytest.mark.asyncio
+async def test_with_keepalive_propagates_underlying_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real failure from the wrapped stream must still surface, not vanish
+    into a keepalive loop."""
+    import server.routes.simulation as sim_routes
+
+    monkeypatch.setattr(sim_routes, "_SSE_KEEPALIVE_S", 0.05)
+
+    async def failing_steps() -> AsyncIterator[str]:
+        yield "data: one\n\n"
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        async for _ in sim_routes._with_keepalive(failing_steps()):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_swarm_run_unknown_parent_run_id_returns_404(client: AsyncClient) -> None:
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    resp = await client.post(
+        "/api/simulation/run",
+        json={"engine": "swarm", "prompt": "p", "parent_run_id": "does-not-exist"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_swarm_run_still_running_parent_returns_409(client: AsyncClient) -> None:
+    from sqlalchemy import text
+
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    async with get_engine().connect() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO swarm_runs (id, status, mode) "
+                "VALUES ('still-running', 'running', 'swarm')"
+            )
+        )
+        await conn.commit()
+
+    resp = await client.post(
+        "/api/simulation/run",
+        json={"engine": "swarm", "prompt": "p", "parent_run_id": "still-running"},
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_swarm_run_valid_parent_carries_session(client: AsyncClient) -> None:
+    from sqlalchemy import text
+
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    async with get_engine().connect() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO swarm_runs (id, status, mode) "
+                "VALUES ('parent-done', 'completed', 'swarm')"
+            )
+        )
+        await conn.commit()
+
+    captured_kwargs: dict[str, Any] = {}
+
+    async def fake_run_swarm(config: Any, db: Any, **kwargs: Any) -> AsyncIterator[SimulationStep]:
+        captured_kwargs.update(kwargs)
+        yield SimulationStep(type="convergence", msg="Run complete.")
+
+    with patch("server.routes.simulation.run_swarm", new=fake_run_swarm):
+        resp = await client.post(
+            "/api/simulation/run",
+            json={"engine": "swarm", "prompt": "p", "parent_run_id": "parent-done"},
+        )
+
+    assert resp.status_code == 200
+    assert captured_kwargs.get("parent_run_id") == "parent-done"
+
+
+@pytest.mark.asyncio
+async def test_run_metrics_endpoint_404s_before_termination(client: AsyncClient) -> None:
+    from sqlalchemy import text
+
+    async with get_engine().connect() as conn:
+        await conn.execute(
+            text("INSERT INTO swarm_runs (id, status, mode) VALUES ('mid-run', 'running', 'swarm')")
+        )
+        await conn.commit()
+
+    resp = await client.get("/api/simulation/mid-run/metrics")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_run_metrics_endpoint_returns_snapshot_after_termination(client: AsyncClient) -> None:
+    import json
+
+    from sqlalchemy import text
+
+    async with get_engine().connect() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO swarm_runs (id, status, mode) "
+                "VALUES ('done-run', 'completed', 'swarm')"
+            )
+        )
+        await conn.execute(
+            text("INSERT INTO run_metrics (run_id, metrics) VALUES ('done-run', :m)"),
+            {"m": json.dumps({"duplication": None, "citations": {"total": 0}})},
+        )
+        await conn.commit()
+
+    resp = await client.get("/api/simulation/done-run/metrics")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["citations"]["total"] == 0
+    assert body["duplication"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_metrics_endpoint_404s_for_unknown_run(client: AsyncClient) -> None:
+    resp = await client.get("/api/simulation/does-not-exist/metrics")
+    assert resp.status_code == 404
 
 
 @pytest.mark.asyncio

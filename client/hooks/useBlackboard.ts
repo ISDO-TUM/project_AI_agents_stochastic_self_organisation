@@ -14,6 +14,7 @@ const EMPTY_STATE: BlackboardState = {
   threads: [],
   confirmed: [],
   draft: [],
+  pendingReplies: [],
   loading: false,
   error: null,
 };
@@ -112,6 +113,7 @@ function reducer(state: BlackboardState, action: Action): BlackboardState {
         threads: action.data.threads,
         confirmed: action.data.confirmed,
         draft: action.data.draft,
+        pendingReplies: [],
         loading: false,
         error: null,
       };
@@ -177,6 +179,7 @@ export function useBlackboard(
               threads: data.threads,
               confirmed: data.confirmed,
               draft: data.draft,
+              pendingReplies: [],
             },
           });
         }

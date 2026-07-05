@@ -1,13 +1,14 @@
 "use client";
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
 import { ReceiptText } from "lucide-react";
-import { Agent } from "@/lib/types";
+import { Agent, ContractInfo, ThreadInfo } from "@/lib/types";
 import { agentColor } from "@/lib/agent-color";
 import { useTheme } from "@/lib/theme-context";
-import { getTheme, BURG_LT, BURG_GLOW } from "@/lib/theme";
+import { getTheme, BURG_LT } from "@/lib/theme";
 import { AgentTrustPanel } from "./blackboard/agent-trust-panel";
+import { ContractReveal } from "./blackboard/contract-reveal";
 
 interface AgentDockProps {
   agents: Agent[];
@@ -23,12 +24,20 @@ interface AgentDockProps {
   promotedAgentIds?: Set<string>;
   /** Agent IDs whose turn is in flight — pulse a ring around their chip. */
   respondingIds?: string[];
+  /** The Market Maker's drafted contract — clicking its chip reopens it. */
+  contract?: ContractInfo | null;
+  /** Threads for the contract's Schedule of Work. */
+  threads?: ThreadInfo[];
+  /** True while the Market Maker is drafting — pulses its chip like a
+   *  responding agent's. */
+  marketMakerBusy?: boolean;
 }
 
 /** Fixed horizontal strip above the prompt bar — replaces individually
- *  draggable agent nodes and the Market Maker badge in swarm mode. Market
- *  Maker is a visual-only chip (not clickable, no editable entity behind
- *  it); each agent chip opens the same edit panel a canvas node click does. */
+ *  draggable agent nodes in swarm mode. The Market Maker leads the dock as a
+ *  participant: it pulses while drafting the contract and, once the contract
+ *  exists, clicking it reopens the document. Each agent chip opens the same
+ *  edit panel a canvas node click does. */
 export function AgentDock({
   agents,
   onSelectAgent,
@@ -37,10 +46,14 @@ export function AgentDock({
   trustVectors = {},
   promotedAgentIds,
   respondingIds = [],
+  contract = null,
+  threads = [],
+  marketMakerBusy = false,
 }: AgentDockProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
   const dockRef = useRef<HTMLDivElement>(null);
+  const [contractOpen, setContractOpen] = useState(false);
 
   useEffect(() => {
     const el = dockRef.current;
@@ -55,6 +68,8 @@ export function AgentDock({
     observer.observe(el);
     return () => observer.disconnect();
   }, [onHeightChange]);
+
+  const mmClickable = contract != null;
 
   return (
     <div
@@ -73,7 +88,7 @@ export function AgentDock({
         boxShadow: dark
           ? "0 12px 40px rgba(0,0,0,0.5)"
           : "0 8px 28px rgba(0,0,0,0.12)",
-        padding: "10px 8px",
+        padding: "2px 8px",
       }}
     >
       <div
@@ -84,14 +99,16 @@ export function AgentDock({
           gap: 14,
           overflowX: "auto",
           overflowY: "hidden",
-          padding: "0 16px",
+          // Vertical padding gives the chips' pulse ring (scales to 1.5×) room
+          // to expand before `overflowY: hidden` clips it.
+          padding: "12px 16px",
           maskImage:
             "linear-gradient(to right, transparent, black 24px, black calc(100% - 24px), transparent)",
           WebkitMaskImage:
             "linear-gradient(to right, transparent, black 24px, black calc(100% - 24px), transparent)",
         }}
       >
-        {/* Market Maker — visual anchor only, not clickable */}
+        {/* ── Market Maker — drafts the contract; click reopens it ── */}
         <div
           style={{
             display: "flex",
@@ -101,23 +118,83 @@ export function AgentDock({
             flexShrink: 0,
           }}
         >
-          <div
+          <button
+            onClick={mmClickable ? () => setContractOpen(true) : undefined}
+            disabled={!mmClickable}
+            title={
+              mmClickable
+                ? "View the drafted contract"
+                : marketMakerBusy
+                  ? "Drafting the contract…"
+                  : "Market Maker"
+            }
             style={{
-              width: 40,
-              height: 40,
-              borderRadius: "50%",
-              background: dark
-                ? "radial-gradient(circle at 35% 35%, rgba(196,55,79,0.22) 0%, rgba(139,26,47,0.12) 60%, rgba(6,5,12,0.92) 100%)"
-                : "radial-gradient(circle at 35% 35%, rgba(196,55,79,0.15) 0%, rgba(139,26,47,0.08) 60%, rgba(240,238,248,0.97) 100%)",
-              border: "1.5px solid rgba(139,26,47,0.35)",
-              boxShadow: `0 0 14px ${BURG_GLOW}`,
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
+              position: "relative",
+              display: "inline-flex",
+              background: "none",
+              border: "none",
+              padding: 0,
+              cursor: mmClickable ? "pointer" : "default",
             }}
           >
-            <ReceiptText size={17} strokeWidth={1.5} color={BURG_LT} />
-          </div>
+            {marketMakerBusy && (
+              <motion.span
+                aria-hidden
+                initial={{ opacity: 0.7, scale: 1 }}
+                animate={{ opacity: [0.7, 0, 0.7], scale: [1, 1.5, 1] }}
+                transition={{
+                  duration: 1.3,
+                  repeat: Infinity,
+                  ease: "easeOut",
+                }}
+                style={{
+                  position: "absolute",
+                  inset: -3,
+                  borderRadius: "50%",
+                  border: `2px solid ${BURG_LT}`,
+                  pointerEvents: "none",
+                }}
+              />
+            )}
+            <motion.span
+              whileHover={mmClickable ? { scale: 1.08 } : undefined}
+              whileTap={mmClickable ? { scale: 0.94 } : undefined}
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: "50%",
+                background: dark
+                  ? "radial-gradient(circle at 35% 35%, rgba(196,55,79,0.22) 0%, rgba(139,26,47,0.12) 60%, rgba(6,5,12,0.92) 100%)"
+                  : "radial-gradient(circle at 35% 35%, rgba(196,55,79,0.15) 0%, rgba(139,26,47,0.08) 60%, rgba(240,238,248,0.97) 100%)",
+                border: "1.5px solid rgba(139,26,47,0.35)",
+                // Only glow while actively drafting — no permanent halo, so it
+                // sits level with the agent chips beside it.
+                boxShadow: marketMakerBusy
+                  ? `0 0 18px ${BURG_LT}aa`
+                  : undefined,
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              {/* The quill wiggles while the contract is being written. */}
+              <motion.span
+                animate={
+                  marketMakerBusy
+                    ? { rotate: [0, -8, 6, -4, 0], y: [0, -1, 0.5, 0] }
+                    : { rotate: 0, y: 0 }
+                }
+                transition={
+                  marketMakerBusy
+                    ? { duration: 1.1, repeat: Infinity, ease: "easeInOut" }
+                    : { duration: 0.2 }
+                }
+                style={{ display: "flex" }}
+              >
+                <ReceiptText size={17} strokeWidth={1.5} color={BURG_LT} />
+              </motion.span>
+            </motion.span>
+          </button>
           <span
             style={{
               fontSize: 8.5,
@@ -129,7 +206,7 @@ export function AgentDock({
               whiteSpace: "nowrap",
             }}
           >
-            Market Maker
+            {marketMakerBusy ? "Drafting…" : "Market Maker"}
           </span>
         </div>
 
@@ -240,6 +317,15 @@ export function AgentDock({
           })}
         </AnimatePresence>
       </div>
+
+      {contract && (
+        <ContractReveal
+          open={contractOpen}
+          contract={contract}
+          threads={threads}
+          onClose={() => setContractOpen(false)}
+        />
+      )}
     </div>
   );
 }

@@ -43,6 +43,31 @@ async def test_embed_texts_returns_none_on_failure(mock_client_fn: MagicMock) ->
 
 
 @patch("server.llm.embeddings._get_embedding_client")
+async def test_embed_texts_skips_blank_inputs(mock_client_fn: MagicMock) -> None:
+    """Blank texts never reach the API (it 400s on them); they become zero vectors."""
+    embedding_0 = MagicMock(index=0, embedding=[0.1, 0.2])
+    response = MagicMock()
+    response.data = [embedding_0]
+
+    client = AsyncMock()
+    client.embeddings.create.return_value = response
+    mock_client_fn.return_value = client
+
+    result = await embed_texts(["", "hello", "   "])
+    assert result == [[0.0, 0.0], [0.1, 0.2], [0.0, 0.0]]
+    assert client.embeddings.create.call_args.kwargs["input"] == ["hello"]
+
+
+@patch("server.llm.embeddings._get_embedding_client")
+async def test_embed_texts_all_blank_returns_none_without_api_call(
+    mock_client_fn: MagicMock,
+) -> None:
+    result = await embed_texts(["", "  "])
+    assert result is None
+    mock_client_fn.assert_not_called()
+
+
+@patch("server.llm.embeddings._get_embedding_client")
 async def test_embed_texts_batch_preserves_order(mock_client_fn: MagicMock) -> None:
     embedding_0 = MagicMock(index=0, embedding=[0.1, 0.2])
     embedding_1 = MagicMock(index=1, embedding=[0.3, 0.4])

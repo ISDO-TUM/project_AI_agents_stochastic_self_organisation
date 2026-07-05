@@ -19,10 +19,13 @@ export function computePromotionThreshold(draft: DraftEntry[]): number {
   return Math.max(1, Math.floor(authors.size / 3) + 1);
 }
 
-function findById(entries: DraftEntry[], targetId: string): DraftEntry | null {
+export function findDraftEntry(
+  entries: DraftEntry[],
+  targetId: string,
+): DraftEntry | null {
   for (const e of entries) {
     if (e.id === targetId) return e;
-    const found = findById(e.children, targetId);
+    const found = findDraftEntry(e.children, targetId);
     if (found) return found;
   }
   return null;
@@ -34,7 +37,7 @@ export function resolveParentPreview(
   replyTo: string | null,
 ): string {
   if (!replyTo) return "";
-  const parent = findById(draft, replyTo);
+  const parent = findDraftEntry(draft, replyTo);
   return parent ? truncate(parent.content) : "";
 }
 
@@ -62,7 +65,7 @@ export function computePromotedAuthorIds(
   const ids = new Set<string>();
   for (const c of confirmed) {
     if (!c.source_draft_id) continue;
-    const sourceEntry = findById(draft, c.source_draft_id);
+    const sourceEntry = findDraftEntry(draft, c.source_draft_id);
     if (sourceEntry) ids.add(sourceEntry.author_id);
   }
   return ids;
