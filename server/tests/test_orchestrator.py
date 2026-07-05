@@ -412,7 +412,7 @@ async def test_round_one_second_wave_sees_first_wave_proposals(db: AsyncConnecti
     for p in wave2:
         assert "PROPOSALS ALREADY POSTED" in p
         assert "proposal" in p  # wave-1 content excerpts made it in
-        assert "do NOT post" in p
+        assert "do NOT re-cover it" in p
 
 
 async def test_silent_wave2_agent_still_votes_and_run_completes(db: AsyncConnection) -> None:

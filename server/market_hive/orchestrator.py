@@ -1263,6 +1263,21 @@ async def _end_of_round(
             data=entry.model_dump(mode="json"),
         )
 
+    # A promoted finding keeps accruing citations on its source draft like any
+    # other entry — the Confirmed layer's count must track that instead of
+    # freezing at the promotion-time snapshot, both for the live board (the
+    # Draft board's ring keeps counting; Confirmed shouldn't visibly disagree
+    # with it) and for synthesis, which ranks findings by this same column.
+    recited = await bb.refresh_confirmed_citation_counts(run_id=run_id)
+    for entry in recited:
+        yield _step(
+            "bb-recite",
+            f"Confirmed entry's citation count updated ({entry.citation_count}).",
+            thread_id=entry.thread_id,
+            entry_id=entry.id,
+            data=entry.model_dump(mode="json"),
+        )
+
     # Contestable consensus: a contest or re-affirmation forces at least one more
     # round of deliberation, so the caller counts flips toward equilibrium activity.
     contested = await bb.contest_check(
@@ -1458,7 +1473,10 @@ async def _run_ratification(
     Returns ``(steps, approvals, voters, objections)``. ``voters`` is the count
     of active (non-dropped) takers — the majority denominator — not the count
     of respondents: a taker whose turn makes no tool call is a silent
-    non-approval, per spec.
+    non-approval, per spec. Each objection is prefixed with its author's name
+    (``votes`` is keyed by agent_id, same as ``ratification_votes`` in the tool
+    context) so a contested synthesis is traceable back to who raised it,
+    instead of an anonymous list of reasons.
     """
     votes: dict[str, str | None] = {}
     active = [t for t in takers if t not in dropped]
@@ -1470,7 +1488,11 @@ async def _run_ratification(
         turns.append(_ratify_turn(agent, candidate, findings, votes, agent_runner, run_id))
     steps = [step async for step in _run_turns(db, turns)]
     approvals = sum(1 for v in votes.values() if v is None)
-    objections = [v for v in votes.values() if v]
+    objections = [
+        f"{agents_by_id.get(agent_id, {}).get('name', agent_id[:8])}: {reason}"
+        for agent_id, reason in votes.items()
+        if reason
+    ]
     return steps, approvals, len(active), objections
 
 

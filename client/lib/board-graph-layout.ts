@@ -126,11 +126,6 @@ const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 const MAX_RELAX_ENTRIES = 320;
 const MAX_RELAX_ITERATIONS = 60;
 
-/** Above this many proposal/reply entries, low-significance ones collapse to
- *  compact pills instead of full cards (graph declutter). Not configurable —
- *  runs at or under the limit render identically to before (density gate). */
-export const FULL_CARD_LIMIT = 10;
-
 function estimateCardSize(
   entry: FlatEntry,
   compact = false,

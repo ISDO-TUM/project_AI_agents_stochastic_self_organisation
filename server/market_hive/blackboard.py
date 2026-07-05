@@ -756,7 +756,10 @@ class Blackboard:
             )
             if merge_target is not None:
                 await self._db.execute(
-                    text("UPDATE draft_entries SET merged_into = :cid WHERE id = :eid"),
+                    text(
+                        "UPDATE draft_entries SET merged_into = :cid, is_visible = true "
+                        "WHERE id = :eid"
+                    ),
                     {"cid": merge_target, "eid": entry_id},
                 )
                 await self._db.execute(
@@ -811,6 +814,15 @@ class Blackboard:
                     "round_confirmed": current_round,
                 },
             )
+            # Graduating to Confirmed supersedes any staleness the source draft
+            # picked up on the way there (crossing the threshold can take several
+            # rounds — see check_promotions' no-is_visible-filter note) — showing
+            # it as "evaporated" on the Draft board while it's also a celebrated
+            # Confirmed finding is a straight contradiction, not just cosmetic.
+            await self._db.execute(
+                text("UPDATE draft_entries SET is_visible = true WHERE id = :id"),
+                {"id": entry_id},
+            )
             confirmed_result = await self._db.execute(
                 text("SELECT * FROM confirmed_entries WHERE id = :id"),
                 {"id": confirmed_id},
@@ -823,6 +835,70 @@ class Blackboard:
         if newly_promoted:
             await self._db.commit()
         return newly_promoted
+
+    async def refresh_confirmed_citation_counts(
+        self, *, run_id: str
+    ) -> list[ConfirmedEntrySchema]:
+        """Sync an already-promoted finding's ``citation_count`` to its source
+        draft's current distinct-citer count.
+
+        ``citation_count`` on ``confirmed_entries`` was previously written once,
+        at promotion time, and never touched again (only the dedup-merge path
+        bumped it, for citers landing on an already-merged duplicate). But the
+        source draft keeps accruing citations after promotion like any other
+        entry — the citation graph doesn't freeze — so the Confirmed layer's
+        count silently went stale relative to what the Draft board kept
+        showing for the same entry. That staleness isn't just cosmetic:
+        ``select_final_answer`` and the synthesis ranking both sort by this
+        column, so a genuinely more-endorsed finding could be out-ranked by one
+        that just happened to promote earlier. Returns entries whose count
+        actually changed, for the caller to also push to the live UI.
+        """
+        rows = (
+            (
+                await self._db.execute(
+                    text(
+                        """
+                        SELECT ce.id AS id,
+                               COUNT(DISTINCT c.citing_agent_id) AS new_count
+                        FROM confirmed_entries ce
+                        JOIN draft_entries de ON de.id = ce.source_draft_id
+                        LEFT JOIN citations c
+                            ON c.cited_entry_id = de.id
+                           AND c.citing_agent_id != de.author_id
+                           AND c.run_id = de.run_id
+                        WHERE ce.run_id = :run_id AND ce.source_draft_id IS NOT NULL
+                        GROUP BY ce.id, ce.citation_count
+                        HAVING COUNT(DISTINCT c.citing_agent_id) != ce.citation_count
+                        """
+                    ),
+                    {"run_id": run_id},
+                )
+            )
+            .mappings()
+            .all()
+        )
+        refreshed: list[ConfirmedEntrySchema] = []
+        for row in rows:
+            await self._db.execute(
+                text("UPDATE confirmed_entries SET citation_count = :n WHERE id = :id"),
+                {"n": row["new_count"], "id": row["id"]},
+            )
+            updated = (
+                (
+                    await self._db.execute(
+                        text("SELECT * FROM confirmed_entries WHERE id = :id"),
+                        {"id": row["id"]},
+                    )
+                )
+                .mappings()
+                .fetchone()
+            )
+            if updated is not None:
+                refreshed.append(ConfirmedEntrySchema(**dict(updated)))
+        if refreshed:
+            await self._db.commit()
+        return refreshed
 
     # ── Contestable consensus: dispute / contest / re-affirm ───────────────
 
@@ -1107,7 +1183,12 @@ class Blackboard:
     ) -> int:
         """Soft-delete entries not cited for decay_rounds consecutive rounds.
 
-        Round-1 entries are exempt when current_round < 2.
+        Round-1 entries are exempt when current_round < 2. An entry that already
+        graduated to Confirmed is exempt permanently — it can legitimately stop
+        collecting fresh citations once agents start citing the Confirmed finding
+        instead of re-affirming its draft, and "evaporated" on the Draft board
+        would flatly contradict it also being a celebrated Confirmed finding.
+
         Returns the count of entries deleted.
         """
         exempt_round1 = current_round < 2
@@ -1121,6 +1202,10 @@ class Blackboard:
                   AND is_visible = true
                   AND NOT (round = 1 AND :exempt)
                   AND (:current_round - COALESCE(last_cited_round, 0)) >= :decay_rounds
+                  AND NOT EXISTS (
+                      SELECT 1 FROM confirmed_entries ce
+                      WHERE ce.source_draft_id = draft_entries.id
+                  )
                 """
             ),
             {

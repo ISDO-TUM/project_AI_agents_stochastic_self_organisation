@@ -94,6 +94,7 @@ type Action =
   | { type: "POST"; entry: DraftEntry }
   | { type: "CITE"; entryId: string; citerName: string; round: number }
   | { type: "PROMOTE"; confirmed: ConfirmedEntry }
+  | { type: "RECITE"; confirmed: ConfirmedEntry }
   | { type: "DELETE"; entryId: string }
   | { type: "CONTEST"; entryId: string; status: ConfirmedEntry["status"] }
   | { type: "THINKING_RESET" }
@@ -193,6 +194,19 @@ function reducer(state: SwarmRunState, action: Action): SwarmRunState {
       return {
         ...state,
         blackboard: { ...bb, confirmed: [...bb.confirmed, action.confirmed] },
+      };
+    case "RECITE":
+      // Citations keep accruing on a promoted entry's source draft — sync the
+      // Confirmed card's count so it doesn't visibly disagree with the Draft
+      // board's own citation ring for the same underlying entry.
+      return {
+        ...state,
+        blackboard: {
+          ...bb,
+          confirmed: bb.confirmed.map((c) =>
+            c.id === action.confirmed.id ? action.confirmed : c,
+          ),
+        },
       };
     case "DELETE":
       return {
@@ -418,6 +432,13 @@ function applyStep(
       if (d.id)
         dispatch({
           type: "PROMOTE",
+          confirmed: d as unknown as ConfirmedEntry,
+        });
+      break;
+    case "bb-recite":
+      if (d.id)
+        dispatch({
+          type: "RECITE",
           confirmed: d as unknown as ConfirmedEntry,
         });
       break;

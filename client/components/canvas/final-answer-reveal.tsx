@@ -294,11 +294,30 @@ export function FinalAnswerReveal({
                         color: t.textSub,
                       }}
                     >
-                      {ratification.objections.map((o, i) => (
-                        <li key={i}>
-                          <MarkdownRenderer content={o} fontSize={11.5} compact />
-                        </li>
-                      ))}
+                      {ratification.objections.map((o, i) => {
+                        // Objections are formatted "AgentName: reason" server-side
+                        // (orchestrator.py's _run_ratification) so a contested
+                        // synthesis is traceable back to who raised each point.
+                        const sep = o.indexOf(": ");
+                        const name = sep > 0 ? o.slice(0, sep) : null;
+                        const reason = sep > 0 ? o.slice(sep + 2) : o;
+                        return (
+                          <li key={i} style={{ marginBottom: 4 }}>
+                            {name && (
+                              <span
+                                style={{
+                                  fontWeight: 700,
+                                  color: AMBER,
+                                  marginRight: 4,
+                                }}
+                              >
+                                {name}:
+                              </span>
+                            )}
+                            <MarkdownRenderer content={reason} fontSize={11.5} compact />
+                          </li>
+                        );
+                      })}
                     </ul>
                   )}
                 </div>

@@ -79,13 +79,19 @@ def round_one_system_suffix(temperature_instruction: str) -> str:
         "RULES:\n"
         "- The contract and your thread are in the message below — that is your input.\n"
         "- Use post_to_blackboard(entry_type='proposal', thread_id=...) to post.\n"
-        "- You may call read_blackboard() to see others' posts (likely empty this early).\n\n"
-        "ROUND 1 INSTRUCTION: Write your opening proposal for this thread. Include "
-        "(1) why you are qualified, (2) your initial analysis and answer, and (3) the "
-        "key clauses or evidence you rely on. This is your stake in the ground — make "
-        "it thorough and specific. Fill the claim field with your one-sentence thesis, "
-        "evidence with the file names you relied on, and stance ('new' for an opening "
-        "proposal).\n\n"
+        "- You may call read_blackboard() to see others' posts (likely empty this early).\n"
+        "- A proposal is a scarce, deliberate act, not a default — post one only when "
+        "you have something to say that genuinely needs its own opening stake. If your "
+        "own system prompt says to abstain when your expertise doesn't apply to this "
+        "contract, honor that here: simply make no tool call this turn rather than "
+        "forcing a low-value contribution.\n\n"
+        "ROUND 1 INSTRUCTION: Write your opening proposal for this thread — but only "
+        "the part of the analysis that genuinely calls for YOUR specific expertise; "
+        "do not re-cover ground better owned by a co-worker's specialty just to be "
+        "thorough. When you do post, include (1) why you are qualified, (2) your "
+        "initial analysis and answer, and (3) the key clauses or evidence you rely on. "
+        "Fill the claim field with your one-sentence thesis, evidence with the file "
+        "names you relied on, and stance ('new' for an opening proposal).\n\n"
         f"{temperature_instruction}"
     )
 
@@ -114,8 +120,11 @@ def round_one_user_prompt(
         f"{_scope_note(contract)}"
         f"ROUND: 1 of {max_rounds}\n"
         f"CO-WORKERS ON THIS THREAD: {people}\n\n"
-        "Write your Round 1 proposal now with "
-        f'post_to_blackboard(entry_type="proposal", thread_id="{thread.id}").'
+        "If this thread is genuinely within your expertise, write your Round 1 "
+        "proposal now with "
+        f'post_to_blackboard(entry_type="proposal", thread_id="{thread.id}"). '
+        "If it is not — nothing here calls for your specific specialty — make no "
+        "tool call; a co-worker better suited to this thread will cover it."
     )
 
 
@@ -145,11 +154,15 @@ def round_one_wave2_user_prompt(
         f"CO-WORKERS ON THIS THREAD: {people}\n\n"
         "PROPOSALS ALREADY POSTED BY YOUR CO-WORKERS:\n"
         f"{listing}\n\n"
-        "If the proposals above fully cover what you would say, do NOT post — you "
-        "will endorse them in the vote sub-round that follows. Post an opening "
-        "proposal ONLY if you add something not already covered: a different "
-        "clause, a different risk, a disagreement, or new evidence. Do not restate "
-        "existing points. To post, call "
+        "Check them point by point before writing anything. If a clause, risk, or "
+        "conclusion you'd raise is already covered above — even by a co-worker with "
+        "a different specialty — do NOT re-cover it; you will endorse it in the "
+        "vote sub-round that follows instead (citing isn't available until the "
+        "discussion rounds). Post an opening proposal ONLY for what is genuinely "
+        "not covered above: a different clause, a different risk, a disagreement, "
+        "or new evidence. A proposal that mostly repeats what's already posted, "
+        "reworded, is not a new proposal. If nothing is left to add, make no tool "
+        "call. To post, call "
         f'post_to_blackboard(entry_type="proposal", thread_id="{thread.id}").'
     )
 

@@ -108,7 +108,7 @@ export function ProposalCard({
         )}
       </div>
 
-      {!entry.is_visible && (
+      {!entry.is_visible && promotedRound === undefined && (
         <div
           style={{
             fontSize: 10.5,

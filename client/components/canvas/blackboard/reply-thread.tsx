@@ -179,7 +179,7 @@ export function ThreadedEntry({
         )}
 
         {/* ── Evaporated ── */}
-        {!entry.is_visible && (
+        {!entry.is_visible && promotedRound === undefined && (
           <div
             style={{
               fontSize: 9.5,

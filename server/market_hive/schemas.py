@@ -287,6 +287,7 @@ SwarmSimStepType = Literal[
     "bb-cite",
     "bb-vote",
     "bb-promote",
+    "bb-recite",
     "bb-delete",
     "bb-mention",
     "bb-dispute",
