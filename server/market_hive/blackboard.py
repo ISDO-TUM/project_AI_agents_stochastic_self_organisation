@@ -836,9 +836,7 @@ class Blackboard:
             await self._db.commit()
         return newly_promoted
 
-    async def refresh_confirmed_citation_counts(
-        self, *, run_id: str
-    ) -> list[ConfirmedEntrySchema]:
+    async def refresh_confirmed_citation_counts(self, *, run_id: str) -> list[ConfirmedEntrySchema]:
         """Sync an already-promoted finding's ``citation_count`` to its source
         draft's current distinct-citer count.
 

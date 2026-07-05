@@ -376,9 +376,9 @@ export function TweaksPanel({
 }: TweaksPanelProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
-  const [activeTab, setActiveTab] = useState<"sim" | "swarm" | "keys" | "rules">(
-    appMode === "swarm" ? "swarm" : "sim",
-  );
+  const [activeTab, setActiveTab] = useState<
+    "sim" | "swarm" | "keys" | "rules"
+  >(appMode === "swarm" ? "swarm" : "sim");
   const [swarmAdvanced, setSwarmAdvanced] = useState(false);
   const updateSwarmConfig = (patch: Partial<SwarmRunConfig>) =>
     onSwarmConfigChange({ ...swarmConfig, ...patch });

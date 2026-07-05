@@ -130,7 +130,10 @@ function estimateCardSize(
   entry: FlatEntry,
   compact = false,
 ): { w: number; h: number } {
-  if (compact && (entry.entry_type === "proposal" || entry.entry_type === "reply")) {
+  if (
+    compact &&
+    (entry.entry_type === "proposal" || entry.entry_type === "reply")
+  ) {
     return { w: 170, h: 30 };
   }
   if (entry.entry_type === "vote") return { w: 160, h: 36 };

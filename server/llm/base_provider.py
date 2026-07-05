@@ -104,9 +104,7 @@ class BaseLLMProvider(ABC):
                 "Please try again with a shorter prompt or fewer tools."
             ) from err
         except Exception:
-            logger.exception(
-                "LLM call failed after %.2fs — model=%s", monotonic() - started, model
-            )
+            logger.exception("LLM call failed after %.2fs — model=%s", monotonic() - started, model)
             raise
 
     async def _call_inner(

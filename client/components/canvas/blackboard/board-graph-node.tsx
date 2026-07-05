@@ -285,7 +285,10 @@ export function GraphEntryCard({
   // Graph declutter: above the density gate, low-significance proposal/reply
   // entries collapse to a small pill instead of a full card — nothing is
   // hidden, just smaller; full content is one click away via the expand modal.
-  if (node.compact && (entry.entry_type === "proposal" || entry.entry_type === "reply")) {
+  if (
+    node.compact &&
+    (entry.entry_type === "proposal" || entry.entry_type === "reply")
+  ) {
     const PillIcon = entry.entry_type === "proposal" ? Lightbulb : Reply;
     return (
       <motion.div
@@ -309,13 +312,22 @@ export function GraphEntryCard({
           borderRadius: 100,
           background: dark ? `${color}12` : `${color}0d`,
           border: `1.5px solid ${
-            node.confirmedRound !== null ? GOLD : selected ? color : `${color}45`
+            node.confirmedRound !== null
+              ? GOLD
+              : selected
+                ? color
+                : `${color}45`
           }`,
           cursor: "pointer",
           boxShadow: selected ? `0 0 10px ${color}45` : "none",
         }}
       >
-        <PillIcon size={10} strokeWidth={2} color={`${color}cc`} style={{ flexShrink: 0 }} />
+        <PillIcon
+          size={10}
+          strokeWidth={2}
+          color={`${color}cc`}
+          style={{ flexShrink: 0 }}
+        />
         <span
           style={{
             fontSize: 10,

@@ -314,7 +314,11 @@ export function FinalAnswerReveal({
                                 {name}:
                               </span>
                             )}
-                            <MarkdownRenderer content={reason} fontSize={11.5} compact />
+                            <MarkdownRenderer
+                              content={reason}
+                              fontSize={11.5}
+                              compact
+                            />
                           </li>
                         );
                       })}
@@ -430,7 +434,11 @@ export function FinalAnswerReveal({
                                   lineHeight: 1.5,
                                 }}
                               >
-                                <MarkdownRenderer content={f.content} fontSize={12} compact />
+                                <MarkdownRenderer
+                                  content={f.content}
+                                  fontSize={12}
+                                  compact
+                                />
                               </div>
                             </div>
                           ))}

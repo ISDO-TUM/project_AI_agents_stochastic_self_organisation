@@ -960,9 +960,7 @@ async def _run_round_one(
     # (phase, round) is never re-driven through another LLM call.
     already_done = await journal.completed_turns(db, phase="round_1", round=1)
 
-    def _wave_turns(
-        wave_index: int, prompts_by_thread: dict[str, str] | None
-    ) -> list[_Turn]:
+    def _wave_turns(wave_index: int, prompts_by_thread: dict[str, str] | None) -> list[_Turn]:
         turns: list[_Turn] = []
         for thread in threads:
             assigned = takers_by_thread.get(thread.id, [])
@@ -1840,7 +1838,14 @@ async def _run_swarm_steps(
         await journal.phase(db, "vote", 1)
         _enter_phase("vote")
         async for step in _run_vote_subround(
-            db, run_id, threads, takers_by_thread, agents_by_id, agent_runner, journal, config.trial_id
+            db,
+            run_id,
+            threads,
+            takers_by_thread,
+            agents_by_id,
+            agent_runner,
+            journal,
+            config.trial_id,
         ):
             yield step
         for step in await _apply_dropouts(db, run_id, agents_by_id, dropped, announced_dropouts):
@@ -1996,7 +2001,14 @@ async def _run_swarm_steps(
                 )
             await _post_synthesis_candidate(db, run_id, threads[0].id, last_round, revised)
             steps2, approvals2, voters2, objections2 = await _run_ratification(
-                db, run_id, revised, findings_for_ratify, takers, dropped, agents_by_id, agent_runner
+                db,
+                run_id,
+                revised,
+                findings_for_ratify,
+                takers,
+                dropped,
+                agents_by_id,
+                agent_runner,
             )
             for step in steps2:
                 yield step
