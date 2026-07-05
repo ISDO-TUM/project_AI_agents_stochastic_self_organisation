@@ -120,6 +120,16 @@ class Terminator(Protocol):
     ) -> bool:
         raise NotImplementedError
 
+    async def is_quiescent(
+        self,
+        *,
+        run_id: str,
+        round: int,
+        config: SwarmRunConfig,
+        db: AsyncConnection,
+    ) -> bool:
+        raise NotImplementedError
+
     async def format_output(
         self,
         *,
