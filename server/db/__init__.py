@@ -152,6 +152,12 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             "ALTER TABLE reputation DROP CONSTRAINT IF EXISTS reputation_agent_id_fkey",
             "ALTER TABLE amendments DROP CONSTRAINT IF EXISTS amendments_proposing_agent_id_fkey",
             "ALTER TABLE agent_trust DROP CONSTRAINT IF EXISTS agent_trust_agent_id_fkey",
+            # disputes/trust_events were added after the drop above and missed it:
+            # both are audit trails like the ones already listed, so they must
+            # tolerate agent deletion (canvas clears, reimports with preserved
+            # ids) instead of blocking it with a live FK.
+            "ALTER TABLE disputes DROP CONSTRAINT IF EXISTS disputes_disputing_agent_id_fkey",
+            "ALTER TABLE trust_events DROP CONSTRAINT IF EXISTS trust_events_agent_id_fkey",
             # Anonymous per-browser ownership (no auth): NULL = legacy/shared rows.
             "ALTER TABLE agents ADD COLUMN IF NOT EXISTS user_id TEXT",
             "ALTER TABLE knowledge_files ADD COLUMN IF NOT EXISTS user_id TEXT",
