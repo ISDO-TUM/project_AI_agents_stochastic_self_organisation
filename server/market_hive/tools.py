@@ -15,6 +15,12 @@ from server.tools.base import Tool
 # capped per round so endorsement stays a deliberate, bounded act.
 MAX_CITES_PER_ROUND = 3
 
+# Posts are capped to keep the board terse. A round-1 proposal may run longer
+# than a discussion reply, which should be a delta (a new point, disagreement,
+# or new evidence) — not a restatement of the whole analysis.
+MAX_PROPOSAL_CHARS = 3000
+MAX_REPLY_CHARS = 1500
+
 # ── Input models ─────────────────────────────────────────────────────────────
 
 
@@ -135,6 +141,23 @@ class PostToBlackboardTool(Tool):
     ) -> str:
         if not isinstance(validated_input, PostToBlackboardInput):
             raise TypeError(f"Expected PostToBlackboardInput, got {type(validated_input).__name__}")
+
+        # Length guard (terse board): reject before any DB work so the agent can
+        # retry with a shorter delta or call stand_down. Replies are held to a
+        # tighter ceiling than opening proposals.
+        cap = (
+            MAX_PROPOSAL_CHARS
+            if validated_input.entry_type == "proposal"
+            else MAX_REPLY_CHARS
+        )
+        if len(validated_input.content) > cap:
+            return (
+                f'{{"error": "post too long ({len(validated_input.content)} chars > '
+                f'{cap} limit) — shorten to a single delta (one new point, '
+                f'disagreement, or new evidence), or call stand_down if you have '
+                f'nothing material to add."}}'
+            )
+
         ctx = context or {}
         db = ctx["db"]
         run_id: str = ctx["run_id"]
