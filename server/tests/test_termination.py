@@ -154,6 +154,16 @@ async def _create_minimal_schema(conn: AsyncConnection) -> None:
             round INTEGER NOT NULL
         )
         """,
+        """
+        CREATE TABLE disputes (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            disputing_agent_id TEXT NOT NULL,
+            confirmed_entry_id TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            round INTEGER NOT NULL
+        )
+        """,
     ]
     for statement in statements:
         await conn.execute(text(statement))

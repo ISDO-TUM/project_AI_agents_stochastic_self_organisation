@@ -375,8 +375,8 @@ class TerminationEngine:
         return True
 
     async def check_quiescence(self, *, run_id: str, current_round: int) -> bool:
-        """True when the swarm has gone silent: the round produced no new posts
-        or citations, and we are at or past ``min_rounds``.
+        """True when the swarm has gone silent: the round produced no new posts,
+        citations, or disputes, and we are at or past ``min_rounds``.
 
         This is the "everyone has stood down or has nothing to add" ending,
         complementary to equilibrium (which needs confirmed findings first). A
@@ -402,10 +402,7 @@ class TerminationEngine:
 
         new_cites = (
             await self._db.execute(
-                text(
-                    "SELECT COUNT(*) FROM citations WHERE round = :rd AND cited_entry_id IN "
-                    "(SELECT id FROM draft_entries WHERE run_id = :r)"
-                ),
+                text("SELECT COUNT(*) FROM citations WHERE run_id = :r AND round = :rd"),
                 {"r": run_id, "rd": current_round},
             )
         ).scalar_one()
@@ -415,6 +412,21 @@ class TerminationEngine:
                 run_id,
                 current_round,
                 new_cites,
+            )
+            return False
+
+        new_disputes = (
+            await self._db.execute(
+                text("SELECT COUNT(*) FROM disputes WHERE run_id = :r AND round = :rd"),
+                {"r": run_id, "rd": current_round},
+            )
+        ).scalar_one()
+        if new_disputes:
+            logger.info(
+                "check_quiescence run=%s round=%s: NOT quiescent — %d new dispute(s)",
+                run_id,
+                current_round,
+                new_disputes,
             )
             return False
 

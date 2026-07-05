@@ -30,6 +30,22 @@ async def _post(conn: AsyncConnection, run_id: str, thread_id: str, round_: int)
     )
 
 
+async def _dispute(conn: AsyncConnection, run_id: str, round_: int) -> None:
+    await conn.execute(
+        text(
+            "INSERT INTO disputes "
+            "(id, run_id, disputing_agent_id, confirmed_entry_id, reason, round) "
+            "VALUES (:id, :r, 'a1', :entry_id, 'not convincing', :rd)"
+        ),
+        {
+            "id": str(uuid.uuid4()),
+            "r": run_id,
+            "entry_id": str(uuid.uuid4()),
+            "rd": round_,
+        },
+    )
+
+
 @pytest.mark.asyncio
 async def test_quiescence_false_before_min_rounds(db: AsyncConnection) -> None:  # noqa: F811
     run_id, _contract_id, _thread_id = await _seed_run(db)
@@ -52,5 +68,16 @@ async def test_quiescence_true_when_round_has_no_new_activity(db: AsyncConnectio
 async def test_quiescence_false_when_round_has_a_new_post(db: AsyncConnection) -> None:  # noqa: F811
     run_id, _contract_id, thread_id = await _seed_run(db)
     await _post(db, run_id, thread_id, 4)
+    eng = TerminationEngine(db, min_rounds=3)
+    assert await eng.check_quiescence(run_id=run_id, current_round=4) is False
+
+
+@pytest.mark.asyncio
+async def test_quiescence_false_when_round_has_only_a_dispute(db: AsyncConnection) -> None:  # noqa: F811
+    """Regression: a round whose ONLY activity is a dispute (no posts, no
+    citations) must not be treated as quiescent — an in-flight contest is
+    still activity, and abandoning it mid-contest would be a premature end."""
+    run_id, _contract_id, _thread_id = await _seed_run(db)
+    await _dispute(db, run_id, 4)
     eng = TerminationEngine(db, min_rounds=3)
     assert await eng.check_quiescence(run_id=run_id, current_round=4) is False
