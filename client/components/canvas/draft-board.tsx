@@ -7,12 +7,11 @@ import { useTheme } from "@/lib/theme-context";
 import { getTheme, BURG_LT } from "@/lib/theme";
 import { Layers, Maximize2, Network, Rows3, X } from "lucide-react";
 import { computePromotionThreshold } from "@/lib/blackboard-utils";
-import { ProposalCard } from "./blackboard/proposal-card";
-import { ThreadedEntry } from "./blackboard/reply-thread";
 import { ThreadFilterDropdown } from "./blackboard/thread-filter-dropdown";
 import { BoardGraphView } from "./blackboard/board-graph-view";
 import { PromptBrief } from "./blackboard/prompt-brief";
 import { ContractCard } from "./blackboard/contract-card";
+import { DraftEntryStream } from "./blackboard/draft-entry-stream";
 
 interface DraftBoardProps {
   state: BlackboardState;
@@ -244,19 +243,6 @@ export function DraftBoard({
     if (!el) return;
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40) setNewCount(0);
   };
-
-  // Group visible entries by round for the timeline dividers
-  const roundGroups = renderedDraft.reduce<
-    { round: number; entries: typeof renderedDraft }[]
-  >((acc, entry) => {
-    const last = acc[acc.length - 1];
-    if (last && last.round === entry.round) {
-      last.entries.push(entry);
-    } else {
-      acc.push({ round: entry.round, entries: [entry] });
-    }
-    return acc;
-  }, []);
 
   const posStyle: React.CSSProperties = pos
     ? { left: pos.x, top: pos.y }
@@ -514,78 +500,20 @@ export function DraftBoard({
           <EmptyState runId={runId} dark={dark} />
         )}
 
-        {/* Round-grouped content */}
+        {/* Entries — grouped by sub-task in an unfiltered multi-thread run,
+            otherwise a flat round timeline. */}
         {renderedDraft.length > 0 && !state.error && (
-          <>
-            {roundGroups.map((group, gi) => (
-              <div key={group.round}>
-                {gi > 0 && (
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      margin: "10px 0 8px",
-                    }}
-                  >
-                    <div
-                      style={{
-                        flex: 1,
-                        height: 1,
-                        background: dark
-                          ? "rgba(139,26,47,0.18)"
-                          : "rgba(139,26,47,0.1)",
-                      }}
-                    />
-                    <span
-                      style={{
-                        fontSize: 9.5,
-                        color: dark
-                          ? "rgba(196,55,79,0.5)"
-                          : "rgba(139,26,47,0.4)",
-                        fontFamily: "'JetBrains Mono', monospace",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      Round {group.round}
-                    </span>
-                    <div
-                      style={{
-                        flex: 1,
-                        height: 1,
-                        background: dark
-                          ? "rgba(139,26,47,0.18)"
-                          : "rgba(139,26,47,0.1)",
-                      }}
-                    />
-                  </div>
-                )}
-                {group.entries.map((entry) =>
-                  entry.entry_type === "proposal" ? (
-                    <ProposalCard
-                      key={entry.id}
-                      entry={entry}
-                      threshold={threshold}
-                      promotedMap={promotedMap}
-                      agents={agents}
-                      promotedAgentIds={promotedAgentIds}
-                    />
-                  ) : (
-                    <ThreadedEntry
-                      key={entry.id}
-                      entry={entry}
-                      parentContent=""
-                      depth={0}
-                      threshold={threshold}
-                      promotedMap={promotedMap}
-                      agents={agents}
-                      promotedAgentIds={promotedAgentIds}
-                    />
-                  ),
-                )}
-              </div>
-            ))}
-          </>
+          <DraftEntryStream
+            entries={renderedDraft}
+            threads={state.threads}
+            activeThreadId={activeThreadId}
+            threshold={threshold}
+            promotedMap={promotedMap}
+            agents={agents}
+            promotedAgentIds={promotedAgentIds}
+            confirmedThreadIds={threadsWithConfirmed}
+            onSelectThread={onThreadSelect}
+          />
         )}
 
         {/* "New entries" scroll nudge */}
@@ -837,75 +765,17 @@ export function DraftBoard({
                       <EmptyState runId={runId} dark={dark} />
                     )}
                   {renderedDraft.length > 0 && !state.error && (
-                    <>
-                      {roundGroups.map((group, gi) => (
-                        <div key={group.round}>
-                          {gi > 0 && (
-                            <div
-                              style={{
-                                display: "flex",
-                                alignItems: "center",
-                                gap: 8,
-                                margin: "10px 0 8px",
-                              }}
-                            >
-                              <div
-                                style={{
-                                  flex: 1,
-                                  height: 1,
-                                  background: dark
-                                    ? "rgba(139,26,47,0.18)"
-                                    : "rgba(139,26,47,0.1)",
-                                }}
-                              />
-                              <span
-                                style={{
-                                  fontSize: 9.5,
-                                  color: dark
-                                    ? "rgba(196,55,79,0.5)"
-                                    : "rgba(139,26,47,0.4)",
-                                  fontFamily: "'JetBrains Mono', monospace",
-                                }}
-                              >
-                                Round {group.round}
-                              </span>
-                              <div
-                                style={{
-                                  flex: 1,
-                                  height: 1,
-                                  background: dark
-                                    ? "rgba(139,26,47,0.18)"
-                                    : "rgba(139,26,47,0.1)",
-                                }}
-                              />
-                            </div>
-                          )}
-                          {group.entries.map((entry) =>
-                            entry.entry_type === "proposal" ? (
-                              <ProposalCard
-                                key={entry.id}
-                                entry={entry}
-                                threshold={threshold}
-                                promotedMap={promotedMap}
-                                agents={agents}
-                                promotedAgentIds={promotedAgentIds}
-                              />
-                            ) : (
-                              <ThreadedEntry
-                                key={entry.id}
-                                entry={entry}
-                                parentContent=""
-                                depth={0}
-                                threshold={threshold}
-                                promotedMap={promotedMap}
-                                agents={agents}
-                                promotedAgentIds={promotedAgentIds}
-                              />
-                            ),
-                          )}
-                        </div>
-                      ))}
-                    </>
+                    <DraftEntryStream
+                      entries={renderedDraft}
+                      threads={state.threads}
+                      activeThreadId={activeThreadId}
+                      threshold={threshold}
+                      promotedMap={promotedMap}
+                      agents={agents}
+                      promotedAgentIds={promotedAgentIds}
+                      confirmedThreadIds={threadsWithConfirmed}
+                      onSelectThread={onThreadSelect}
+                    />
                   )}
                 </div>
               )}

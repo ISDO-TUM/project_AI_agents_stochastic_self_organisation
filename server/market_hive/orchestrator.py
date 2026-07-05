@@ -30,6 +30,7 @@ from server.db import deserialise_agent_row, hint_files_in_prompt, load_agent_fi
 from server.db.tables import agents as agents_table
 from server.guardrails import build_guarded_system_prompt
 from server.llm import call_agent
+from server.llm.base_provider import BaseLLMProvider
 from server.llm.langfuse_setup import agent_trace_metadata, langfuse_metadata
 from server.market_hive.assignment import assign_takers_to_threads
 from server.market_hive.auction import AuctionEngine, Invitation
@@ -71,7 +72,12 @@ _MSG_EXCERPT_LEN = 120
 
 # Resilient runs: per-turn timeout, retry budget before giving up, and the
 # number of *consecutive* failed phases before an agent is dropped entirely.
-TURN_TIMEOUT_S = 120
+# The turn timeout is DERIVED from the provider's own per-call timeout
+# (LLM_CALL_TIMEOUT_S, default 600s) rather than hardcoded, so it always stays
+# above it: the provider's more specific timeout error must fire first, and
+# raising one can never silently invert the two. The +30s covers everything a
+# turn does around the LLM call (prompt building, file loading, DB writes).
+TURN_TIMEOUT_S = int(BaseLLMProvider.timeout_seconds) + 30
 K_DROPOUT = 2
 
 # ── Seams ────────────────────────────────────────────────────────────────────

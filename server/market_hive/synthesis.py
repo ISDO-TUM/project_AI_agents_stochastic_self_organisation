@@ -113,7 +113,10 @@ class AnswerSynthesizer:
         *,
         provider: str = "openai",
         model: str = "gpt-4o",
-        timeout: float = 30.0,
+        # On timeout the deterministic joiner takes over — the run still ends,
+        # but the final answer degrades to concatenated findings. Keep generous
+        # so a slow provider doesn't silently swallow the synthesis step.
+        timeout: float = 120.0,
     ) -> None:
         self._provider = provider
         self._model = model

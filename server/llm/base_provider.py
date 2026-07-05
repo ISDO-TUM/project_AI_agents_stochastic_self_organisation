@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from abc import ABC, abstractmethod
 from time import monotonic
 from typing import Any
@@ -13,14 +14,18 @@ from .normalizer import NormalizedToolCall
 logger = logging.getLogger(__name__)
 
 # Maximum wall-clock seconds for a single complete agent call (all tool
-# iterations included). Prevents runaway loops from blocking indefinitely.
-# Was 60s — too tight for a tool-calling loop that can run up to
-# max_iterations round-trips, each resending a growing message history; a
-# turn that was genuinely still working (not stuck) could get cut off right
-# before finishing. Kept below the orchestrator's own TURN_TIMEOUT_S (120s in
-# market_hive/orchestrator.py) so this timeout's more specific error message
-# fires first instead of racing the outer one.
-_DEFAULT_TIMEOUT_SECONDS = 90
+# iterations included). This is a hang backstop, NOT a performance budget:
+# a hung connection must never stall a run forever, but a call that is
+# genuinely still working must never be cut off. The old 90s cap covered the
+# ENTIRE tool-call loop — up to max_iterations sequential round-trips, each
+# resending a growing message history — and reasoning models (gpt-5 family)
+# can spend minutes on a single completion, so legitimate turns were killed
+# mid-flight. 600s matches the OpenAI SDK's own per-request default, giving
+# the whole loop at least one full SDK-length request of headroom.
+# Overridable via LLM_CALL_TIMEOUT_S. The orchestrator derives its outer
+# TURN_TIMEOUT_S from this (market_hive/orchestrator.py) so this timeout's
+# more specific error message always fires first instead of racing it.
+_DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("LLM_CALL_TIMEOUT_S", "600"))
 
 
 class BaseLLMProvider(ABC):
@@ -107,7 +112,8 @@ class BaseLLMProvider(ABC):
             )
             raise TimeoutError(
                 f"The LLM call exceeded the maximum allowed time ({self.timeout_seconds}s). "
-                "Please try again with a shorter prompt or fewer tools."
+                "The provider is likely hung or unreachable; raise LLM_CALL_TIMEOUT_S "
+                "if legitimate calls need more time."
             ) from err
         except Exception:
             logger.exception("LLM call failed after %.2fs — model=%s", monotonic() - started, model)

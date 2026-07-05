@@ -230,7 +230,11 @@ class MarketMaker:
         *,
         provider: str = "openai",
         model: str = "gpt-4o",
-        timeout: float = 30.0,
+        # Falls back to the no-LLM source on timeout, so this bounds how long
+        # the run's first frame can stall — but a slow (not hung) provider that
+        # trips it silently degrades the contract to the raw one-line prompt,
+        # which cascades (mis-ranked invites, abstains). Generous beats degraded.
+        timeout: float = 120.0,
         fallback: FallbackContractSource | None = None,
     ) -> None:
         self._provider = provider
