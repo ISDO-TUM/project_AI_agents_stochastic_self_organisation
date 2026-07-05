@@ -338,6 +338,52 @@ async def test_auction_zero_bidders_aborts_run(db: AsyncConnection) -> None:
     assert run["status"] == "aborted"
 
 
+async def test_auction_turn_failure_does_not_crash_run(db: AsyncConnection) -> None:
+    """A single agent's auction-turn LLM call failing (provider timeout, etc.)
+    must not crash the whole run. Before the fix, ``_auction_turn`` had no
+    error handling at all — the exception propagated straight out of
+    ``_run_turns``/``_run_auction``/``run_swarm``, killing the run before a
+    single round-1 proposal could post: zero draft entries, status='failed',
+    with no error ever surfaced to the UI (which drops 'system' steps)."""
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+
+    base = _scripted_runner()
+
+    async def flaky_runner(
+        agent: dict[str, Any],
+        *,
+        user_prompt: str,
+        system_suffix: str,
+        tool_names: list[str],
+        tool_context: dict[str, Any],
+    ) -> tuple[str, list[ToolCall]]:
+        if "submit_bid" in tool_names and agent["name"] == "Beta":
+            raise TimeoutError("simulated provider timeout")
+        return await base(
+            agent,
+            user_prompt=user_prompt,
+            system_suffix=system_suffix,
+            tool_names=tool_names,
+            tool_context=tool_context,
+        )
+
+    steps = await _drain(
+        SwarmRunConfig(prompt="Analyze this contract"),
+        db,
+        agent_runner=flaky_runner,
+    )
+
+    run = (await db.execute(text("SELECT status FROM swarm_runs"))).mappings().fetchone()
+    assert run is not None
+    assert run["status"] != "failed"
+
+    # Alpha's bid still went through; Beta's failed turn just means no bid —
+    # never a crash.
+    takers = await AuctionEngine(db).get_takers(run_id=_run_id(steps))
+    assert takers == ["a1"]
+
+
 # ── M2: round 1 + vote sub-round ──────────────────────────────────────────────
 
 

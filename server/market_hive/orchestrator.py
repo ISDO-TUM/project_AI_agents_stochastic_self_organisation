@@ -355,27 +355,58 @@ def _auction_turn(
     agent_runner: AgentRunner,
     trial_id: str | None,
 ) -> _Turn:
-    """Build one auction self-selection turn (bid vs. abstain)."""
+    """Build one auction self-selection turn (bid vs. abstain).
+
+    Resilient like ``_board_turn``: a timeout or provider error here previously
+    propagated uncaught straight out of ``_run_turns`` (``asyncio.as_completed``
+    doesn't catch a task's exception, it re-raises it on await), through
+    ``_run_auction``, and out of the whole run — crashing it before a single
+    round-1 proposal could even be posted, with zero draft entries and no
+    system message ever reaching the UI. One agent's bad LLM call should cost
+    that agent its bid, not kill the run for everyone; a turn that still fails
+    after one retry is treated as a silent non-bid (the same outcome as the
+    agent calling neither ``submit_bid`` nor ``abstain``), never propagated.
+    """
 
     async def run(conn: AsyncConnection) -> list[SimulationStep]:
-        _text, tools_used = await agent_runner(
-            agent,
-            user_prompt=auction_user_prompt(contract, invitation),
-            system_suffix=AUCTION_SYSTEM_SUFFIX,
-            # No read_blackboard here: the board is empty during the auction, and the
-            # full contract is already in the prompt. Offering it only invites agents
-            # to "read" an empty board and wrongly conclude there is no contract.
-            tool_names=["submit_bid", "abstain"],
-            tool_context={
-                "db": conn,
-                "run_id": run_id,
-                "agent_id": invitation.agent_id,
-                "contract_id": contract.id,
-                "preliminary_score": invitation.preliminary_score,
-                "trial_id": trial_id,
-                "phase": "auction",
-            },
-        )
+        tool_context = {
+            "db": conn,
+            "run_id": run_id,
+            "agent_id": invitation.agent_id,
+            "contract_id": contract.id,
+            "preliminary_score": invitation.preliminary_score,
+            "trial_id": trial_id,
+            "phase": "auction",
+        }
+
+        async def attempt() -> tuple[str, list[ToolCall]]:
+            return await asyncio.wait_for(
+                agent_runner(
+                    agent,
+                    user_prompt=auction_user_prompt(contract, invitation),
+                    system_suffix=AUCTION_SYSTEM_SUFFIX,
+                    # No read_blackboard here: the board is empty during the auction,
+                    # and the full contract is already in the prompt. Offering it only
+                    # invites agents to "read" an empty board and wrongly conclude
+                    # there is no contract.
+                    tool_names=["submit_bid", "abstain"],
+                    tool_context=tool_context,
+                ),
+                timeout=TURN_TIMEOUT_S,
+            )
+
+        try:
+            _text, tools_used = await attempt()
+        except Exception:
+            logger.exception("auction turn failed once for %s — retrying", agent.get("id"))
+            await _reset_transaction(conn)
+            try:
+                _text, tools_used = await attempt()
+            except Exception:
+                logger.exception("auction turn failed twice for %s", agent.get("id"))
+                await _reset_transaction(conn)
+                return []
+
         return _auction_events(invitation, agent, tools_used)
 
     return _Turn(agent_name=agent["name"], node_id=invitation.agent_id, run=run)

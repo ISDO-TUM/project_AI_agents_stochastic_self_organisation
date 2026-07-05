@@ -13,8 +13,14 @@ from .normalizer import NormalizedToolCall
 logger = logging.getLogger(__name__)
 
 # Maximum wall-clock seconds for a single complete agent call (all tool
-# iterations included).  Prevents runaway loops from blocking indefinitely.
-_DEFAULT_TIMEOUT_SECONDS = 60
+# iterations included). Prevents runaway loops from blocking indefinitely.
+# Was 60s — too tight for a tool-calling loop that can run up to
+# max_iterations round-trips, each resending a growing message history; a
+# turn that was genuinely still working (not stuck) could get cut off right
+# before finishing. Kept below the orchestrator's own TURN_TIMEOUT_S (120s in
+# market_hive/orchestrator.py) so this timeout's more specific error message
+# fires first instead of racing the outer one.
+_DEFAULT_TIMEOUT_SECONDS = 90
 
 
 class BaseLLMProvider(ABC):
