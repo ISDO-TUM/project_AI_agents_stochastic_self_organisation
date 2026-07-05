@@ -83,6 +83,9 @@ interface CanvasProps {
   >;
   /** Agent IDs whose turn is in flight — pulse their AgentDock chip. */
   swarmRespondingIds?: string[];
+  /** True while the Market Maker is drafting the contract — animates its
+   *  dock chip. */
+  swarmDrafting?: boolean;
 }
 
 interface ConnectingState {
@@ -132,6 +135,7 @@ export function Canvas({
   onShowFinalAnswer,
   swarmTrustVectors = {},
   swarmRespondingIds = [],
+  swarmDrafting = false,
 }: CanvasProps) {
   const { dark } = useTheme();
   const canvasRef = useRef<HTMLDivElement>(null);
@@ -568,6 +572,9 @@ export function Canvas({
             trustVectors={swarmTrustVectors}
             promotedAgentIds={promotedAgentIds}
             respondingIds={swarmRespondingIds}
+            contract={blackboardState?.contract ?? null}
+            threads={blackboardState?.threads ?? []}
+            marketMakerBusy={swarmDrafting}
           />
           {draftPos && (
             <DraftBoard

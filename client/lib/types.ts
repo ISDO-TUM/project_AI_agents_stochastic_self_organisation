@@ -1,10 +1,7 @@
 export type Provider = "openai" | "anthropic" | "groq" | "gemini";
 export type SourceType = "text" | "document" | "dataset";
 export type SimStepType =
-  | "system"
-  | "agent-to-agent"
-  | "tool"
-  | "agent-to-source";
+  "system" | "agent-to-agent" | "tool" | "agent-to-source";
 
 export type ConsensusMode =
   | "broadcast_no_consensus"
@@ -382,6 +379,23 @@ export interface ThreadInfo {
   created_at: string;
 }
 
+/** The Market Maker's drafted contract: the structured scoping of the user's
+ *  prompt into a typed job (task kind, whether it splits into threads, the
+ *  expertise it demands, and how confident the scoping is). Streamed on the
+ *  run's `Contract created` frame (slim — no embedding/threads). */
+export interface ContractInfo {
+  id: string;
+  run_id: string;
+  original_prompt: string;
+  task_type: string;
+  task_nature: "single" | "multi";
+  required_expertise: string[];
+  complexity: "low" | "medium" | "high";
+  /** Market Maker's self-reported confidence in the scoping, 0–1. */
+  confidence: number;
+  created_at: string;
+}
+
 export interface ConfirmedEntry {
   id: string;
   run_id: string;
@@ -453,6 +467,9 @@ export interface BlackboardState {
   pendingReplies: DraftEntry[];
   loading: boolean;
   error: string | null;
+  /** The Market Maker's drafted contract for this run. Absent until the
+   *  `Contract created` frame arrives (and on fixtures predating the feature). */
+  contract?: ContractInfo | null;
 }
 
 export interface AgentTrustEntry {

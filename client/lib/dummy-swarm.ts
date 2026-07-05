@@ -2,6 +2,7 @@ import {
   Agent,
   AgentSwarmRole,
   ConfirmedEntry,
+  ContractInfo,
   DraftEntry,
   ThreadInfo,
 } from "./types";
@@ -33,6 +34,7 @@ export type DummyEvent =
 
 export interface DummyRunFixture {
   runId: string;
+  contract: ContractInfo;
   threads: ThreadInfo[];
   agents: DummyAgentInfo[];
   events: DummyEvent[];
@@ -125,6 +127,19 @@ export function generateDummyRun(
     Math.max(takers, Math.min(pool.length, takers + 2)),
   );
   const takerAgents = agents.filter((a) => a.role === "taker");
+
+  const contract: ContractInfo = {
+    id: "dummy-contract",
+    run_id: runId,
+    original_prompt:
+      "Analyze this energy procurement contract for legal and financial compliance issues.",
+    task_type: "energy_contract_review",
+    task_nature: "multi",
+    required_expertise: ["contract-law", "financial-analysis", "regulatory"],
+    complexity: "high",
+    confidence: 0.82,
+    created_at: nowIso,
+  };
 
   const threadIds = ["dummy-thread-1", "dummy-thread-2"];
   const threads: ThreadInfo[] = [
@@ -319,5 +334,5 @@ export function generateDummyRun(
     }));
   });
 
-  return { runId, threads, agents, events, trustVectors };
+  return { runId, contract, threads, agents, events, trustVectors };
 }

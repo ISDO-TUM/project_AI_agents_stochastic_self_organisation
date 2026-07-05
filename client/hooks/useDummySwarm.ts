@@ -107,6 +107,7 @@ function reducer(state: DummySwarmState, action: Action): DummySwarmState {
         agents: action.fixture.agents,
         trustVectors: action.fixture.trustVectors,
         blackboard: {
+          contract: action.fixture.contract,
           threads: action.fixture.threads,
           confirmed: [],
           draft: [],

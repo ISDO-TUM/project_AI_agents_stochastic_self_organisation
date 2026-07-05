@@ -191,6 +191,10 @@ export function App({ onModeSelected }: AppProps = {}) {
   const blackboardState = dummy.state.active
     ? dummy.state.blackboard
     : swarm.state.blackboard;
+  // The Market Maker's drafting window: a run is underway but its contract
+  // hasn't streamed in yet. Animates the MM chip in the agent dock.
+  const swarmDrafting =
+    (dummy.state.active || swarm.state.active) && !blackboardState.contract;
 
   // Run configuration — edited in the Settings panel, read at run start.
   const [consensusMode, setConsensusMode] =
@@ -640,7 +644,7 @@ export function App({ onModeSelected }: AppProps = {}) {
 
   const panelAgent =
     panel?.type === "agent" && panel.id
-      ? agents.find((a) => a.id === panel.id) ?? null
+      ? (agents.find((a) => a.id === panel.id) ?? null)
       : null;
   const panelSource =
     panel?.type === "source" && panel.id ? withRealAgentIds(panel.id) : null;
@@ -750,6 +754,7 @@ export function App({ onModeSelected }: AppProps = {}) {
           onShowFinalAnswer={() => setAnswerDismissed(false)}
           swarmTrustVectors={dummy.state.trustVectors}
           swarmRespondingIds={swarm.state.responding}
+          swarmDrafting={appMode === "swarm" && swarmDrafting}
           phonebook={
             topology === "dynamic"
               ? {

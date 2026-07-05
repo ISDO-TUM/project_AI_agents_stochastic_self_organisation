@@ -4,6 +4,7 @@ import { useCallback, useEffect, useReducer, useRef } from "react";
 import {
   BlackboardState,
   ConfirmedEntry,
+  ContractInfo,
   DraftEntry,
   Ratification,
   ThreadInfo,
@@ -94,6 +95,7 @@ type Action =
       trialId?: string | null;
       experimentId?: string | null;
     }
+  | { type: "CONTRACT"; contract: ContractInfo }
   | { type: "THREADS"; threads: ThreadInfo[] }
   | { type: "POST"; entry: DraftEntry }
   | { type: "CITE"; entryId: string; citerName: string; round: number }
@@ -209,6 +211,8 @@ function reducer(state: SwarmRunState, action: Action): SwarmRunState {
         trialId: action.trialId ?? state.trialId,
         experimentId: action.experimentId ?? state.experimentId,
       };
+    case "CONTRACT":
+      return { ...state, blackboard: { ...bb, contract: action.contract } };
     case "THREADS":
       return { ...state, blackboard: { ...bb, threads: action.threads } };
     case "POST": {
@@ -479,6 +483,11 @@ function applyStep(
     } catch {
       // Storage unavailable — the stats page just won't preselect this run.
     }
+  }
+  // The Market Maker's drafted contract, emitted on the "Contract created"
+  // frame (a slim object, no embedding/threads) so the board can show scoping.
+  if (d.contract && typeof d.contract === "object") {
+    dispatch({ type: "CONTRACT", contract: d.contract as ContractInfo });
   }
   if (Array.isArray(d.threads)) {
     dispatch({ type: "THREADS", threads: d.threads as ThreadInfo[] });

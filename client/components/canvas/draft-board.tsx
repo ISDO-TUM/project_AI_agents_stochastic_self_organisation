@@ -12,6 +12,7 @@ import { ThreadedEntry } from "./blackboard/reply-thread";
 import { ThreadFilterDropdown } from "./blackboard/thread-filter-dropdown";
 import { BoardGraphView } from "./blackboard/board-graph-view";
 import { PromptBrief } from "./blackboard/prompt-brief";
+import { ContractCard } from "./blackboard/contract-card";
 
 interface DraftBoardProps {
   state: BlackboardState;
@@ -477,6 +478,13 @@ export function DraftBoard({
         className="pscroll"
       >
         {activeThread && <PromptBrief text={activeThread.description} />}
+        {state.contract && (
+          <ContractCard
+            contract={state.contract}
+            threads={state.threads}
+            hasEntries={renderedDraft.length > 0}
+          />
+        )}
 
         {/* Skeleton: run active but no entries yet */}
         {state.loading && renderedDraft.length === 0 && (
@@ -795,6 +803,13 @@ export function DraftBoard({
                 >
                   {activeThread && (
                     <PromptBrief text={activeThread.description} />
+                  )}
+                  {state.contract && (
+                    <ContractCard
+                      contract={state.contract}
+                      threads={state.threads}
+                      hasEntries={renderedDraft.length > 0}
+                    />
                   )}
 
                   {state.loading && renderedDraft.length === 0 && (
