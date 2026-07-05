@@ -210,7 +210,10 @@ def rounds_system_suffix(temperature_instruction: str) -> str:
         "- The contract and your thread are in the message below.\n"
         "- read_blackboard() is available if you need more than the retrieved excerpts "
         "in the message below.\n"
-        "- Use post_to_blackboard(reply_to=..., thread_id=...) to respond to a post.\n"
+        '- Use post_to_blackboard(entry_type="reply", reply_to=..., thread_id=...) to '
+        "respond to a post — entry_type is always \"reply\" here, never "
+        '"proposal" (that was round 1 only; posting another proposal will be '
+        "rejected).\n"
         "- Set claim (one-sentence thesis), stance ('supports'/'refutes'/'refines' + "
         "stance_target) and evidence on every post.\n"
         "- Use cite(entry_ids=[...]) ONLY for entries you build on or agree with — "
@@ -258,8 +261,9 @@ def rounds_user_prompt(
         f"ROUND: {round} of {max_rounds}\n\n"
         f"{injected}"
         f'You may call read_blackboard(thread_id="{thread.id}") to browse beyond '
-        "the excerpts above, then post_to_blackboard(reply_to=...) with your "
-        "analysis and cite(entry_ids=[...]) the entries you build on."
+        "the excerpts above, then "
+        f'post_to_blackboard(entry_type="reply", reply_to=..., thread_id="{thread.id}") '
+        "with your analysis and cite(entry_ids=[...]) the entries you build on."
     )
 
 

@@ -1623,6 +1623,40 @@ async def test_refutes_own_entry_rejected(db: AsyncConnection) -> None:
     assert n == 1
 
 
+async def test_stance_target_resolves_truncated_display_id(db: AsyncConnection) -> None:
+    """read_blackboard's digest shows entries as "[{id[:8]}] ..." (format_entries_digest),
+    and agents copy that 8-char id back as stance_target — same truncation reply_to and
+    cite() already resolve. A real refine/refute against another agent's entry, addressed
+    by that truncated id, must succeed rather than being rejected as "no matching entry"."""
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+    tool = PostToBlackboardTool()
+    first = await tool.execute(
+        PostToBlackboardInput(content="original claim", entry_type="proposal", thread_id="t1"),
+        {"db": db, "run_id": "r1", "agent_id": "a1", "round": 1, "files": {}},
+    )
+    entry_id = json.loads(first)["entry_id"]
+    result = await tool.execute(
+        PostToBlackboardInput(
+            content="a refinement",
+            entry_type="reply",
+            thread_id="t1",
+            reply_to=entry_id[:8],
+            stance="refines",
+            stance_target=entry_id[:8],
+        ),
+        {"db": db, "run_id": "r1", "agent_id": "a2", "round": 2, "files": {}},
+    )
+    assert "entry_id" in result, result
+    row = (
+        (await db.execute(text("SELECT stance_target FROM draft_entries WHERE author_id = 'a2'")))
+        .mappings()
+        .fetchone()
+    )
+    assert row is not None
+    assert row["stance_target"] == entry_id
+
+
 async def test_cite_requires_reasons(db: AsyncConnection) -> None:
     await _insert_agent(db, "a1", "Alpha")
     tool = CiteTool()

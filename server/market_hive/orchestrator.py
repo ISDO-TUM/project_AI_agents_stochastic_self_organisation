@@ -665,11 +665,25 @@ async def _load_threads(db: AsyncConnection, run_id: str) -> list[ThreadSchema]:
     return [ThreadSchema(**dict(row)) for row in rows]
 
 
-def _threads_payload(threads: list[ThreadSchema]) -> dict[str, Any]:
-    """The ``data`` payload carrying slim thread objects for the board's tabs."""
+def _threads_payload(
+    threads: list[ThreadSchema], thresholds: dict[str, int] | None = None
+) -> dict[str, Any]:
+    """The ``data`` payload carrying slim thread objects for the board's tabs.
+
+    ``thresholds`` (per-thread promotion threshold M, once takers are assigned)
+    is merged in when available so the UI can show the real, run-fixed value
+    instead of approximating it client-side from whatever authors happen to be
+    visible in the current filter (see PROMOTION_THRESHOLD in blackboard-utils.ts
+    — that approximation drifted as entries streamed in, which looked like the
+    threshold randomly changing across rounds).
+    """
+    dumped = [t.model_dump(mode="json", exclude={"thread_embedding"}) for t in threads]
+    if thresholds:
+        for t, d in zip(threads, dumped, strict=True):
+            d["promotion_threshold"] = thresholds.get(t.id)
     return {
         "thread_ids": [t.id for t in threads],
-        "threads": [t.model_dump(mode="json", exclude={"thread_embedding"}) for t in threads],
+        "threads": dumped,
     }
 
 
@@ -1901,11 +1915,26 @@ async def _run_swarm_steps(
     # Single-thread contracts put every taker on the one thread; multi-thread
     # contracts match takers to threads by capability/thread embedding.
     takers_by_thread = await assign_takers_to_threads(db, takers=takers, threads=threads)
+    # Same formula as Blackboard.check_promotions (PRD §15): M = max(1, n_takers // 3 + 1).
+    # Computed once here, from the taker count that stays fixed for the rest of the
+    # run, and pushed to the UI so it never has to approximate it client-side.
+    promotion_thresholds = {
+        thread.id: max(1, len(takers_by_thread.get(thread.id, [])) // 3 + 1) for thread in threads
+    }
     if len(threads) > 1:
         yield _step(
             "system",
             f"Thread assignment — {_fmt_assignment(takers_by_thread, threads, agents_by_id)}",
-            data={"takers_by_thread": takers_by_thread},
+            data={
+                "takers_by_thread": takers_by_thread,
+                **_threads_payload(threads, promotion_thresholds),
+            },
+        )
+    else:
+        yield _step(
+            "system",
+            "Thread assignment complete.",
+            data=_threads_payload(threads, promotion_thresholds),
         )
 
     # ── Round 1 — opening proposals (§9.3) ───────────────────────────────────

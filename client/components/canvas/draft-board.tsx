@@ -201,7 +201,17 @@ export function DraftBoard({
   // reply, so the "N new" scroll-nudge badge below only ever fired for new
   // top-level proposals.
   const totalEntryCount = countEntries(renderedDraft);
-  const threshold = computePromotionThreshold(filteredDraft);
+  // Prefer the server's authoritative, run-fixed per-thread threshold (pushed once
+  // takers are assigned) over the client-side approximation — the approximation
+  // counts distinct authors in whatever's currently in view, which drifts as
+  // entries stream in and made the displayed threshold look like it randomly
+  // changed across rounds. Only available once a single thread is selected: the
+  // combined "all threads" view has no single true M, so it keeps the estimate.
+  const selectedThread = activeThreadId
+    ? state.threads.find((th) => th.id === activeThreadId)
+    : null;
+  const threshold =
+    selectedThread?.promotion_threshold ?? computePromotionThreshold(filteredDraft);
   // Referentially stable across renders so the graph view's layout memo holds
   // between streaming ticks (rebuilding this Map every render forced a full
   // relayout on every SSE event while the graph modal was open).

@@ -143,7 +143,7 @@ class Blackboard:
     def __init__(self, db: AsyncConnection) -> None:
         self._db = db
 
-    async def _resolve_entry_id(self, run_id: str, candidate: str | None) -> str | None:
+    async def resolve_entry_id(self, run_id: str, candidate: str | None) -> str | None:
         """Map a possibly-truncated id to a real ``draft_entries`` id in this run.
 
         ``read_blackboard`` renders ids as an 8-char prefix, so the LLM copies
@@ -220,7 +220,12 @@ class Blackboard:
         """
         # The LLM copies the 8-char display id back into reply_to; resolve it to
         # a real id (or drop the linkage) so a stale/truncated id can't FK-violate.
-        reply_to = await self._resolve_entry_id(run_id, reply_to)
+        reply_to = await self.resolve_entry_id(run_id, reply_to)
+        # Same 8-char-prefix problem as reply_to: read_blackboard's digest shows
+        # entries as "[{id[:8]}] ...", and agents copy that truncated id back as
+        # stance_target. Without resolving it here too, every stance!='new' post
+        # gets stored pointing at an id that matches nothing.
+        stance_target = await self.resolve_entry_id(run_id, stance_target)
         entry_id = str(uuid.uuid4())
         embed_input = f"{claim}\n{content}" if claim else content
         vecs = await embed_texts([embed_input])
@@ -345,7 +350,15 @@ class Blackboard:
                 FROM draft_entries de
                 LEFT JOIN agents a ON a.id = de.author_id
                 LEFT JOIN (
-                    SELECT cited_entry_id, COUNT(*) AS cnt
+                    -- Promotion (check_promotions) counts DISTINCT citing agents —
+                    -- (citing_agent_id, cited_entry_id, round) is the DB's unique
+                    -- key, so the same agent re-citing an entry in a later round is
+                    -- a real, separate row. A plain COUNT(*) here would show a
+                    -- ratio that looks like it crossed the promotion threshold
+                    -- while the real distinct-citer count backing promotion never
+                    -- did (matches useSwarmRun.ts's CITE reducer, fixed the same
+                    -- way for the live SSE path).
+                    SELECT cited_entry_id, COUNT(DISTINCT citing_agent_id) AS cnt
                     FROM   citations
                     WHERE  run_id = :run_id1
                     GROUP  BY cited_entry_id
@@ -422,7 +435,10 @@ class Blackboard:
                 FROM draft_entries de
                 LEFT JOIN agents a ON a.id = de.author_id
                 LEFT JOIN (
-                    SELECT cited_entry_id, COUNT(*) AS cnt
+                    -- See top_k_visible's identical subquery: must dedupe by
+                    -- citing agent, not raw row count (same agent can re-cite
+                    -- across rounds).
+                    SELECT cited_entry_id, COUNT(DISTINCT citing_agent_id) AS cnt
                     FROM   citations
                     WHERE  run_id = :run_id
                     GROUP  BY cited_entry_id
@@ -518,7 +534,7 @@ class Blackboard:
         for raw_id, reason in paired.items():
             # The LLM cites the 8-char display id; resolve it so a valid endorsement
             # is not silently dropped (and a stale id is skipped, not FK-violated).
-            entry_id = await self._resolve_entry_id(run_id, raw_id)
+            entry_id = await self.resolve_entry_id(run_id, raw_id)
             if entry_id is None:
                 continue
             result = await self._db.execute(

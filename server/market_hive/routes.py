@@ -84,7 +84,13 @@ async def _fetch_draft_entries(
             FROM draft_entries de
             LEFT JOIN agents a ON a.id = de.author_id
             LEFT JOIN (
-                SELECT cited_entry_id, COUNT(*) AS cnt
+                -- Promotion (Blackboard.check_promotions) counts DISTINCT citing
+                -- agents — the same agent can cite the same entry again in a
+                -- later round (uq_citations_per_round is per-round), so a plain
+                -- COUNT(*) here would show a ratio that looks like it crossed
+                -- the promotion threshold when the real distinct-citer count
+                -- backing promotion never did.
+                SELECT cited_entry_id, COUNT(DISTINCT citing_agent_id) AS cnt
                 FROM citations WHERE run_id = :run_id1
                 GROUP BY cited_entry_id
             ) cc ON cc.cited_entry_id = de.id

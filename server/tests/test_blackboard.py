@@ -291,6 +291,35 @@ async def test_cite_increments_citation_count(db: AsyncConnection) -> None:
     assert entries[0].citation_count == 1
 
 
+async def test_citation_count_dedupes_same_citer_across_rounds(db: AsyncConnection) -> None:
+    """(citing_agent_id, cited_entry_id, round) is the DB's unique key, so the same
+    agent re-citing an entry in a later round is a real, separate citations row —
+    but it must not inflate the displayed citation_count, since promotion (check_
+    promotions) counts DISTINCT citing agents. A raw COUNT(*) here would show a
+    ratio that looks like it crossed the promotion threshold when the real count
+    backing promotion never did (this is exactly what the client's CITE reducer in
+    useSwarmRun.ts already guards against for the live SSE path)."""
+    run_id = str(uuid.uuid4())
+    thread_id = str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+
+    bb = Blackboard(db)
+    entry_id = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_a,
+        content="Proposal",
+        entry_type="proposal",
+        round=1,
+    )
+    await bb.cite(run_id=run_id, citing_agent_id=agent_b, entry_ids=[entry_id], round=2)
+    result = await bb.cite(run_id=run_id, citing_agent_id=agent_b, entry_ids=[entry_id], round=3)
+    assert result["cited"] == 1  # a real second row — same agent, different round
+
+    entries = await bb.read(run_id=run_id, query="", thread_id=thread_id)
+    assert entries[0].citation_count == 1  # still one distinct citer, not two
+
+
 async def test_cite_skips_self_citation(db: AsyncConnection) -> None:
     run_id = str(uuid.uuid4())
     thread_id = str(uuid.uuid4())

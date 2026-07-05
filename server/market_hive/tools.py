@@ -164,6 +164,13 @@ class PostToBlackboardTool(Tool):
         if stance and stance != "new":
             if not stance_target:
                 return '{"error": "stance requires stance_target (the entry_id it refers to)."}'
+            # The LLM copies the 8-char id shown in read_blackboard's digest
+            # ("[{id[:8]}] ..."), not the full UUID — resolve it the same way
+            # reply_to and cite() already do, or every stance post gets rejected.
+            resolved_target = await Blackboard(db).resolve_entry_id(run_id, stance_target)
+            if resolved_target is None:
+                return '{"error": "stance_target does not match any entry id."}'
+            stance_target = resolved_target
             target_author = (
                 await db.execute(
                     text("SELECT author_id FROM draft_entries WHERE id = :id"),

@@ -380,6 +380,9 @@ export interface ThreadInfo {
   required_expertise: string[];
   complexity: "low" | "medium" | "high";
   created_at: string;
+  /** Server-computed promotion threshold M for this thread (max(1, n_takers // 3 + 1)),
+   *  fixed once takers are assigned. Absent until the "Thread assignment" step arrives. */
+  promotion_threshold?: number;
 }
 
 /** The Market Maker's drafted contract: the structured scoping of the user's
