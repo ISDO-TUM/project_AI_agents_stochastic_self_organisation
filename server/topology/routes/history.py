@@ -14,13 +14,14 @@ from server.db import (
     deserialise_trial_row,
     get_db,
 )
-from server.db.tables import agents, connections, messages, rounds, trials
+from server.db.tables import agents, connections, experiments, messages, rounds, trials
 from server.schemas import (
     ConnectionResponse,
     MessageTraceResponse,
     RoundResponse,
     TrialResponse,
 )
+from server.users import UserIdDep, scoped
 
 router = APIRouter(prefix="/api/history", tags=["History"])
 
@@ -28,10 +29,11 @@ DBDep = Annotated[AsyncConnection, Depends(get_db)]
 
 
 @router.get("/trials", response_model=list[TrialResponse])
-async def list_trials(db: DBDep) -> list[TrialResponse]:
-    result = await db.execute(
-        select(trials).order_by(trials.c.created_at.desc(), trials.c.id.desc())
+async def list_trials(db: DBDep, user_id: UserIdDep = None) -> list[TrialResponse]:
+    stmt = scoped(select(trials), trials.c.user_id, user_id).order_by(
+        trials.c.created_at.desc(), trials.c.id.desc()
     )
+    result = await db.execute(stmt)
     return [TrialResponse(**deserialise_trial_row(row)) for row in result.mappings().all()]
 
 
@@ -40,13 +42,25 @@ async def list_trials(db: DBDep) -> list[TrialResponse]:
     status_code=status.HTTP_204_NO_CONTENT,
     summary="Clear all run history",
 )
-async def clear_history(db: DBDep) -> None:
-    """Delete every trial and all of its history (rounds, connections, messages).
+async def clear_history(db: DBDep, user_id: UserIdDep = None) -> None:
+    """Delete the caller's trials and all of their history (rounds, connections,
+    messages), plus the experiments that grouped them.
 
     Agents and knowledge files are left untouched. Deletion cascades from the
-    ``trials`` table through the dependent history tables.
+    ``trials`` table through the dependent history tables; experiments are
+    removed afterwards so the statistics page is not left with empty groups
+    (an experiment and its trials always share an owner, so nothing else can
+    still reference them once the trials are gone).
     """
-    await db.execute(delete(trials))
+    await db.execute(scoped(delete(trials), trials.c.user_id, user_id))
+    # Only experiments with no surviving trials — guards the FK in the edge case
+    # of an experiment shared across owners (never produced by the run routes).
+    still_referenced = select(trials.c.experiment_id).where(trials.c.experiment_id.is_not(None))
+    await db.execute(
+        scoped(delete(experiments), experiments.c.user_id, user_id).where(
+            experiments.c.id.not_in(still_referenced)
+        )
+    )
     await db.commit()
 
 
@@ -108,6 +122,18 @@ _VALID_MESSAGE_TYPES: frozenset[str] = frozenset(
         "trust_evolution",
         "trust_update",
         "vote_tally",
+        # Market-Hive (swarm) runs mirrored into the shared history tables.
+        "swarm_system",
+        "swarm_bid",
+        "swarm_abstain",
+        "swarm_post",
+        "swarm_cite",
+        "swarm_vote",
+        "swarm_promote",
+        "swarm_delete",
+        "swarm_amendment",
+        "swarm_final",
+        "bb_mention",
     }
 )
 
@@ -124,6 +150,7 @@ async def list_messages(
     message_type: str | None = None,
     after_id: int | None = None,
     limit: int = Query(default=_DEFAULT_MESSAGES_LIMIT, ge=1, le=_MAX_MESSAGES_LIMIT),
+    user_id: UserIdDep = None,
 ) -> list[MessageTraceResponse]:
     if message_type is not None and message_type not in _VALID_MESSAGE_TYPES:
         raise HTTPException(
@@ -168,6 +195,7 @@ async def list_messages(
         )
         .order_by(trials.c.created_at.desc(), rounds.c.round_index.asc(), messages.c.id.asc())
     )
+    stmt = scoped(stmt, trials.c.user_id, user_id)
 
     if trial_id is not None:
         stmt = stmt.where(trials.c.id == trial_id)
