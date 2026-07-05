@@ -129,7 +129,7 @@ export function ProposalCard({
           marginBottom: 9,
         }}
       >
-        <MarkdownRenderer content={entry.content} />
+        <MarkdownRenderer content={entry.content} fontSize={13.5} />
       </div>
 
       <div style={{ display: "flex", alignItems: "center", gap: 14 }}>

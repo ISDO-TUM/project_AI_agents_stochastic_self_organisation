@@ -20,6 +20,7 @@ import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable
 from datetime import UTC, datetime
+from time import monotonic
 from typing import Any, NamedTuple, Protocol
 
 from sqlalchemy import select, text
@@ -203,6 +204,12 @@ async def _default_agent_runner(
             round_index=int(tool_context.get("round") or 0),
             phase=str(tool_context.get("phase") or "swarm"),
         )
+        # Speed instrumentation (temporary, pending real numbers from a live run):
+        # wall-clock for the whole turn, with the agent/phase/round context the
+        # provider-level log (llm/base_provider.py) doesn't have. Correlate the
+        # two by timestamp to see which phases/agents are actually slow and
+        # whether it's iteration count or the LLM itself.
+        started = monotonic()
         with langfuse_metadata(trace):
             response, tools_used = await call_agent(
                 user_prompt,
@@ -212,6 +219,13 @@ async def _default_agent_runner(
                 tool_names=effective_tools,
                 tool_context={**tool_context, "files": files},
             )
+        logger.info(
+            "Agent turn complete — agent=%s phase=%s round=%s elapsed=%.2fs",
+            agent.get("name", agent.get("id")),
+            tool_context.get("phase"),
+            tool_context.get("round"),
+            monotonic() - started,
+        )
         return response, tools_used
     finally:
         # A tool whose DB write failed (e.g. the LLM passed a bad thread_id/entry_id)
@@ -1364,31 +1378,6 @@ async def _apply_dropouts(
 # ── Ratified synthesis (post-synthesis approval sub-round) ──────────────────
 
 
-async def _taker_confirmed_findings(
-    db: AsyncConnection, run_id: str, taker: str
-) -> list[tuple[str, str]]:
-    """Return ``(confirmed_entry_id, content)`` for entries this taker authored."""
-    rows = (
-        (
-            await db.execute(
-                text(
-                    """
-                    SELECT ce.id AS id, ce.content AS content
-                    FROM confirmed_entries ce
-                    JOIN draft_entries de ON de.id = ce.source_draft_id
-                    WHERE ce.run_id = :run_id AND de.author_id = :taker
-                      AND ce.status = 'confirmed'
-                    """
-                ),
-                {"run_id": run_id, "taker": taker},
-            )
-        )
-        .mappings()
-        .all()
-    )
-    return [(row["id"], row["content"]) for row in rows]
-
-
 async def _post_synthesis_candidate(
     db: AsyncConnection, run_id: str, thread_id: str, round_confirmed: int, candidate: str
 ) -> None:
@@ -1417,17 +1406,25 @@ async def _post_synthesis_candidate(
 def _ratify_turn(
     agent: dict[str, Any],
     candidate: str,
-    own_findings: list[tuple[str, str]],
+    findings: list[tuple[str, str]],
     votes: dict[str, str | None],
     agent_runner: AgentRunner,
     run_id: str,
 ) -> _Turn:
-    """Build one ratification turn: the taker approves or requests a revision."""
+    """Build one ratification turn: the taker approves or requests a revision.
+
+    ``findings`` is the run's full live confirmed board (every ``entry_type ==
+    'finding'`` row with ``status == 'confirmed'``), not just this taker's own
+    contributions — a taker whose own findings weren't promoted must still see
+    what the candidate is actually grounded in, or it has nothing to check the
+    draft against but "(none)" and will reflexively object that nothing was
+    confirmed even when the run produced real, ratifiable findings.
+    """
 
     async def run(conn: AsyncConnection) -> list[SimulationStep]:
         await agent_runner(
             agent,
-            user_prompt=ratify_user_prompt(candidate, own_findings),
+            user_prompt=ratify_user_prompt(candidate, findings),
             system_suffix=RATIFY_SYSTEM_SUFFIX,
             tool_names=["approve_synthesis", "revise_synthesis"],
             tool_context={
@@ -1446,12 +1443,17 @@ async def _run_ratification(
     db: AsyncConnection,
     run_id: str,
     candidate: str,
+    findings: list[tuple[str, str]],
     takers: list[str],
     dropped: set[str],
     agents_by_id: dict[str, dict[str, Any]],
     agent_runner: AgentRunner,
 ) -> tuple[list[SimulationStep], int, int, list[str]]:
     """Run one ratification sub-round.
+
+    ``findings`` is ``(confirmed_entry_id, content)`` for every live confirmed
+    finding this run — the same board for every rater, so an agent whose own
+    contributions weren't promoted still sees what the run actually confirmed.
 
     Returns ``(steps, approvals, voters, objections)``. ``voters`` is the count
     of active (non-dropped) takers — the majority denominator — not the count
@@ -1465,8 +1467,7 @@ async def _run_ratification(
         agent = agents_by_id.get(taker)
         if agent is None:
             continue
-        own = await _taker_confirmed_findings(db, run_id, taker)
-        turns.append(_ratify_turn(agent, candidate, own, votes, agent_runner, run_id))
+        turns.append(_ratify_turn(agent, candidate, findings, votes, agent_runner, run_id))
     steps = [step async for step in _run_turns(db, turns)]
     approvals = sum(1 for v in votes.values() if v is None)
     objections = [v for v in votes.values() if v]
@@ -1928,7 +1929,17 @@ async def _run_swarm_steps(
         prompt=None,
         synthesizer=None,
     )
-    live_findings = [f for f in output.confirmed_layer if f.status == "confirmed"]
+    # entry_type == "finding" excludes anchors/system rows (e.g. a carried-forward
+    # anchor, or the synthesis-candidate row itself on a resumed run) — those are
+    # also status == "confirmed" but are not ratifiable findings, and letting them
+    # through here previously made `live_findings` non-empty with nothing real in
+    # it, which passed the truthy check below only for the synthesizer's own
+    # findings-only filter to then reduce it back to zero and emit "did not
+    # converge" as if that were an honest result.
+    live_findings = [
+        f for f in output.confirmed_layer if f.status == "confirmed" and f.entry_type == "finding"
+    ]
+    findings_for_ratify = [(f.id, f.content) for f in live_findings]
     ratification: dict[str, Any] | None = None
     final_answer = output.final_answer
     synth_trace = {
@@ -1943,7 +1954,7 @@ async def _run_swarm_steps(
             candidate = await synthesizer.synthesize(prompt=config.prompt, findings=live_findings)
         await _post_synthesis_candidate(db, run_id, threads[0].id, last_round, candidate)
         steps, approvals, voters, objections = await _run_ratification(
-            db, run_id, candidate, takers, dropped, agents_by_id, agent_runner
+            db, run_id, candidate, findings_for_ratify, takers, dropped, agents_by_id, agent_runner
         )
         for step in steps:
             yield step
@@ -1963,7 +1974,7 @@ async def _run_swarm_steps(
                 )
             await _post_synthesis_candidate(db, run_id, threads[0].id, last_round, revised)
             steps2, approvals2, voters2, objections2 = await _run_ratification(
-                db, run_id, revised, takers, dropped, agents_by_id, agent_runner
+                db, run_id, revised, findings_for_ratify, takers, dropped, agents_by_id, agent_runner
             )
             for step in steps2:
                 yield step

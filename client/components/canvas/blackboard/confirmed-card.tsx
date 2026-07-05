@@ -223,7 +223,7 @@ export function ConfirmedCard({
 
       {/* ── Body ── */}
       <div style={{ fontSize: 13, color: t.text, lineHeight: 1.6 }}>
-        <MarkdownRenderer content={entry.content} />
+        <MarkdownRenderer content={entry.content} fontSize={13} />
       </div>
 
       {/* ── Footer: author / collaborators / references ── */}

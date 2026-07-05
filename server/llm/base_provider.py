@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from abc import ABC, abstractmethod
+from time import monotonic
 from typing import Any
 
 from .normalizer import NormalizedToolCall
@@ -73,21 +74,39 @@ class BaseLLMProvider(ABC):
         tool_handler: Any | None = None,
     ) -> str:
         logger.debug("LLM call start — model=%s tools=%s", model, list(tools or []))
+        started = monotonic()
         try:
-            result = await asyncio.wait_for(
+            result, iterations = await asyncio.wait_for(
                 self._call_inner(prompt, model, system_prompt, tools, tool_handler),
                 timeout=self.timeout_seconds,
             )
-            logger.debug("LLM call complete — model=%s", model)
+            # Speed instrumentation (temporary, pending real numbers from a live run):
+            # each agentic tool-call round-trip is a full LLM request, so a "turn"
+            # that took N iterations spent roughly N sequential network calls, not
+            # one — this is the number that explains a slow run, not just elapsed
+            # time alone. INFO so it shows up without flipping on debug logging.
+            logger.info(
+                "LLM call complete — model=%s iterations=%d elapsed=%.2fs",
+                model,
+                iterations,
+                monotonic() - started,
+            )
             return result
         except TimeoutError as err:
-            logger.error("LLM call timed out after %ds — model=%s", self.timeout_seconds, model)
+            logger.error(
+                "LLM call timed out after %ds (elapsed=%.2fs) — model=%s",
+                self.timeout_seconds,
+                monotonic() - started,
+                model,
+            )
             raise TimeoutError(
                 f"The LLM call exceeded the maximum allowed time ({self.timeout_seconds}s). "
                 "Please try again with a shorter prompt or fewer tools."
             ) from err
         except Exception:
-            logger.exception("LLM call failed — model=%s", model)
+            logger.exception(
+                "LLM call failed after %.2fs — model=%s", monotonic() - started, model
+            )
             raise
 
     async def _call_inner(
@@ -97,7 +116,7 @@ class BaseLLMProvider(ABC):
         system_prompt: str | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_handler: Any | None = None,
-    ) -> str:
+    ) -> tuple[str, int]:
         messages = self._build_messages(prompt, system_prompt)
         kwargs = self._build_kwargs(model, messages, tools)
 
@@ -108,7 +127,7 @@ class BaseLLMProvider(ABC):
             tool_calls = self._extract_tool_calls(response)
 
             if not tool_calls:
-                return self._extract_text(response)
+                return self._extract_text(response), iteration + 1
 
             results: list[tuple[NormalizedToolCall, str]] = []
             for tc in tool_calls:
@@ -119,4 +138,4 @@ class BaseLLMProvider(ABC):
             self._append_assistant_and_tool_results(messages, response, results)
             kwargs["messages"] = messages
 
-        return self._extract_text(response) if response else ""
+        return (self._extract_text(response) if response else ""), self.max_iterations

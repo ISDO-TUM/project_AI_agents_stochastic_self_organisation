@@ -201,7 +201,7 @@ export function ThreadedEntry({
             marginBottom: 5,
           }}
         >
-          <MarkdownRenderer content={entry.content} />
+          <MarkdownRenderer content={entry.content} fontSize={12} compact />
         </div>
 
         {/* ── Footer ── */}

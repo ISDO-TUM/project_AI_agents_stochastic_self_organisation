@@ -255,10 +255,21 @@ export function useSwarmRun(): {
 } {
   const [state, dispatch] = useReducer(reducer, undefined, loadPersisted);
   const seqRef = useRef(0);
+  // The in-flight run's abort handle. Without this, starting a new run (or
+  // resetting) only stopped this hook from *reading* the old stream — the
+  // fetch itself, and the swarm run driving it server-side, kept running to
+  // completion in the background, each still holding its own DB connection
+  // for the run's full duration. Repeated restarts within a session could
+  // stack up several of these zombie runs concurrently, starving the DB pool
+  // for the run actually being watched.
+  const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => {
     saveSession(PERSIST_KEY, state);
   }, [state]);
+
+  // Abort any in-flight stream on unmount (route navigation) too.
+  useEffect(() => () => abortRef.current?.abort(), []);
 
   // BYOK keys are sent as X-LLM-* headers on the run request, mirroring the rest
   // of the API layer (lib/api.ts `request`). Without these, a deployment whose
@@ -268,6 +279,13 @@ export function useSwarmRun(): {
 
   const start = useCallback(
     (prompt: string, parentRunId?: string) => {
+      // Cancel any run still in flight — its SSE connection closing is what
+      // lets the backend's own cleanup (task cancellation, connection
+      // release) actually run, instead of leaving it to finish unattended.
+      abortRef.current?.abort();
+      const controller = new AbortController();
+      abortRef.current = controller;
+
       const seq = seqRef.current + 1;
       seqRef.current = seq;
       dispatch({ type: "BEGIN" });
@@ -288,6 +306,7 @@ export function useSwarmRun(): {
               // mechanics only) — present so a future session picker can pass it.
               ...(parentRunId ? { parent_run_id: parentRunId } : {}),
             }),
+            signal: controller.signal,
           });
           if (!res.ok || !res.body) throw new Error(`HTTP ${res.status}`);
 
@@ -346,6 +365,7 @@ export function useSwarmRun(): {
   );
 
   const reset = useCallback(() => {
+    abortRef.current?.abort();
     seqRef.current += 1;
     dispatch({ type: "RESET" });
   }, []);

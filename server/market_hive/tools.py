@@ -188,6 +188,36 @@ class PostToBlackboardTool(Tool):
 
         claim = validated_input.claim[:200] if validated_input.claim else None
 
+        # One opening stake per taker per thread (PRD §9.3): nothing previously
+        # stopped an agent from calling post_to_blackboard(entry_type='proposal')
+        # more than once in the same round-1 turn — the tool-call loop allows up
+        # to 20 iterations, and an agent that isn't satisfied with its first post
+        # would just write another, near-duplicate one covering the same clauses.
+        # 'reply' is intentionally not capped: a single discussion-round turn
+        # legitimately replying to two different points is not the same bug.
+        if validated_input.entry_type == "proposal":
+            existing = (
+                await db.execute(
+                    text(
+                        "SELECT id FROM draft_entries WHERE run_id = :run_id "
+                        "AND thread_id = :thread_id AND author_id = :author_id "
+                        "AND round = :round AND entry_type = 'proposal' LIMIT 1"
+                    ),
+                    {
+                        "run_id": run_id,
+                        "thread_id": thread_id,
+                        "author_id": author_id,
+                        "round": round_,
+                    },
+                )
+            ).scalar()
+            if existing is not None:
+                return (
+                    '{"error": "You already posted your opening proposal for this thread '
+                    "this round — do not post another. Use cite(...) on others' proposals, "
+                    'or wait for the discussion rounds to reply."}'
+                )
+
         bb = Blackboard(db)
         entry_id = await bb.post(
             run_id=run_id,

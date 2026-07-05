@@ -203,7 +203,14 @@ async def test_read_respects_thread_filter(db: AsyncConnection) -> None:
     assert len(results_all) == 2
 
 
-async def test_read_does_not_return_invisible_entries(db: AsyncConnection) -> None:
+async def test_read_still_returns_invisible_entries(db: AsyncConnection) -> None:
+    """Soft-deleted (decayed) entries stay in agents' reading/citing context.
+
+    ``is_visible`` only declutters the human-facing board — hard-excluding a
+    decayed entry from ``read`` would mean it can never be cited again (the
+    only way it could ever be promoted or resurface), a one-way trap for any
+    proposal that gained citations slowly.
+    """
     from sqlalchemy import text
 
     run_id = str(uuid.uuid4())
@@ -224,7 +231,8 @@ async def test_read_does_not_return_invisible_entries(db: AsyncConnection) -> No
     await db.commit()
 
     results = await bb.read(run_id=run_id, query="hidden", thread_id=thread_id)
-    assert len(results) == 0
+    assert len(results) == 1
+    assert results[0].id == entry_id
 
 
 async def _seed_two_agents(conn: AsyncConnection, run_id: str, thread_id: str) -> tuple[str, str]:
@@ -456,6 +464,8 @@ async def test_check_promotions_does_not_double_promote(db: AsyncConnection) -> 
 
 
 async def test_soft_delete_stale_entries(db: AsyncConnection) -> None:
+    from sqlalchemy import text
+
     run_id = str(uuid.uuid4())
     thread_id = str(uuid.uuid4())
     agent_a, _ = await _seed_two_agents(db, run_id, thread_id)
@@ -473,8 +483,17 @@ async def test_soft_delete_stale_entries(db: AsyncConnection) -> None:
     deleted = await bb.soft_delete_stale(run_id=run_id, current_round=5, decay_rounds=3)
 
     assert deleted == 1
+    # Marked invisible (declutters the human-facing board)...
+    row = (
+        await db.execute(
+            text("SELECT is_visible FROM draft_entries WHERE run_id = :r"), {"r": run_id}
+        )
+    ).scalar_one()
+    assert not row
+    # ...but still reachable through `read` — decay must not cut an entry out of
+    # agents' own citing context, or it can never be cited (and promoted) again.
     entries = await bb.read(run_id=run_id, query="stale", thread_id=thread_id)
-    assert len(entries) == 0
+    assert len(entries) == 1
 
 
 async def test_soft_delete_exempts_round_1_entries(db: AsyncConnection) -> None:

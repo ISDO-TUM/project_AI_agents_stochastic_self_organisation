@@ -238,7 +238,7 @@ export function FinalAnswerReveal({
                   lineHeight: 1.65,
                 }}
               >
-                <MarkdownRenderer content={answer} />
+                <MarkdownRenderer content={answer} fontSize={14.5} />
               </div>
 
               {/* ── Ratification badge (ratified synthesis) ── */}
@@ -291,13 +291,13 @@ export function FinalAnswerReveal({
                       style={{
                         margin: 0,
                         paddingLeft: 16,
-                        fontSize: 11.5,
                         color: t.textSub,
-                        lineHeight: 1.5,
                       }}
                     >
                       {ratification.objections.map((o, i) => (
-                        <li key={i}>{o}</li>
+                        <li key={i}>
+                          <MarkdownRenderer content={o} fontSize={11.5} compact />
+                        </li>
                       ))}
                     </ul>
                   )}
@@ -411,7 +411,7 @@ export function FinalAnswerReveal({
                                   lineHeight: 1.5,
                                 }}
                               >
-                                <MarkdownRenderer content={f.content} />
+                                <MarkdownRenderer content={f.content} fontSize={12} compact />
                               </div>
                             </div>
                           ))}

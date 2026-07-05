@@ -191,8 +191,12 @@ export function DraftBoard({
     state.threads.find((th) => th.id === activeThreadId) ??
     state.threads[0] ??
     null;
-  const visibleDraft = filteredDraft.filter((e) => e.is_visible);
-  const hasContent = visibleDraft.length > 0;
+  // The list view renders every entry, live or decayed — decayed ones are only
+  // dimmed (via each card's own `is_visible` handling), never removed. Only the
+  // Confirmed board is the durable record; the draft board staying legible about
+  // its own history (what was tried and didn't stick) is the point of it.
+  const renderedDraft = filteredDraft;
+  const hasContent = renderedDraft.length > 0;
   const threshold = computePromotionThreshold(filteredDraft);
   // Referentially stable across renders so the graph view's layout memo holds
   // between streaming ticks (rebuilding this Map every render forced a full
@@ -218,14 +222,14 @@ export function DraftBoard({
 
   // Track new entries arriving while the user is scrolled up
   useEffect(() => {
-    const diff = visibleDraft.length - prevLengthRef.current;
-    prevLengthRef.current = visibleDraft.length;
+    const diff = renderedDraft.length - prevLengthRef.current;
+    prevLengthRef.current = renderedDraft.length;
     if (diff <= 0) return;
     const el = bodyRef.current;
     if (!el) return;
     const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
     if (!atBottom) setNewCount((n) => n + diff);
-  }, [visibleDraft.length]);
+  }, [renderedDraft.length]);
 
   const handleScrollToNew = () => {
     bodyRef.current?.scrollTo({
@@ -241,8 +245,8 @@ export function DraftBoard({
   };
 
   // Group visible entries by round for the timeline dividers
-  const roundGroups = visibleDraft.reduce<
-    { round: number; entries: typeof visibleDraft }[]
+  const roundGroups = renderedDraft.reduce<
+    { round: number; entries: typeof renderedDraft }[]
   >((acc, entry) => {
     const last = acc[acc.length - 1];
     if (last && last.round === entry.round) {
@@ -406,7 +410,7 @@ export function DraftBoard({
                   ? "done"
                   : state.loading
                     ? "syncing…"
-                    : `${visibleDraft.length}D`}
+                    : `${renderedDraft.length}D`}
               </span>
             </>
           )}
@@ -475,7 +479,7 @@ export function DraftBoard({
         {activeThread && <PromptBrief text={activeThread.description} />}
 
         {/* Skeleton: run active but no entries yet */}
-        {state.loading && visibleDraft.length === 0 && (
+        {state.loading && renderedDraft.length === 0 && (
           <>
             <SkeletonCard dark={dark} delay={0} />
             <SkeletonCard dark={dark} delay={0.15} />
@@ -498,12 +502,12 @@ export function DraftBoard({
         )}
 
         {/* Styled empty state */}
-        {!state.loading && !state.error && visibleDraft.length === 0 && (
+        {!state.loading && !state.error && renderedDraft.length === 0 && (
           <EmptyState runId={runId} dark={dark} />
         )}
 
         {/* Round-grouped content */}
-        {visibleDraft.length > 0 && !state.error && (
+        {renderedDraft.length > 0 && !state.error && (
           <>
             {roundGroups.map((group, gi) => (
               <div key={group.round}>
@@ -793,7 +797,7 @@ export function DraftBoard({
                     <PromptBrief text={activeThread.description} />
                   )}
 
-                  {state.loading && visibleDraft.length === 0 && (
+                  {state.loading && renderedDraft.length === 0 && (
                     <>
                       <SkeletonCard dark={dark} delay={0} />
                       <SkeletonCard dark={dark} delay={0.15} />
@@ -814,10 +818,10 @@ export function DraftBoard({
                   )}
                   {!state.loading &&
                     !state.error &&
-                    visibleDraft.length === 0 && (
+                    renderedDraft.length === 0 && (
                       <EmptyState runId={runId} dark={dark} />
                     )}
-                  {visibleDraft.length > 0 && !state.error && (
+                  {renderedDraft.length > 0 && !state.error && (
                     <>
                       {roundGroups.map((group, gi) => (
                         <div key={group.round}>

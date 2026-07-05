@@ -313,9 +313,17 @@ class Blackboard:
         run_id: str,
         k: int = 10,
     ) -> list[DraftEntrySchema]:
-        """Return top-k visible draft entries scored by cosine(query, entry) x log(1+citations).
+        """Return top-k draft entries scored by cosine(query, entry) x log(1+citations).
 
         Falls back to pure citation-count ranking when the embedding API is unavailable.
+
+        Includes entries soft-deleted for staleness (``is_visible = false``): decay
+        only declutters the human-facing board, it must not also cut an entry out of
+        agents' own reading/citing context — that would guarantee it can never earn
+        another citation (the only way back onto the board or into Confirmed) once
+        decayed. The relevance/citation-weight ranking below already keeps genuinely
+        dead entries out of the top-k naturally; a hard visibility gate on top of
+        that just creates entries that can decay but never recover.
         """
         thread_clause = "AND de.thread_id = :thread_id" if thread_id is not None else ""
         params: dict[str, Any] = {"run_id1": run_id, "run_id2": run_id}
@@ -339,7 +347,7 @@ class Blackboard:
                     WHERE  run_id = :run_id1
                     GROUP  BY cited_entry_id
                 ) cc ON cc.cited_entry_id = de.id
-                WHERE de.run_id = :run_id2 AND de.is_visible = true
+                WHERE de.run_id = :run_id2
                 {thread_clause}
                 """
             ),
@@ -416,7 +424,7 @@ class Blackboard:
                     WHERE  run_id = :run_id
                     GROUP  BY cited_entry_id
                 ) cc ON cc.cited_entry_id = de.id
-                WHERE de.run_id = :run_id AND de.is_visible = true
+                WHERE de.run_id = :run_id
                   AND de.mention_agents LIKE :agent_id
                 {thread_clause}
                 """
@@ -688,6 +696,11 @@ class Blackboard:
         by the caller (auction.self_select result) rather than inferred from
         poster count. Already-promoted entries are skipped.
 
+        Considers entries regardless of ``is_visible``: a candidate that crossed
+        the threshold slowly (citations trickling in across several rounds) may
+        have decayed to invisible by the time the last citer pushes it over M —
+        it must still promote, or a slow-but-real consensus is silently lost.
+
         Promotion-time semantic dedup (contestable consensus): a candidate
         whose embedding is near-identical (cosine >= DEDUP_EPS) to an already-
         confirmed, non-retracted entry in the same thread is merged into it
@@ -718,7 +731,7 @@ class Blackboard:
                     ON c.cited_entry_id = de.id
                    AND c.citing_agent_id != de.author_id
                    AND c.run_id = de.run_id
-                WHERE de.run_id = :run_id AND de.is_visible = true
+                WHERE de.run_id = :run_id
                 GROUP BY de.id
                 """
             ),

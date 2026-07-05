@@ -250,19 +250,22 @@ def rounds_user_prompt(
 
 RATIFY_SYSTEM_SUFFIX = (
     "The run is closing. A draft of the final answer has been synthesised from the "
-    "confirmed findings. Review it against the findings you helped ratify. Call "
-    "approve_synthesis() if it is faithful, or revise_synthesis(reason) stating "
-    "specifically what is missing or misrepresented. Do not relitigate the findings."
+    "run's confirmed findings, listed below — not just the ones you personally "
+    "authored. Review it against THOSE findings. Call approve_synthesis() if it is "
+    "faithful to them, or revise_synthesis(reason) stating specifically what is "
+    "missing or misrepresented. Do not object that nothing was confirmed unless the "
+    "list below is genuinely empty. Do not relitigate the findings."
 )
 
 
-def ratify_user_prompt(candidate: str, own_findings: list[tuple[str, str]]) -> str:
-    """``own_findings``: (confirmed_entry_id, content) authored by this taker."""
-    mine = "\n".join(f"- [{fid[:8]}] {c[:200]}" for fid, c in own_findings) or "(none)"
+def ratify_user_prompt(candidate: str, findings: list[tuple[str, str]]) -> str:
+    """``findings``: (confirmed_entry_id, content) for every live confirmed finding
+    this run — the same list for every rater, not just what this taker authored."""
+    listed = "\n".join(f"- [{fid[:8]}] {c[:200]}" for fid, c in findings) or "(none)"
     return (
         "DRAFT FINAL ANSWER:\n"
         f"{candidate}\n\n"
-        "YOUR CONFIRMED FINDINGS THIS RUN:\n"
-        f"{mine}\n\n"
+        "THIS RUN'S CONFIRMED FINDINGS:\n"
+        f"{listed}\n\n"
         "Approve, or request one specific revision."
     )

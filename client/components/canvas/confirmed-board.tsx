@@ -82,7 +82,7 @@ function FinalAnswer({
           color: dark ? "rgba(255,250,235,0.92)" : "rgba(35,28,8,0.92)",
         }}
       >
-        <MarkdownRenderer content={text} />
+        <MarkdownRenderer content={text} fontSize={12.5} compact />
       </div>
     </div>
   );
