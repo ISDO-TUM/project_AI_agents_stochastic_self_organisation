@@ -188,11 +188,14 @@ class PostToBlackboardTool(Tool):
 
         claim = validated_input.claim[:200] if validated_input.claim else None
 
-        # One opening stake per taker per thread (PRD §9.3): nothing previously
-        # stopped an agent from calling post_to_blackboard(entry_type='proposal')
-        # more than once in the same round-1 turn — the tool-call loop allows up
-        # to 20 iterations, and an agent that isn't satisfied with its first post
-        # would just write another, near-duplicate one covering the same clauses.
+        # One opening stake per taker per thread, ever (PRD §9.3): 'proposal' is
+        # conceptually round-1-only ("'proposal' for round-1 initial answers;
+        # 'reply' for later rounds" — see the field's own description above),
+        # so scoping this to the CURRENT round only blocked the case where an
+        # agent calls post_to_blackboard(entry_type='proposal') twice in the
+        # same turn (the tool-call loop allows up to 20 iterations) — it did
+        # nothing to stop the same agent choosing 'proposal' again in round 2,
+        # 3, etc., which is just as much a duplicate opening stake, not a reply.
         # 'reply' is intentionally not capped: a single discussion-round turn
         # legitimately replying to two different points is not the same bug.
         if validated_input.entry_type == "proposal":
@@ -201,21 +204,20 @@ class PostToBlackboardTool(Tool):
                     text(
                         "SELECT id FROM draft_entries WHERE run_id = :run_id "
                         "AND thread_id = :thread_id AND author_id = :author_id "
-                        "AND round = :round AND entry_type = 'proposal' LIMIT 1"
+                        "AND entry_type = 'proposal' LIMIT 1"
                     ),
                     {
                         "run_id": run_id,
                         "thread_id": thread_id,
                         "author_id": author_id,
-                        "round": round_,
                     },
                 )
             ).scalar()
             if existing is not None:
                 return (
-                    '{"error": "You already posted your opening proposal for this thread '
-                    "this round — do not post another. Use cite(...) on others' proposals, "
-                    'or wait for the discussion rounds to reply."}'
+                    '{"error": "You already posted your opening proposal for this thread — '
+                    "do not post another. Use cite(...) on others' proposals, or post a "
+                    'reply (entry_type=\\"reply\\") if you have something new to add."}'
                 )
 
         bb = Blackboard(db)

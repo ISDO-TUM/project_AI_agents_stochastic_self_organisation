@@ -503,6 +503,35 @@ async def test_second_proposal_same_turn_context_is_rejected(db: AsyncConnection
     assert count == 1
 
 
+async def test_second_proposal_in_a_later_round_is_also_rejected(db: AsyncConnection) -> None:
+    """The cap must not be scoped to a single round: 'proposal' is a one-time,
+    round-1-only opening stake, so an agent choosing entry_type='proposal'
+    again in round 2 (nothing stops the LLM from doing so instead of 'reply')
+    is just as much a duplicate as posting twice in the same round-1 turn."""
+    await _insert_agent(db, "a1", "Alpha")
+    tool = PostToBlackboardTool()
+
+    first = await tool.execute(
+        PostToBlackboardInput(content="round 1 take", entry_type="proposal", thread_id="t1"),
+        {"db": db, "run_id": "r1", "agent_id": "a1", "round": 1},
+    )
+    assert "error" not in first
+
+    later = await tool.execute(
+        PostToBlackboardInput(content="round 2 take", entry_type="proposal", thread_id="t1"),
+        {"db": db, "run_id": "r1", "agent_id": "a1", "round": 2},
+    )
+    assert "error" in later
+    assert "already posted" in later
+
+    count = (
+        await db.execute(
+            text("SELECT COUNT(*) FROM draft_entries WHERE entry_type = 'proposal'")
+        )
+    ).scalar_one()
+    assert count == 1
+
+
 async def test_second_reply_same_turn_context_is_allowed(db: AsyncConnection) -> None:
     """Unlike 'proposal', 'reply' is intentionally not capped — replying to two
     different points in one discussion-round turn is legitimate, not the bug
