@@ -12,7 +12,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from server.db import cleanup_stale_data, close_db, get_engine, init_db, prune_trials
+from server.db import close_db, init_db
 from server.llm.credentials import MissingCredentialsError
 from server.llm.langfuse_setup import langfuse_context
 from server.market_hive.routes import router as market_hive_router
@@ -27,27 +27,6 @@ from server.topology.benchmarks import benchmark_router
 from server.topology.routes import history_router, rules_router, statistics_router
 
 logger = logging.getLogger(__name__)
-
-_CLEANUP_INTERVAL_SECONDS = 3600  # run every hour
-_STALE_AFTER_HOURS = 24
-
-
-async def _cleanup_loop() -> None:
-    """Background task: hourly, drop stale agents/files and prune old run history."""
-    while True:
-        await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
-        try:
-            deleted = await cleanup_stale_data(get_engine(), max_age_hours=_STALE_AFTER_HOURS)
-            if deleted:
-                logger.info("Periodic cleanup: removed %d stale agent(s)", deleted)
-        except Exception:
-            logger.exception("Periodic cleanup failed — will retry next cycle")
-        try:
-            pruned = await prune_trials(get_engine())
-            if pruned:
-                logger.info("Periodic cleanup: pruned %d trial(s) from history", pruned)
-        except Exception:
-            logger.exception("History pruning failed — will retry next cycle")
 
 
 # Search upward from this file so the .env at the repo root is always found,
@@ -74,19 +53,17 @@ for _var in _BASE_URL_VARS:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Initialise the session database on startup and close it on shutdown."""
+    """Initialise the session database on startup and close it on shutdown.
+
+    Note: there is deliberately NO periodic cleanup task here. Agents, knowledge
+    files and run history persist until the user deletes them explicitly — the
+    former 24h stale-agent sweep and trial pruning were removed so data survives
+    long-running deployments.
+    """
     await init_db()
-    cleanup_task = asyncio.create_task(_cleanup_loop())
     try:
         yield
     finally:
-        cleanup_task.cancel()
-        try:
-            await cleanup_task
-        except asyncio.CancelledError:
-            # Expected during shutdown after explicit task cancellation.
-            # Intentionally ignored so application teardown can continue.
-            pass
         # Drain any Langfuse events still buffered in the background consumer so
         # they survive the container stopping (e.g. a Railway redeploy) instead
         # of being dropped mid-batch.
@@ -127,6 +104,7 @@ app.add_middleware(
         "X-LLM-API-Key",
         "X-LLM-Model",
         "X-Request-ID",
+        "X-User-Id",
     ],
 )
 

@@ -28,6 +28,7 @@ import type {
   TopologyMode,
   TrialSummary,
 } from "./types";
+import { userIdHeaders } from "./user-id";
 
 // ─── Wire types ──────────────────────────────────────────────────────────────
 
@@ -99,7 +100,10 @@ async function request<T>(
   path: string,
   body?: unknown,
 ): Promise<T> {
-  const headers: Record<string, string> = { ...llmHeaders };
+  const headers: Record<string, string> = {
+    ...llmHeaders,
+    ...userIdHeaders(),
+  };
   if (body) headers["Content-Type"] = "application/json";
   const res = await fetch(path, {
     method,

@@ -12,15 +12,15 @@
   "dependencies": {
     "@radix-ui/react-hover-card": "^1.1.17",
     "@radix-ui/react-popover": "^1.1.17",
-    "@radix-ui/react-select": "^2.2.6",
+    "@radix-ui/react-select": "^2.3.1",
     "framer-motion": "^12.41.0",
-    "lucide-react": "^1.17.0",
-    "next": "16.2.6",
+    "lucide-react": "^1.21.0",
+    "next": "16.2.9",
     "ogl": "^1.0.11",
-    "react": "19.2.6",
-    "react-dom": "19.2.6",
+    "react": "19.2.7",
+    "react-dom": "19.2.7",
     "react-markdown": "^10.1.0",
-    "recharts": "^3.8.1",
+    "recharts": "^3.9.0",
     "rehype-highlight": "^7.0.2",
     "rehype-sanitize": "^6.0.0",
     "remark-gfm": "^4.0.1"
@@ -30,8 +30,8 @@
     "@types/node": "^25",
     "@types/react": "^19",
     "@types/react-dom": "^19",
-    "eslint": "^9",
-    "eslint-config-next": "16.2.6",
+    "eslint": "^10",
+    "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
     "typescript": "^6"
   }
