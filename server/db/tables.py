@@ -444,6 +444,18 @@ turn_log = Table(
     UniqueConstraint("run_id", "agent_id", "phase", "round", name="uq_turn_log_once"),
 )
 
+# ── Run metrics (consensus observability) ─────────────────────────────────────
+# One JSON snapshot per terminated run — computed once at finalization by
+# server.market_hive.metrics.compute_run_metrics. New table, no migration
+# entries needed (create_all covers it).
+run_metrics = Table(
+    "run_metrics",
+    metadata,
+    Column("run_id", Text, ForeignKey("swarm_runs.id"), primary_key=True, nullable=False),
+    Column("metrics", Text, nullable=False),
+    Column("created_at", DateTime(timezone=True), server_default=func.now()),
+)
+
 # ── Indexes (PRD §7.1) ────────────────────────────────────────────────────────
 # Attention queries, citation counting and confirmed-layer reads run on every
 # round, so the hot lookup paths are indexed explicitly.

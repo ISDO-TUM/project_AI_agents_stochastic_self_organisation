@@ -248,6 +248,27 @@ async def get_run_status(run_id: str, db: DBDep) -> RunStatusResponse:
     )
 
 
+@router.get(
+    "/api/simulation/{run_id}/metrics",
+    summary="Consensus quality metrics for a terminated run",
+)
+async def get_run_metrics(run_id: str, db: DBDep) -> dict[str, Any]:
+    """The metrics snapshot computed once at run finalization (consensus
+    observability). 404s both when the run doesn't exist and when it hasn't
+    terminated yet — metrics are computed exactly once, at the end."""
+    row = (
+        await db.execute(
+            text("SELECT metrics FROM run_metrics WHERE run_id = :id"), {"id": run_id}
+        )
+    ).fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="no metrics for this run (not found, or not yet terminated)",
+        )
+    return cast(dict[str, Any], json.loads(row[0]))
+
+
 @router.post(
     "/api/simulation/seed",
     response_model=SeedResponse,

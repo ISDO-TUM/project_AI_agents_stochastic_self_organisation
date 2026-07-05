@@ -31,6 +31,8 @@ from server.guardrails import build_guarded_system_prompt
 from server.llm import call_agent
 from server.market_hive.auction import AuctionEngine, Invitation
 from server.market_hive.blackboard import Blackboard, carry_forward_findings, format_entries_digest
+from server.market_hive.metrics import compute_run_metrics
+from server.market_hive.tracing import get_tracer
 from server.market_hive.contract_source import FallbackContractSource
 from server.market_hive.convergence import ConvergenceEngine
 from server.market_hive.journal import RunJournal
@@ -496,6 +498,17 @@ async def _complete_run(
             "ratification": json.dumps(ratification) if ratification is not None else None,
             "now": datetime.now(UTC),
         },
+    )
+    await db.commit()
+
+
+async def _persist_run_metrics(db: AsyncConnection, run_id: str, metrics: dict[str, Any]) -> None:
+    """Persist one metrics snapshot. Idempotent: a resumed/re-finalized run
+    replaces its previous snapshot rather than violating the primary key."""
+    await db.execute(text("DELETE FROM run_metrics WHERE run_id = :id"), {"id": run_id})
+    await db.execute(
+        text("INSERT INTO run_metrics (run_id, metrics) VALUES (:id, :metrics)"),
+        {"id": run_id, "metrics": json.dumps(metrics)},
     )
     await db.commit()
 
@@ -1433,6 +1446,30 @@ async def run_swarm(
     agents_by_id = await _load_agents(db)
     journal = RunJournal(run_id)
 
+    # Consensus observability: optional Langfuse tracing, flag-gated to a no-op
+    # unless LANGFUSE_* env vars are set. One trace per run, one child span per
+    # phase — `_enter_phase` closes the previous phase's span before opening
+    # the next, so phases never overlap; `_exit_tracing` closes both on every
+    # exit path (the no-takers abort and the normal end of the function).
+    tracer = get_tracer()
+    run_span_cm = tracer.run_span(run_id)
+    run_span_cm.__enter__()
+    phase_span_cm: Any = None
+
+    def _enter_phase(name: str) -> None:
+        nonlocal phase_span_cm
+        if phase_span_cm is not None:
+            phase_span_cm.__exit__(None, None, None)
+        phase_span_cm = tracer.phase_span(name)
+        phase_span_cm.__enter__()
+
+    def _exit_tracing() -> None:
+        nonlocal phase_span_cm
+        if phase_span_cm is not None:
+            phase_span_cm.__exit__(None, None, None)
+            phase_span_cm = None
+        run_span_cm.__exit__(None, None, None)
+
     # Multi-turn contract sessions: carry the parent's ratified findings forward
     # as provenance-bearing anchors before the contract is drafted, so both the
     # Market Maker and the auction can see the session context.
@@ -1499,12 +1536,14 @@ async def run_swarm(
     auction = AuctionEngine.from_config(db, config)
     if _phase_index("auction", config.max_rounds) >= resume_from:
         await journal.phase(db, "auction")
+        _enter_phase("auction")
         async for step in _run_auction(db, auction, run_id, contract, agents_by_id, agent_runner):
             yield step
 
     takers = await auction.get_takers(run_id=run_id)
     if not takers:
         await _complete_run(db, run_id, status="aborted", reason="no_takers", round=0)
+        _exit_tracing()
         return
     if resume_run_id is not None:
         # Reconstruct the dropout set the interrupted run had already recorded
@@ -1517,6 +1556,7 @@ async def run_swarm(
     convergence = ConvergenceEngine.from_config(db, config)
     if _phase_index("round_1", config.max_rounds) >= resume_from:
         await journal.phase(db, "round_1", 1)
+        _enter_phase("round_1")
         async for step in _run_round_one(
             db, run_id, contract, threads, takers, agents_by_id, agent_runner, config, journal
         ):
@@ -1528,6 +1568,7 @@ async def run_swarm(
     # ── Vote sub-round → cold-start confidence/temperature (§9.4, §6.4) ───────
     if _phase_index("vote", config.max_rounds) >= resume_from:
         await journal.phase(db, "vote", 1)
+        _enter_phase("vote")
         async for step in _run_vote_subround(
             db, run_id, threads, takers, agents_by_id, agent_runner, journal
         ):
@@ -1554,6 +1595,7 @@ async def run_swarm(
     for round in range(discussion_start, config.max_rounds + 1):
         last_round = round
         await journal.phase(db, f"round_{round}", round)
+        _enter_phase(f"round_{round}")
         async for step in _run_discussion_round(
             db,
             run_id,
@@ -1594,6 +1636,7 @@ async def run_swarm(
 
     # ── Finalize: select + synthesize the answer, update trust, emit (§6.6, §6.7) ─
     await journal.phase(db, "synthesis", last_round)
+    _enter_phase("synthesis")
     output = await terminator.format_output(
         run_id=run_id,
         round=last_round,
@@ -1653,8 +1696,27 @@ async def run_swarm(
         final_answer=output.final_answer,
         ratification=ratification,
     )
+
+    # Consensus observability: one metrics snapshot per terminated run, computed
+    # after the run's terminal state (ratification, final_answer) is persisted
+    # so the metrics can read it back.
+    metrics = await compute_run_metrics(db, run_id)
+    await _persist_run_metrics(db, run_id, metrics)
+    duplication = metrics.get("duplication")
+    cost = metrics.get("cost")
+    metrics_summary = {
+        "duplication_rate": duplication["mean_max_pairwise_cosine"] if duplication else None,
+        "equilibrium_round": last_round if termination_reason == "equilibrium" else None,
+        "tokens_per_confirmed_finding": cost["tokens_per_confirmed_finding"] if cost else None,
+    }
+
     yield _step(
         "convergence",
         f"Run complete ({termination_reason}, round {last_round}).",
-        data={**output.model_dump(mode="json"), "ratification": ratification},
+        data={
+            **output.model_dump(mode="json"),
+            "ratification": ratification,
+            "metrics_summary": metrics_summary,
+        },
     )
+    _exit_tracing()

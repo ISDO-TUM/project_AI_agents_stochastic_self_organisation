@@ -1672,3 +1672,46 @@ async def test_swarm_run_valid_parent_carries_session(client: AsyncClient) -> No
 
     assert resp.status_code == 200
     assert captured_kwargs.get("parent_run_id") == "parent-done"
+
+
+@pytest.mark.asyncio
+async def test_run_metrics_endpoint_404s_before_termination(client: AsyncClient) -> None:
+    from sqlalchemy import text
+
+    async with get_engine().connect() as conn:
+        await conn.execute(
+            text("INSERT INTO swarm_runs (id, status, mode) VALUES ('mid-run', 'running', 'swarm')")
+        )
+        await conn.commit()
+
+    resp = await client.get("/api/simulation/mid-run/metrics")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_run_metrics_endpoint_returns_snapshot_after_termination(client: AsyncClient) -> None:
+    import json
+
+    from sqlalchemy import text
+
+    async with get_engine().connect() as conn:
+        await conn.execute(
+            text("INSERT INTO swarm_runs (id, status, mode) VALUES ('done-run', 'completed', 'swarm')")
+        )
+        await conn.execute(
+            text("INSERT INTO run_metrics (run_id, metrics) VALUES ('done-run', :m)"),
+            {"m": json.dumps({"duplication": None, "citations": {"total": 0}})},
+        )
+        await conn.commit()
+
+    resp = await client.get("/api/simulation/done-run/metrics")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["citations"]["total"] == 0
+    assert body["duplication"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_metrics_endpoint_404s_for_unknown_run(client: AsyncClient) -> None:
+    resp = await client.get("/api/simulation/does-not-exist/metrics")
+    assert resp.status_code == 404

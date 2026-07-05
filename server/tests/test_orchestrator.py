@@ -1450,6 +1450,57 @@ async def test_ratification_tools_record_votes() -> None:
     assert votes == {"a1": None, "a2": "misses the §7.1 pricing risk"}
 
 
+# ── Consensus observability ────────────────────────────────────────────────────
+
+
+async def test_run_metrics_persisted_and_summarized_on_convergence(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+
+    steps = await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2),
+        db,
+        agent_runner=_scripted_runner(),
+    )
+
+    conv = next(s for s in steps if s.type == "convergence")
+    summary = conv.data["metrics_summary"]
+    assert set(summary) == {"duplication_rate", "equilibrium_round", "tokens_per_confirmed_finding"}
+
+    run_id = (await db.execute(text("SELECT id FROM swarm_runs"))).scalar_one()
+    row = (
+        await db.execute(text("SELECT metrics FROM run_metrics WHERE run_id = :r"), {"r": run_id})
+    ).fetchone()
+    assert row is not None
+    metrics = json.loads(row[0])
+    assert metrics["citations"] is not None
+    assert metrics["convergence"] is not None
+
+
+async def test_configured_tracing_records_spans_for_a_scripted_run(
+    db: AsyncConnection, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from unittest.mock import MagicMock, patch
+
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk")
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+
+    mock_client = MagicMock()
+    with patch("langfuse.Langfuse", return_value=mock_client):
+        await _drain(
+            SwarmRunConfig(prompt="Analyze this contract", max_rounds=2),
+            db,
+            agent_runner=_scripted_runner(),
+        )
+
+    mock_client.trace.assert_called_once()
+    assert mock_client.trace.call_args.kwargs["name"] == "swarm_run"
+    # At least one phase span opened per phase (auction, round_1, vote, round_2, synthesis).
+    assert mock_client.trace.return_value.span.call_count >= 5
+
+
 async def test_unanimous_approval_ships_ratified(db: AsyncConnection) -> None:
     await _insert_agent(db, "a1", "Alpha")
     await _insert_agent(db, "a2", "Beta")
