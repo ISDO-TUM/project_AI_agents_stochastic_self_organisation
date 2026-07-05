@@ -17,9 +17,9 @@ interface ContractCardProps {
 }
 
 /**
- * The Market Maker's drafted contract embedded in the Draft board, right under
- * the brief. A slim always-visible header unfolds into the full document
- * (see contract-document.tsx); it starts open on an empty board and collapses
+ * The Market Maker's drafted contract embedded in the Draft board. A slim
+ * always-visible header unfolds into the full document (see
+ * contract-document.tsx); it starts open on an empty board and collapses
  * automatically when the first draft entry lands.
  */
 export function ContractCard({

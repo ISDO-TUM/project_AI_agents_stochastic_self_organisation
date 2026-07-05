@@ -360,13 +360,17 @@ async def test_auction_turn_failure_does_not_crash_run(db: AsyncConnection) -> N
     ) -> tuple[str, list[ToolCall]]:
         if "submit_bid" in tool_names and agent["name"] == "Beta":
             raise TimeoutError("simulated provider timeout")
-        return await base(
+        # Unpack + tuple literal: AgentRunner resolves to Any across the
+        # server.* import boundary (see pyproject.toml mypy note), so
+        # returning the awaited call directly trips no-any-return.
+        response, tools_used = await base(
             agent,
             user_prompt=user_prompt,
             system_suffix=system_suffix,
             tool_names=tool_names,
             tool_context=tool_context,
         )
+        return response, tools_used
 
     steps = await _drain(
         SwarmRunConfig(prompt="Analyze this contract"),
