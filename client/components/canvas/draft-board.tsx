@@ -9,7 +9,6 @@ import { Layers, Maximize2, Network, Rows3, X } from "lucide-react";
 import { computePromotionThreshold } from "@/lib/blackboard-utils";
 import { ThreadFilterDropdown } from "./blackboard/thread-filter-dropdown";
 import { BoardGraphView } from "./blackboard/board-graph-view";
-import { PromptBrief } from "./blackboard/prompt-brief";
 import { ContractCard } from "./blackboard/contract-card";
 import { DraftEntryStream } from "./blackboard/draft-entry-stream";
 
@@ -463,7 +462,6 @@ export function DraftBoard({
         }}
         className="pscroll"
       >
-        {activeThread && <PromptBrief text={activeThread.description} />}
         {state.contract && (
           <ContractCard
             contract={state.contract}
@@ -729,9 +727,6 @@ export function DraftBoard({
                   style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}
                   className="pscroll"
                 >
-                  {activeThread && (
-                    <PromptBrief text={activeThread.description} />
-                  )}
                   {state.contract && (
                     <ContractCard
                       contract={state.contract}
