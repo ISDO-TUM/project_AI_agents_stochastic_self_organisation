@@ -278,26 +278,15 @@ export function computeBoardGraphLayout(
   });
 
   // ── Significance tiering (proposal/reply only) ──────────────────────────
-  // ≤ FULL_CARD_LIMIT such entries: everything renders full (density gate).
-  // Above it: confirmed entries are always full; remaining full slots go to
-  // the highest-cited (tie: earliest) until the limit; the rest are pills.
+  // Only Confirmed entries earn a full card — every other proposal/reply
+  // collapses to a compact pill, regardless of how many entries the run has.
   // Nothing is ever hidden — pills are smaller, not absent.
   const tierable = flat.filter(
     (e) => e.entry_type === "proposal" || e.entry_type === "reply",
   );
-  const compactIds = new Set<string>();
-  if (tierable.length > FULL_CARD_LIMIT) {
-    const confirmed = tierable.filter((e) => promotedMap.has(e.id));
-    const rest = tierable
-      .filter((e) => !promotedMap.has(e.id))
-      .sort((a, b) =>
-        a.citation_count !== b.citation_count
-          ? b.citation_count - a.citation_count
-          : a.created_at.localeCompare(b.created_at),
-      );
-    const fullSlotsLeft = Math.max(0, FULL_CARD_LIMIT - confirmed.length);
-    for (const e of rest.slice(fullSlotsLeft)) compactIds.add(e.id);
-  }
+  const compactIds = new Set(
+    tierable.filter((e) => !promotedMap.has(e.id)).map((e) => e.id),
+  );
 
   const byAuthor = new Map<string, FlatEntry[]>();
   for (const e of flat) {

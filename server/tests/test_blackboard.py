@@ -434,6 +434,38 @@ async def test_check_promotions_promotes_entry_with_enough_citations(
     assert len(confirmed) == 1
 
 
+async def test_check_promotions_promotes_a_reply_not_just_proposals(
+    db: AsyncConnection,
+) -> None:
+    """Design principle: promotion is decided purely by citation count, not by
+    entry_type — a discussion-round reply that earns enough citations must
+    promote exactly like a round-1 proposal would."""
+    run_id = str(uuid.uuid4())
+    thread_id = str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+
+    bb = Blackboard(db)
+    reply_id = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_a,
+        content="A well-cited reply, not an opening proposal",
+        entry_type="reply",
+        round=2,
+    )
+    await bb.cite(run_id=run_id, citing_agent_id=agent_b, entry_ids=[reply_id], round=3)
+
+    promoted = await bb.check_promotions(
+        run_id=run_id,
+        current_round=3,
+        participants_by_thread={thread_id: 2},
+    )
+
+    assert len(promoted) == 1
+    assert promoted[0].source_draft_id == reply_id
+    assert promoted[0].entry_type == "finding"
+
+
 async def test_check_promotions_does_not_double_promote(db: AsyncConnection) -> None:
     run_id = str(uuid.uuid4())
     thread_id = str(uuid.uuid4())
