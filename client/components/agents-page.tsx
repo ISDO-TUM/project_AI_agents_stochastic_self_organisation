@@ -142,14 +142,11 @@ export function AgentsPage() {
     };
   }, [reloadKey]);
 
+  // Loading/reset state is set in the card onClick (alongside setSelected), so
+  // this effect only runs the fetch — no synchronous setState in the body.
   useEffect(() => {
     if (!selected) return;
     let cancelled = false;
-    setDeleteConfirm(false);
-    setDeleteError(null);
-    setFilesLoading(true);
-    setFilesError(null);
-    setFiles([]);
     fetchAgentFiles(selected.id)
       .then((rows) => {
         if (cancelled) return;
@@ -437,7 +434,14 @@ export function AgentsPage() {
               {filtered.map((agent, i) => (
                 <div
                   key={agent.id}
-                  onClick={() => setSelected(agent)}
+                  onClick={() => {
+                    setSelected(agent);
+                    setFiles([]);
+                    setFilesLoading(true);
+                    setFilesError(null);
+                    setDeleteConfirm(false);
+                    setDeleteError(null);
+                  }}
                   onMouseEnter={() => setHoveredId(agent.id)}
                   onMouseLeave={() => setHoveredId(null)}
                   style={{
