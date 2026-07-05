@@ -145,6 +145,15 @@ async def _create_minimal_schema(conn: AsyncConnection) -> None:
             created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
         )
         """,
+        """
+        CREATE TABLE citations (
+            id TEXT PRIMARY KEY,
+            run_id TEXT NOT NULL,
+            citing_agent_id TEXT NOT NULL,
+            cited_entry_id TEXT NOT NULL,
+            round INTEGER NOT NULL
+        )
+        """,
     ]
     for statement in statements:
         await conn.execute(text(statement))

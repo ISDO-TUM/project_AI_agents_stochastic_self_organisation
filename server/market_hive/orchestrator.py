@@ -2106,6 +2106,11 @@ async def _run_swarm_steps(
             termination_reason = "equilibrium"
             break
 
+        if await terminator.is_quiescent(run_id=run_id, round=round, config=config, db=db):
+            termination_reason = "quiescence"
+            yield _step("system", f"All agents have stood down — ending at round {round}.")
+            break
+
     # ── Finalize: select + synthesize the answer, update trust, emit (§6.6, §6.7) ─
     if recorder is not None:
         recorder.set_phase(last_round, "final")

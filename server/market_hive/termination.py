@@ -374,6 +374,58 @@ class TerminationEngine:
         )
         return True
 
+    async def check_quiescence(self, *, run_id: str, current_round: int) -> bool:
+        """True when the swarm has gone silent: the round produced no new posts
+        or citations, and we are at or past ``min_rounds``.
+
+        This is the "everyone has stood down or has nothing to add" ending,
+        complementary to equilibrium (which needs confirmed findings first). A
+        quiet round before ``min_rounds`` does not count.
+        """
+        if current_round < self.min_rounds:
+            return False
+
+        new_posts = (
+            await self._db.execute(
+                text("SELECT COUNT(*) FROM draft_entries WHERE run_id = :r AND round = :rd"),
+                {"r": run_id, "rd": current_round},
+            )
+        ).scalar_one()
+        if new_posts:
+            logger.info(
+                "check_quiescence run=%s round=%s: NOT quiescent — %d new post(s)",
+                run_id,
+                current_round,
+                new_posts,
+            )
+            return False
+
+        new_cites = (
+            await self._db.execute(
+                text(
+                    "SELECT COUNT(*) FROM citations WHERE round = :rd AND cited_entry_id IN "
+                    "(SELECT id FROM draft_entries WHERE run_id = :r)"
+                ),
+                {"r": run_id, "rd": current_round},
+            )
+        ).scalar_one()
+        if new_cites:
+            logger.info(
+                "check_quiescence run=%s round=%s: NOT quiescent — %d new citation(s)",
+                run_id,
+                current_round,
+                new_cites,
+            )
+            return False
+
+        logger.info(
+            "check_quiescence run=%s round=%s: QUIESCENT — no new posts or citations; "
+            "every taker has stood down or gone silent",
+            run_id,
+            current_round,
+        )
+        return True
+
     async def select_final_answer(
         self,
         *,
@@ -619,6 +671,18 @@ class MaxRoundsTerminator:
             current_round=round,
             status_flips=status_flips,
             thread_ids=thread_ids,
+        )
+
+    async def is_quiescent(
+        self,
+        *,
+        run_id: str,
+        round: int,
+        config: SwarmRunConfig,
+        db: AsyncConnection,
+    ) -> bool:
+        return await TerminationEngine.from_config(db, config).check_quiescence(
+            run_id=run_id, current_round=round
         )
 
     async def format_output(
