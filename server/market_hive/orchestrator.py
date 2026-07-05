@@ -30,6 +30,7 @@ from server.db.tables import agents as agents_table
 from server.guardrails import build_guarded_system_prompt
 from server.llm import call_agent
 from server.llm.langfuse_setup import agent_trace_metadata, langfuse_metadata
+from server.market_hive.assignment import assign_takers_to_threads
 from server.market_hive.auction import AuctionEngine, Invitation
 from server.market_hive.blackboard import Blackboard, carry_forward_findings, format_entries_digest
 from server.market_hive.contract_source import FallbackContractSource
@@ -380,12 +381,16 @@ def _board_turn(
     trial_id: str | None = None,
     user_prompt: str | None = None,
     prompt_builder: Callable[[AsyncConnection], Awaitable[str]] | None = None,
+    max_amendments: int | None = None,
 ) -> _Turn:
     """Build one blackboard turn (round 1 / vote / discussion) for ``agent``.
 
     Exactly one of ``user_prompt`` (static) or ``prompt_builder`` (awaited on
     the turn's own connection — required for anything that reads the DB, e.g.
     RAG retrieval in discussion rounds) must be provided.
+
+    ``max_amendments`` is the per-run amendment cap the ``request_expertise``
+    tool enforces; pass it whenever that tool is in ``tool_names``.
 
     Resilient runs: the actual ``agent_runner`` call is wrapped with a timeout
     and one retry on a clean transaction. A turn that still fails after the
@@ -401,21 +406,24 @@ def _board_turn(
         prompt = user_prompt if user_prompt is not None else await prompt_builder(conn)
 
         async def attempt() -> tuple[str, list[ToolCall]]:
+            tool_context: dict[str, Any] = {
+                "db": conn,
+                "run_id": run_id,
+                "agent_id": agent["id"],
+                "thread_id": thread_id,
+                "round": round,
+                "phase": phase,
+                "trial_id": trial_id,
+            }
+            if max_amendments is not None:
+                tool_context["max_amendments"] = max_amendments
             return await asyncio.wait_for(
                 agent_runner(
                     agent,
                     user_prompt=prompt,
                     system_suffix=system_suffix,
                     tool_names=tool_names,
-                    tool_context={
-                        "db": conn,
-                        "run_id": run_id,
-                        "agent_id": agent["id"],
-                        "thread_id": thread_id,
-                        "round": round,
-                        "phase": phase,
-                        "trial_id": trial_id,
-                    },
+                    tool_context=tool_context,
                 ),
                 timeout=TURN_TIMEOUT_S,
             )
@@ -577,6 +585,57 @@ async def _load_contract_and_threads(
     )
     threads = [ThreadSchema(**dict(row)) for row in thread_rows]
     return contract, threads
+
+
+async def _load_threads(db: AsyncConnection, run_id: str) -> list[ThreadSchema]:
+    """All threads of a run, oldest first — re-read after amendments add threads."""
+    rows = (
+        (
+            await db.execute(
+                text(
+                    "SELECT id, contract_id, run_id, title, description, "
+                    "required_expertise, complexity, thread_embedding, created_at "
+                    "FROM threads WHERE run_id = :run_id ORDER BY created_at ASC"
+                ),
+                {"run_id": run_id},
+            )
+        )
+        .mappings()
+        .all()
+    )
+    return [ThreadSchema(**dict(row)) for row in rows]
+
+
+def _threads_payload(threads: list[ThreadSchema]) -> dict[str, Any]:
+    """The ``data`` payload carrying slim thread objects for the board's tabs."""
+    return {
+        "thread_ids": [t.id for t in threads],
+        "threads": [t.model_dump(mode="json", exclude={"thread_embedding"}) for t in threads],
+    }
+
+
+def _filter_by_thread(
+    takers_by_thread: dict[str, list[str]], dropped: set[str]
+) -> dict[str, list[str]]:
+    """Drop out an agent from every thread's assignment (mirrors filtering the
+    flat ``takers`` list) so a dropped-out agent stops getting turns in every
+    later phase, not just the ones fed the flat list."""
+    return {tid: [t for t in ts if t not in dropped] for tid, ts in takers_by_thread.items()}
+
+
+def _fmt_assignment(
+    takers_by_thread: dict[str, list[str]],
+    threads: list[ThreadSchema],
+    agents_by_id: dict[str, dict[str, Any]],
+) -> str:
+    """Render the taker→thread map as ``Pricing: Alpha, Beta; Legal: Gamma``."""
+    parts = []
+    for thread in threads:
+        names = [
+            agents_by_id.get(t, {}).get("name", t[:8]) for t in takers_by_thread.get(thread.id, [])
+        ]
+        parts.append(f"{thread.title}: {', '.join(names) or '(none)'}")
+    return "; ".join(parts)
 
 
 def _excerpt(value: str) -> str:
@@ -812,8 +871,9 @@ async def _run_auction(
 
 # ── Round 1 + vote sub-round (M2) ────────────────────────────────────────────
 
-# In v1 every taker works the single fallback thread. When the Market Maker
-# produces multiple threads, per-thread taker assignment replaces this mapping.
+# Which takers work which thread comes from ``assign_takers_to_threads``:
+# single-thread contracts put every taker on the one thread; multi-thread
+# contracts match takers to threads by capability/thread embedding.
 _ROUND1_TOOLS = ["read_blackboard", "get_confirmed", "post_to_blackboard"]
 _VOTE_TOOLS = ["read_blackboard", "vote"]
 
@@ -851,36 +911,42 @@ async def _run_round_one(
     run_id: str,
     contract: ContractSchema,
     threads: list[ThreadSchema],
-    takers: list[str],
+    takers_by_thread: dict[str, list[str]],
     agents_by_id: dict[str, dict[str, Any]],
     agent_runner: AgentRunner,
     config: SwarmRunConfig,
     journal: RunJournal,
 ) -> AsyncIterator[SimulationStep]:
-    """Every taker posts one opening proposal per thread, in two waves (PRD §9.3)."""
+    """Each thread's assigned takers post one opening proposal there, in two
+    waves (PRD §9.3)."""
     yield _step("system", "Round 1 begins. Opening proposals.")
     # Round 1 runs at a neutral temperature (no confidence signal exists yet).
     instruction = ConvergenceEngine.temperature_instruction(0.5)
     suffix = round_one_system_suffix(instruction)
 
-    # Wave split: takers arrive bid-score-ordered from select_takers, so the
-    # first ceil(N/2) are the best-matched agents — they anchor the board
-    # blind. The second wave reads their proposals first and is told to add,
-    # not restate (full agreement = stay silent, endorse in the vote
-    # sub-round that follows).
-    half = (len(takers) + 1) // 2
-    wave1, wave2 = takers[:half], takers[half:]
+    # Wave split is per-thread: assign_takers_to_threads preserves the taker
+    # list's bid-score order, so each thread's first ceil(N/2) assigned takers
+    # are its best-matched agents — they anchor that thread blind. The second
+    # wave reads their proposals first and is told to add, not restate (full
+    # agreement = stay silent, endorse in the vote sub-round that follows).
+    waves_by_thread: dict[str, tuple[list[str], list[str]]] = {}
+    for thread in threads:
+        assigned = takers_by_thread.get(thread.id, [])
+        half = (len(assigned) + 1) // 2
+        waves_by_thread[thread.id] = (assigned[:half], assigned[half:])
+
     # Resume-safe for free: an agent already recorded done/skipped for this
     # (phase, round) is never re-driven through another LLM call.
     already_done = await journal.completed_turns(db, phase="round_1", round=1)
 
     def _wave_turns(
-        wave: list[str], prompts_by_thread: dict[str, str] | None
+        wave_index: int, prompts_by_thread: dict[str, str] | None
     ) -> list[_Turn]:
         turns: list[_Turn] = []
         for thread in threads:
-            coworkers = [agents_by_id[t]["name"] for t in takers if t in agents_by_id]
-            for taker in wave:
+            assigned = takers_by_thread.get(thread.id, [])
+            coworkers = [agents_by_id[t]["name"] for t in assigned if t in agents_by_id]
+            for taker in waves_by_thread[thread.id][wave_index]:
                 if taker in already_done:
                     continue
                 agent = agents_by_id.get(taker)
@@ -910,14 +976,15 @@ async def _run_round_one(
                 )
         return turns
 
-    async for step in _run_turns(db, _wave_turns(wave1, None), journal=journal):
+    async for step in _run_turns(db, _wave_turns(0, None), journal=journal):
         yield step
 
-    if wave2:
+    if any(wave2 for _wave1, wave2 in waves_by_thread.values()):
         yield _step("system", "Round 1, second wave: reviewing existing proposals.")
-        coworkers_all = [agents_by_id[t]["name"] for t in takers if t in agents_by_id]
         wave2_prompts: dict[str, str] = {}
         for thread in threads:
+            assigned = takers_by_thread.get(thread.id, [])
+            coworkers_all = [agents_by_id[t]["name"] for t in assigned if t in agents_by_id]
             proposals = await _round1_proposals(db, run_id, thread.id)
             wave2_prompts[thread.id] = round_one_wave2_user_prompt(
                 contract,
@@ -926,7 +993,7 @@ async def _run_round_one(
                 max_rounds=config.max_rounds,
                 coworkers=coworkers_all,
             )
-        async for step in _run_turns(db, _wave_turns(wave2, wave2_prompts), journal=journal):
+        async for step in _run_turns(db, _wave_turns(1, wave2_prompts), journal=journal):
             yield step
 
 
@@ -934,19 +1001,19 @@ async def _run_vote_subround(
     db: AsyncConnection,
     run_id: str,
     threads: list[ThreadSchema],
-    takers: list[str],
+    takers_by_thread: dict[str, list[str]],
     agents_by_id: dict[str, dict[str, Any]],
     agent_runner: AgentRunner,
     journal: RunJournal,
     trial_id: str | None,
 ) -> AsyncIterator[SimulationStep]:
-    """Each taker votes on the round-1 proposals it endorses (PRD §9.4)."""
+    """Each taker votes on the round-1 proposals in its thread (PRD §9.4)."""
     yield _step("system", "Vote sub-round. Agents review Round 1 proposals.")
     already_done = await journal.completed_turns(db, phase="vote", round=1)
     turns: list[_Turn] = []
     for thread in threads:
         proposals = await _round1_proposals(db, run_id, thread.id)
-        for taker in takers:
+        for taker in takers_by_thread.get(thread.id, []):
             if taker in already_done:
                 continue
             agent = agents_by_id.get(taker)
@@ -991,7 +1058,17 @@ async def _cold_start_temperatures(
 
 # ── Discussion rounds + end-of-round (M3) ────────────────────────────────────
 
-_ROUNDS_TOOLS = ["read_blackboard", "get_confirmed", "post_to_blackboard", "cite", "dispute"]
+# request_expertise lets a taker contest the Market Maker's scoping mid-round;
+# the pending proposal is voted on at end-of-round by the amendment processor.
+# dispute lets a taker contest an already-CONFIRMED finding (contestable consensus).
+_ROUNDS_TOOLS = [
+    "read_blackboard",
+    "get_confirmed",
+    "post_to_blackboard",
+    "cite",
+    "dispute",
+    "request_expertise",
+]
 
 
 async def _run_discussion_round(
@@ -999,7 +1076,7 @@ async def _run_discussion_round(
     run_id: str,
     contract: ContractSchema,
     threads: list[ThreadSchema],
-    takers: list[str],
+    takers_by_thread: dict[str, list[str]],
     temperatures: dict[str, float],
     round: int,
     agents_by_id: dict[str, dict[str, Any]],
@@ -1013,7 +1090,7 @@ async def _run_discussion_round(
     already_done = await journal.completed_turns(db, phase=phase, round=round)
     turns: list[_Turn] = []
     for thread in threads:
-        for taker in takers:
+        for taker in takers_by_thread.get(thread.id, []):
             if taker in already_done:
                 continue
             agent = agents_by_id.get(taker)
@@ -1117,6 +1194,7 @@ async def _run_discussion_round(
                     journal=journal,
                     phase=phase,
                     trial_id=config.trial_id,
+                    max_amendments=config.max_amendments,
                 )
             )
     async for step in _run_turns(db, turns, journal=journal):
@@ -1137,7 +1215,7 @@ async def _end_of_round(
     db: AsyncConnection,
     run_id: str,
     threads: list[ThreadSchema],
-    takers: list[str],
+    takers_by_thread: dict[str, list[str]],
     round: int,
     convergence: ConvergenceEngine,
     domain: str,
@@ -1146,7 +1224,9 @@ async def _end_of_round(
 ) -> AsyncIterator[SimulationStep]:
     """Promote, soft-delete, and update reputation at the end of a round (§11.2)."""
     bb = Blackboard(db)
-    participants_by_thread = {thread.id: len(takers) for thread in threads}
+    participants_by_thread = {
+        thread.id: len(takers_by_thread.get(thread.id, [])) for thread in threads
+    }
 
     promoted = await bb.check_promotions(
         run_id=run_id, current_round=round, participants_by_thread=participants_by_thread
@@ -1644,18 +1724,21 @@ async def _run_swarm_steps(
             "system",
             f"Contract created: {contract.task_type}, {contract.task_nature}, "
             f"confidence={contract.confidence:.2f}",
-            data={"run_id": run_id, "contract_id": contract.id},
+            data={
+                "run_id": run_id,
+                "contract_id": contract.id,
+                # Slim contract (no embedding/threads) so the UI can show the Market
+                # Maker's scoping; threads follow on the next step's payload.
+                "contract": contract.model_dump(
+                    mode="json", exclude={"contract_embedding", "threads"}
+                ),
+            },
         )
         yield _step(
             "system",
             f"Threads created: {', '.join(t.title for t in threads)}",
-            data={
-                "thread_ids": [t.id for t in threads],
-                # Slim thread objects (no embeddings) so the board can show thread tabs.
-                "threads": [
-                    t.model_dump(mode="json", exclude={"thread_embedding"}) for t in threads
-                ],
-            },
+            # Slim thread objects (no embeddings) so the board can show thread tabs.
+            data=_threads_payload(threads),
         )
 
     # ── Auction (Market Hive §6.2) ───────────────────────────────────────────
@@ -1684,6 +1767,17 @@ async def _run_swarm_steps(
             yield step
         takers = [t for t in takers if t not in dropped]
 
+    # ── Thread assignment (§6.2 Phase 4, deterministic v1) ───────────────────
+    # Single-thread contracts put every taker on the one thread; multi-thread
+    # contracts match takers to threads by capability/thread embedding.
+    takers_by_thread = await assign_takers_to_threads(db, takers=takers, threads=threads)
+    if len(threads) > 1:
+        yield _step(
+            "system",
+            f"Thread assignment — {_fmt_assignment(takers_by_thread, threads, agents_by_id)}",
+            data={"takers_by_thread": takers_by_thread},
+        )
+
     # ── Round 1 — opening proposals (§9.3) ───────────────────────────────────
     if recorder is not None:
         recorder.set_phase(1, "proposals")
@@ -1692,12 +1786,21 @@ async def _run_swarm_steps(
         await journal.phase(db, "round_1", 1)
         _enter_phase("round_1")
         async for step in _run_round_one(
-            db, run_id, contract, threads, takers, agents_by_id, agent_runner, config, journal
+            db,
+            run_id,
+            contract,
+            threads,
+            takers_by_thread,
+            agents_by_id,
+            agent_runner,
+            config,
+            journal,
         ):
             yield step
         for step in await _apply_dropouts(db, run_id, agents_by_id, dropped, announced_dropouts):
             yield step
         takers = [t for t in takers if t not in dropped]
+        takers_by_thread = _filter_by_thread(takers_by_thread, dropped)
 
     # ── Vote sub-round → cold-start confidence/temperature (§9.4, §6.4) ───────
     if _phase_index("vote", config.max_rounds) >= resume_from:
@@ -1706,12 +1809,13 @@ async def _run_swarm_steps(
         await journal.phase(db, "vote", 1)
         _enter_phase("vote")
         async for step in _run_vote_subround(
-            db, run_id, threads, takers, agents_by_id, agent_runner, journal, config.trial_id
+            db, run_id, threads, takers_by_thread, agents_by_id, agent_runner, journal, config.trial_id
         ):
             yield step
         for step in await _apply_dropouts(db, run_id, agents_by_id, dropped, announced_dropouts):
             yield step
         takers = [t for t in takers if t not in dropped]
+        takers_by_thread = _filter_by_thread(takers_by_thread, dropped)
     confidences, temperatures = await _cold_start_temperatures(
         db, run_id, threads, takers, convergence
     )
@@ -1739,7 +1843,7 @@ async def _run_swarm_steps(
             run_id,
             contract,
             threads,
-            takers,
+            takers_by_thread,
             temperatures,
             round,
             agents_by_id,
@@ -1751,13 +1855,14 @@ async def _run_swarm_steps(
         for step in await _apply_dropouts(db, run_id, agents_by_id, dropped, announced_dropouts):
             yield step
         takers = [t for t in takers if t not in dropped]
+        takers_by_thread = _filter_by_thread(takers_by_thread, dropped)
 
         status_flips = {"n": 0}
         async for step in _end_of_round(
             db,
             run_id,
             threads,
-            takers,
+            takers_by_thread,
             round,
             convergence,
             contract.task_type,
@@ -1769,10 +1874,34 @@ async def _run_swarm_steps(
         temperatures = await _next_temperatures(db, run_id, threads, takers, round, convergence)
 
         if amendment_processor is not None:
+            approved: list[dict[str, Any]] = []
             async for step in amendment_processor.process(
                 run_id=run_id, current_round=round, takers=takers, db=db
             ):
+                if step.type == "amendment-approved" and step.data:
+                    approved.append(step.data)
                 yield step
+            if approved:
+                # Approved amendments created new threads (and possibly recruited
+                # new takers via the mini-auction). Fold them into the run:
+                # existing assignments stay put — reshuffling mid-discussion would
+                # cost agents their thread context — and each new thread is worked
+                # by its recruits, or by the whole current team when the agent
+                # pool had nobody left to recruit.
+                threads = await _load_threads(db, run_id)
+                for outcome in approved:
+                    new_thread_id = outcome.get("thread_id")
+                    if not new_thread_id or new_thread_id in takers_by_thread:
+                        continue
+                    recruits = [str(a) for a in outcome.get("new_takers") or []]
+                    takers_by_thread[new_thread_id] = recruits or list(takers)
+                takers = await auction.get_takers(run_id=run_id)
+                yield _step(
+                    "system",
+                    f"Contract amended — threads now: {', '.join(t.title for t in threads)}. "
+                    f"Assignment: {_fmt_assignment(takers_by_thread, threads, agents_by_id)}",
+                    data=_threads_payload(threads),
+                )
 
         if await terminator.should_terminate(
             run_id=run_id, round=round, config=config, db=db, status_flips=status_flips["n"]

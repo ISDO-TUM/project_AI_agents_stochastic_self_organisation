@@ -23,6 +23,7 @@ from server.db import create_trial
 from server.db.tables import metadata
 from server.market_hive.auction import AuctionEngine
 from server.market_hive.blackboard import Blackboard
+from server.market_hive.contract_source import ThreadSpec, persist_contract
 from server.market_hive.history import SwarmHistoryRecorder
 from server.market_hive.orchestrator import AgentRunner, _default_agent_runner, run_swarm
 from server.market_hive.schemas import SimulationStep, SwarmRunConfig
@@ -616,6 +617,180 @@ async def test_citations_promote_entries_to_confirmed(db: AsyncConnection) -> No
         )
     ).scalar_one()
     assert findings == 2
+
+
+# ── Multi-thread contracts (Market Maker decomposition) ──────────────────────
+
+
+class _TwoThreadSource:
+    """A contract source persisting a decomposed two-thread contract."""
+
+    async def make_contract(
+        self,
+        prompt: str,
+        run_id: str,
+        db: AsyncConnection,
+        *,
+        session_context: str | None = None,
+    ) -> tuple[Any, Any]:
+        contract, threads = await persist_contract(
+            db,
+            run_id=run_id,
+            prompt=prompt,
+            task_type="vendor_evaluation",
+            required_expertise=["law", "finance"],
+            complexity="medium",
+            confidence=0.9,
+            embedding_text="both legal and financial angles",
+            threads=[
+                ThreadSpec(title="Legal", description="legal side", embedding_text="legal side"),
+                ThreadSpec(
+                    title="Finance", description="financial side", embedding_text="financial side"
+                ),
+            ],
+        )
+        return contract, threads
+
+
+_VECS = {
+    "both legal and financial angles": [0.5, 0.5],
+    "legal side": [1.0, 0.0],
+    "financial side": [0.0, 1.0],
+}
+
+
+async def _set_capability(db: AsyncConnection, agent_id: str, embedding: list[float]) -> None:
+    await db.execute(
+        text("UPDATE agents SET capability_embedding = :e WHERE id = :id"),
+        {"e": json.dumps(embedding), "id": agent_id},
+    )
+    await db.commit()
+
+
+async def test_multi_thread_run_assigns_specialists_per_thread(db: AsyncConnection) -> None:
+    """A decomposed contract is worked per thread by its best-matching takers."""
+    for agent_id, name, emb in [
+        ("legal1", "LawA", [1.0, 0.0]),
+        ("legal2", "LawB", [0.9, 0.1]),
+        ("fin1", "FinA", [0.0, 1.0]),
+        ("fin2", "FinB", [0.1, 0.9]),
+    ]:
+        await _insert_agent(db, agent_id, name)
+        await _set_capability(db, agent_id, emb)
+
+    async def fake_embed(texts: list[str]) -> list[list[float]]:
+        return [_VECS[t] for t in texts]
+
+    with patch(
+        "server.market_hive.contract_source.embed_texts", new=AsyncMock(side_effect=fake_embed)
+    ):
+        steps = await _drain(
+            SwarmRunConfig(prompt="Evaluate the vendor offer", max_rounds=2),
+            db,
+            contract_source=_TwoThreadSource(),
+            agent_runner=_scripted_runner(),
+        )
+
+    threads_step = next(s for s in steps if s.msg.startswith("Threads created"))
+    assert threads_step.data is not None
+    by_title = {t["title"]: t["id"] for t in threads_step.data["threads"]}
+    assert set(by_title) == {"Legal", "Finance"}
+
+    assignment_step = next(s for s in steps if s.msg.startswith("Thread assignment"))
+    assert assignment_step.data is not None
+    assignment = assignment_step.data["takers_by_thread"]
+    assert set(assignment[by_title["Legal"]]) == {"legal1", "legal2"}
+    assert set(assignment[by_title["Finance"]]) == {"fin1", "fin2"}
+
+    # Round-1 proposals land only on the author's assigned thread.
+    rows = (
+        (
+            await db.execute(
+                text(
+                    "SELECT thread_id, author_id FROM draft_entries "
+                    "WHERE round = 1 AND entry_type = 'proposal'"
+                )
+            )
+        )
+        .mappings()
+        .all()
+    )
+    authors_by_thread: dict[str, set[str]] = {}
+    for row in rows:
+        authors_by_thread.setdefault(row["thread_id"], set()).add(row["author_id"])
+    assert authors_by_thread[by_title["Legal"]] == {"legal1", "legal2"}
+    assert authors_by_thread[by_title["Finance"]] == {"fin1", "fin2"}
+
+
+async def test_approved_amendment_thread_joins_the_run(db: AsyncConnection) -> None:
+    """An amendment-approved thread is worked in the following rounds."""
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+
+    class _ApproveOnce:
+        """Creates a new thread on the first call, mirroring AmendmentEngine.resolve."""
+
+        def __init__(self) -> None:
+            self.thread_id: str | None = None
+
+        async def process(
+            self,
+            *,
+            run_id: str,
+            current_round: int,
+            takers: list[str],
+            db: AsyncConnection,
+        ) -> AsyncIterator[SimulationStep]:
+            if self.thread_id is not None:
+                return
+            contract_id = (
+                await db.execute(text("SELECT id FROM contracts WHERE run_id = :r"), {"r": run_id})
+            ).scalar_one()
+            self.thread_id = str(uuid.uuid4())
+            await db.execute(
+                text(
+                    "INSERT INTO threads (id, contract_id, run_id, title, description, "
+                    "required_expertise) VALUES (:id, :cid, :r, 'tax (amendment)', "
+                    "'tax scope', '[\"tax\"]')"
+                ),
+                {"id": self.thread_id, "cid": contract_id, "r": run_id},
+            )
+            await db.commit()
+            yield SimulationStep(
+                type="amendment-approved",
+                msg="Amendment approved (3/3).",
+                data={
+                    "status": "approved",
+                    "amendment_id": "am-1",
+                    "thread_id": self.thread_id,
+                    "new_takers": [],
+                },
+            )
+
+    processor = _ApproveOnce()
+    steps = await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=3),
+        db,
+        agent_runner=_scripted_runner(),
+        amendment_processor=processor,
+    )
+
+    amended_step = next(s for s in steps if s.msg.startswith("Contract amended"))
+    assert amended_step.data is not None
+    assert {t["title"] for t in amended_step.data["threads"]} == {
+        "Main Thread",
+        "tax (amendment)",
+    }
+
+    # With no recruits available, the current team staffs the new thread in round 3.
+    authors = {
+        row[0]
+        for row in await db.execute(
+            text("SELECT DISTINCT author_id FROM draft_entries WHERE thread_id = :t"),
+            {"t": processor.thread_id},
+        )
+    }
+    assert authors == {"a1", "a2"}
 
 
 async def test_amendment_processor_seam_is_invoked_each_round(db: AsyncConnection) -> None:
