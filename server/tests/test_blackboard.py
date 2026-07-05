@@ -1326,7 +1326,10 @@ async def test_check_promotions_pools_citations_across_near_duplicate_cluster(
     # entry_c had zero citations — it never entered the candidate pool, so it
     # legitimately stays untouched rather than being swept in.
     entry_c_merged = (
-        await db.execute(text("SELECT merged_into FROM draft_entries WHERE id = :id"), {"id": entry_c})
+        await db.execute(
+            text("SELECT merged_into FROM draft_entries WHERE id = :id"),
+            {"id": entry_c},
+        )
     ).scalar_one()
     assert entry_c_merged is None
 

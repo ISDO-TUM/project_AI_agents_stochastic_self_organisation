@@ -489,16 +489,16 @@ async def test_second_proposal_same_turn_context_is_rejected(db: AsyncConnection
     assert "error" not in first
 
     second = await tool.execute(
-        PostToBlackboardInput(content="a reworded second take", entry_type="proposal", thread_id="t1"),
+        PostToBlackboardInput(
+            content="a reworded second take", entry_type="proposal", thread_id="t1"
+        ),
         ctx,
     )
     assert "error" in second
     assert "already posted" in second
 
     count = (
-        await db.execute(
-            text("SELECT COUNT(*) FROM draft_entries WHERE entry_type = 'proposal'")
-        )
+        await db.execute(text("SELECT COUNT(*) FROM draft_entries WHERE entry_type = 'proposal'"))
     ).scalar_one()
     assert count == 1
 
@@ -525,9 +525,7 @@ async def test_second_proposal_in_a_later_round_is_also_rejected(db: AsyncConnec
     assert "already posted" in later
 
     count = (
-        await db.execute(
-            text("SELECT COUNT(*) FROM draft_entries WHERE entry_type = 'proposal'")
-        )
+        await db.execute(text("SELECT COUNT(*) FROM draft_entries WHERE entry_type = 'proposal'"))
     ).scalar_one()
     assert count == 1
 

@@ -644,7 +644,7 @@ export function App({ onModeSelected }: AppProps = {}) {
 
   const panelAgent =
     panel?.type === "agent" && panel.id
-      ? (agents.find((a) => a.id === panel.id) ?? null)
+      ? agents.find((a) => a.id === panel.id) ?? null
       : null;
   const panelSource =
     panel?.type === "source" && panel.id ? withRealAgentIds(panel.id) : null;

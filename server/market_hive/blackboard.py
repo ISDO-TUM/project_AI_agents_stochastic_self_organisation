@@ -688,7 +688,7 @@ class Blackboard:
         if not raw:
             return None
         try:
-            vec = json.loads(raw)
+            vec: list[float] = json.loads(raw)
         except (json.JSONDecodeError, TypeError):
             return None
         if not vec or not any(vec):
@@ -791,7 +791,7 @@ class Blackboard:
             # Union-find: cluster members whose embeddings are near-identical.
             parent = {m["id"]: m["id"] for m in members}
 
-            def find(x: str) -> str:
+            def find(x: str, parent: dict[str, str] = parent) -> str:
                 while parent[x] != x:
                     parent[x] = parent[parent[x]]
                     x = parent[x]
