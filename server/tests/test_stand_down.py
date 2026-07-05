@@ -83,3 +83,16 @@ async def test_stand_down_tool_persists(db: AsyncConnection) -> None:
     assert json.loads(result) == {"ok": True}
     loaded = await load_stood_down(db, "r1")
     assert loaded["t1"] == {"a1"}
+
+
+def test_drop_stood_down_filters_only_that_thread() -> None:
+    from server.market_hive.orchestrator import _drop_stood_down
+
+    takers_by_thread = {"t1": ["a1", "a2", "a3"], "t2": ["a1", "a2"]}
+    stood_down = {"t1": {"a1", "a3"}}
+
+    result = _drop_stood_down(takers_by_thread, stood_down)
+
+    assert result == {"t1": ["a2"], "t2": ["a1", "a2"]}
+    # original is not mutated
+    assert takers_by_thread["t1"] == ["a1", "a2", "a3"]

@@ -65,6 +65,7 @@ from server.market_hive.schemas import (
     SwarmRunConfig,
     ThreadSchema,
 )
+from server.market_hive.stand_down import load_stood_down
 from server.market_hive.synthesis import FallbackAnswerSynthesizer
 from server.market_hive.termination import MaxRoundsTerminator, Synthesizer
 from server.market_hive.tracing import get_tracer
@@ -699,6 +700,19 @@ def _filter_by_thread(
     flat ``takers`` list) so a dropped-out agent stops getting turns in every
     later phase, not just the ones fed the flat list."""
     return {tid: [t for t in ts if t not in dropped] for tid, ts in takers_by_thread.items()}
+
+
+def _drop_stood_down(
+    takers_by_thread: dict[str, list[str]], stood_down: dict[str, set[str]]
+) -> dict[str, list[str]]:
+    """Remove agents that stood down on a thread from that thread's taker list.
+
+    A stand-down is per-thread: an agent may still be active on other threads.
+    """
+    return {
+        thread_id: [t for t in takers if t not in stood_down.get(thread_id, set())]
+        for thread_id, takers in takers_by_thread.items()
+    }
 
 
 def _fmt_assignment(
@@ -2010,12 +2024,18 @@ async def _run_swarm_steps(
             recorder.set_phase(round, "discussion")
         await journal.phase(db, f"round_{round}", round)
         _enter_phase(f"round_{round}")
+
+        # Skip agents that voluntarily stood down on a thread — they have declared
+        # they have nothing material left to add there.
+        stood_down = await load_stood_down(db, run_id)
+        round_takers_by_thread = _drop_stood_down(takers_by_thread, stood_down)
+
         async for step in _run_discussion_round(
             db,
             run_id,
             contract,
             threads,
-            takers_by_thread,
+            round_takers_by_thread,
             temperatures,
             round,
             agents_by_id,
