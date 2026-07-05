@@ -9,6 +9,7 @@ const EMPTY_STATE: BlackboardState = {
   threads: [],
   confirmed: [],
   draft: [],
+  pendingReplies: [],
   loading: false,
   error: null,
 };
@@ -109,6 +110,7 @@ function reducer(state: DummySwarmState, action: Action): DummySwarmState {
           threads: action.fixture.threads,
           confirmed: [],
           draft: [],
+          pendingReplies: [],
           loading: false,
           error: null,
         },

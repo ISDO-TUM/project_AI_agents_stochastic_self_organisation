@@ -474,6 +474,64 @@ async def test_reply_with_reply_to_still_posts(db: AsyncConnection) -> None:
     assert count == 1
 
 
+async def test_second_proposal_same_turn_context_is_rejected(db: AsyncConnection) -> None:
+    """An agent must not be able to post more than one opening 'proposal' for
+    the same (thread, round) — this is what stopped an agent from writing
+    several near-duplicate round-1 proposals covering the same clauses."""
+    await _insert_agent(db, "a1", "Alpha")
+    tool = PostToBlackboardTool()
+    ctx = {"db": db, "run_id": "r1", "agent_id": "a1", "round": 1}
+
+    first = await tool.execute(
+        PostToBlackboardInput(content="first take", entry_type="proposal", thread_id="t1"),
+        ctx,
+    )
+    assert "error" not in first
+
+    second = await tool.execute(
+        PostToBlackboardInput(content="a reworded second take", entry_type="proposal", thread_id="t1"),
+        ctx,
+    )
+    assert "error" in second
+    assert "already posted" in second
+
+    count = (
+        await db.execute(
+            text("SELECT COUNT(*) FROM draft_entries WHERE entry_type = 'proposal'")
+        )
+    ).scalar_one()
+    assert count == 1
+
+
+async def test_second_reply_same_turn_context_is_allowed(db: AsyncConnection) -> None:
+    """Unlike 'proposal', 'reply' is intentionally not capped — replying to two
+    different points in one discussion-round turn is legitimate, not the bug
+    the proposal cap targets."""
+    await _insert_agent(db, "a1", "Alpha")
+    tool = PostToBlackboardTool()
+    ctx = {"db": db, "run_id": "r1", "agent_id": "a1", "round": 2}
+
+    first = await tool.execute(
+        PostToBlackboardInput(
+            content="reply one", entry_type="reply", thread_id="t1", reply_to="e1"
+        ),
+        ctx,
+    )
+    second = await tool.execute(
+        PostToBlackboardInput(
+            content="reply two", entry_type="reply", thread_id="t1", reply_to="e2"
+        ),
+        ctx,
+    )
+    assert "error" not in first
+    assert "error" not in second
+
+    count = (
+        await db.execute(text("SELECT COUNT(*) FROM draft_entries WHERE entry_type = 'reply'"))
+    ).scalar_one()
+    assert count == 2
+
+
 async def test_documents_used_captured_from_files_tool_calls(db: AsyncConnection) -> None:
     """When an agent's turn includes a files(action='read', ...) call before
     post_to_blackboard, the resulting entry's documents_used carries the file

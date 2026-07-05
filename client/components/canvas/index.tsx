@@ -575,6 +575,7 @@ export function Canvas({
                 blackboardState ?? {
                   confirmed: [],
                   draft: [],
+                  pendingReplies: [],
                   threads: [],
                   loading: false,
                   error: null,
@@ -597,6 +598,7 @@ export function Canvas({
               blackboardState ?? {
                 confirmed: [],
                 draft: [],
+                pendingReplies: [],
                 threads: [],
                 loading: false,
                 error: null,

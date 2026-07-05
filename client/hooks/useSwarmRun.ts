@@ -31,6 +31,7 @@ const EMPTY_BOARD: BlackboardState = {
   threads: [],
   confirmed: [],
   draft: [],
+  pendingReplies: [],
   loading: false,
   error: null,
 };
@@ -74,7 +75,10 @@ const IDLE: SwarmRunState = {
 // this hook and would otherwise wipe the board. No live connection survives
 // the unmount either way, so a persisted "active" run is rehydrated as
 // interrupted rather than resumed.
-const PERSIST_KEY = "swarm.board.v1";
+// v2: BlackboardState gained `pendingReplies` — bumped so a v1 session
+// persisted before that field existed doesn't rehydrate into a shape the
+// reducer's `settleDraft` (which spreads `bb.pendingReplies`) can't handle.
+const PERSIST_KEY = "swarm.board.v2";
 
 function loadPersisted(): SwarmRunState {
   const persisted = loadSession<SwarmRunState>(PERSIST_KEY);
@@ -109,10 +113,51 @@ type Action =
 
 // ── Draft-tree helpers (nest replies under their parent, mutate by id) ─────────
 
-function insertEntry(tree: DraftEntry[], entry: DraftEntry): DraftEntry[] {
-  if (!entry.reply_to) return [...tree, entry];
+function tryInsertEntry(
+  tree: DraftEntry[],
+  entry: DraftEntry,
+): { tree: DraftEntry[]; placed: boolean } {
+  if (!entry.reply_to) return { tree: [...tree, entry], placed: true };
   const [next, placed] = insertEntryRec(tree, entry);
-  return placed ? next : [...tree, entry];
+  return placed ? { tree: next, placed: true } : { tree, placed: false };
+}
+
+/**
+ * Places a newly-arrived entry into the draft tree, then retries any replies
+ * that arrived before their own parent did. Concurrent turns stream their
+ * steps back in *task*-completion order (see `_run_turns` server-side), not
+ * DB-write order — an entry reply-citing something from the same round can
+ * legitimately stream in before that something's own `bb-post` event does,
+ * even though the reply's `reply_to` was validly resolved against the DB at
+ * write time. Treating "parent not in the tree yet" as permanent (the old
+ * behavior) rendered those as false top-level orphans; holding them in
+ * `pendingReplies` and retrying on every later arrival nests them correctly
+ * once the parent does show up, which — since the parent's post_to_blackboard
+ * call already completed — it always eventually does within the same stream.
+ */
+function settleDraft(
+  tree: DraftEntry[],
+  pendingReplies: DraftEntry[],
+  incoming: DraftEntry,
+): { tree: DraftEntry[]; pendingReplies: DraftEntry[] } {
+  let nextTree = tree;
+  let queue = [...pendingReplies, incoming];
+  let progressed = true;
+  while (progressed) {
+    progressed = false;
+    const stillPending: DraftEntry[] = [];
+    for (const entry of queue) {
+      const result = tryInsertEntry(nextTree, entry);
+      if (result.placed) {
+        nextTree = result.tree;
+        progressed = true;
+      } else {
+        stillPending.push(entry);
+      }
+    }
+    queue = stillPending;
+  }
+  return { tree: nextTree, pendingReplies: queue };
 }
 
 function insertEntryRec(
@@ -166,28 +211,40 @@ function reducer(state: SwarmRunState, action: Action): SwarmRunState {
       };
     case "THREADS":
       return { ...state, blackboard: { ...bb, threads: action.threads } };
-    case "POST":
+    case "POST": {
+      const { tree, pendingReplies } = settleDraft(
+        bb.draft,
+        bb.pendingReplies,
+        action.entry,
+      );
       return {
         ...state,
         // The author has produced its turn → stop pulsing it.
         responding: state.responding.filter(
           (id) => id !== action.entry.author_id,
         ),
-        blackboard: { ...bb, draft: insertEntry(bb.draft, action.entry) },
+        blackboard: { ...bb, draft: tree, pendingReplies },
       };
+    }
     case "CITE":
       return {
         ...state,
         blackboard: {
           ...bb,
-          draft: updateEntry(bb.draft, action.entryId, (e) => ({
-            ...e,
-            citation_count: e.citation_count + 1,
-            citers: [
+          draft: updateEntry(bb.draft, action.entryId, (e) => {
+            const citers = [
               ...(e.citers ?? []),
               { agentName: action.citerName, round: action.round },
-            ],
-          })),
+            ];
+            // Promotion counts DISTINCT citing agents (citations.round is part
+            // of the DB's unique key, so the same agent citing the same entry
+            // again in a later round is a real, separate row) — the displayed
+            // count must match that, or the ring can show a ratio that looks
+            // like it crossed the threshold while the real distinct-citer
+            // count backing promotion never did.
+            const distinctCiters = new Set(citers.map((c) => c.agentName)).size;
+            return { ...e, citation_count: distinctCiters, citers };
+          }),
         },
       };
     case "PROMOTE":
@@ -246,6 +303,19 @@ function reducer(state: SwarmRunState, action: Action): SwarmRunState {
         // DONE that follows omits them, so keep whatever was already set.
         finalAnswer: action.finalAnswer ?? state.finalAnswer,
         ratification: action.ratification ?? state.ratification,
+        // Safety net: a pending reply's parent already exists in the DB (the
+        // backend only ever sets reply_to to a resolved id), so it should
+        // always show up somewhere in the same stream — but if the stream
+        // ended first (client disconnect, server error) for some reason,
+        // render it top-level rather than silently dropping it from view.
+        blackboard:
+          bb.pendingReplies.length > 0
+            ? {
+                ...bb,
+                draft: [...bb.draft, ...bb.pendingReplies],
+                pendingReplies: [],
+              }
+            : bb,
       };
     case "ERROR":
       return { ...state, error: action.error };

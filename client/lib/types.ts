@@ -447,6 +447,10 @@ export interface BlackboardState {
   threads: ThreadInfo[];
   confirmed: ConfirmedEntry[];
   draft: DraftEntry[];
+  // Replies streamed in before their parent (concurrent turns complete, and
+  // stream to the client, in completion order rather than DB-write order) —
+  // held here and retried on every new arrival instead of rendered orphaned.
+  pendingReplies: DraftEntry[];
   loading: boolean;
   error: string | null;
 }
