@@ -1144,6 +1144,7 @@ _ROUNDS_TOOLS = [
     "cite",
     "dispute",
     "request_expertise",
+    "stand_down",
 ]
 
 
