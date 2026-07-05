@@ -82,9 +82,7 @@ class LangfuseTracer:
     def turn(self, agent_id: str, round: int, tokens: int) -> None:
         if self._trace is None:
             return
-        self._trace.span(
-            name=f"turn:{agent_id}", metadata={"round": round, "tokens": tokens}
-        ).end()
+        self._trace.span(name=f"turn:{agent_id}", metadata={"round": round, "tokens": tokens}).end()
 
 
 def get_tracer() -> Tracer:

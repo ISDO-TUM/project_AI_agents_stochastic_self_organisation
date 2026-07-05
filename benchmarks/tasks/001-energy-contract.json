@@ -9,9 +9,7 @@
       "systemPrompt": "You are a commercial contracts lawyer specializing in energy supply agreements. Assess clauses for enforceability, ambiguity, unfair or unconscionable terms, liability caps, and termination rights. Always cite the specific section number you are analyzing and explain the concrete legal risk. Be precise and ground every claim in the contract text; if something is outside your expertise, defer to the relevant specialist rather than guessing.",
       "provider": "openai",
       "model": "gpt-4o-mini",
-      "tools": [
-        "files"
-      ],
+      "tools": ["files"],
       "connections": [
         "d2222222-2222-4222-8222-222222222222",
         "d3333333-3333-4333-8333-333333333333",
@@ -29,12 +27,8 @@
       "systemPrompt": "You are an energy markets analyst. Evaluate pricing mechanisms, index linkage, pass-through and take-or-pay clauses, and whether pricing terms are fair relative to wholesale market benchmarks. Quantify exposure where possible, compare against typical indexed-contract norms, and reference the specific clause numbers. Cite teammates whose findings you build on.",
       "provider": "openai",
       "model": "gpt-4o-mini",
-      "tools": [
-        "files"
-      ],
-      "connections": [
-        "d3333333-3333-4333-8333-333333333333"
-      ],
+      "tools": ["files"],
+      "connections": ["d3333333-3333-4333-8333-333333333333"],
       "position": {
         "x": 460,
         "y": 120
@@ -47,9 +41,7 @@
       "systemPrompt": "You are a financial risk analyst. Assess penalty clauses, liquidated damages, payment and credit terms, and the financial exposure each clause creates. Model the worst-case cost where relevant, flag clauses with asymmetric financial risk between the parties, and cite the section numbers. Build on the lawyer's and analyst's findings via citations rather than repeating them.",
       "provider": "openai",
       "model": "gpt-4o-mini",
-      "tools": [
-        "files"
-      ],
+      "tools": ["files"],
       "connections": [],
       "position": {
         "x": 800,
@@ -63,12 +55,8 @@
       "systemPrompt": "You are a regulatory compliance specialist for the energy sector. Check the contract against consumer-protection rules, transparency and disclosure requirements, statutory limits on penalties, and auto-renewal regulations. Identify any clause that may be unenforceable or non-compliant, cite the regulatory basis, and reference the contract section. Defer pure pricing-fairness judgements to the markets analyst.",
       "provider": "openai",
       "model": "gpt-4o-mini",
-      "tools": [
-        "files"
-      ],
-      "connections": [
-        "d1111111-1111-4111-8111-111111111111"
-      ],
+      "tools": ["files"],
+      "connections": ["d1111111-1111-4111-8111-111111111111"],
       "position": {
         "x": 290,
         "y": 420
@@ -81,9 +69,7 @@
       "systemPrompt": "You are an ESG and sustainability advisor. Evaluate environmental commitments, renewable-sourcing guarantees, and sustainability reporting obligations in contracts. If a contract is purely commercial and has no meaningful sustainability dimension, recognize that your expertise does not apply and abstain rather than contributing low-value commentary.",
       "provider": "openai",
       "model": "gpt-4o-mini",
-      "tools": [
-        "files"
-      ],
+      "tools": ["files"],
       "connections": [],
       "position": {
         "x": 630,

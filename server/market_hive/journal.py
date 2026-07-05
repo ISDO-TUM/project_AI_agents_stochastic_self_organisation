@@ -35,9 +35,7 @@ class RunJournal:
     async def phase(self, db: AsyncConnection, phase: str, round: int | None = None) -> None:
         """Record the run's current phase (and round, when applicable)."""
         await db.execute(
-            text(
-                "UPDATE swarm_runs SET phase = :phase, current_round = :round WHERE id = :id"
-            ),
+            text("UPDATE swarm_runs SET phase = :phase, current_round = :round WHERE id = :id"),
             {"phase": phase, "round": round, "id": self.run_id},
         )
         await db.commit()

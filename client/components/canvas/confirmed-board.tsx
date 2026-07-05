@@ -435,8 +435,8 @@ export function ConfirmedBoard({
                   entry={entry}
                   source={
                     entry.source_draft_id
-                      ? (findDraftEntry(state.draft, entry.source_draft_id) ??
-                        undefined)
+                      ? findDraftEntry(state.draft, entry.source_draft_id) ??
+                        undefined
                       : undefined
                   }
                   agents={agents}
@@ -600,10 +600,10 @@ export function ConfirmedBoard({
                           entry={entry}
                           source={
                             entry.source_draft_id
-                              ? (findDraftEntry(
+                              ? findDraftEntry(
                                   state.draft,
                                   entry.source_draft_id,
-                                ) ?? undefined)
+                                ) ?? undefined
                               : undefined
                           }
                           agents={agents}

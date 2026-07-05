@@ -293,9 +293,7 @@ async def test_b04_swarm_ablation_routes_around_failed_agent(db: AsyncConnection
 
     run_id = (await db.execute(text("SELECT id FROM swarm_runs"))).scalar_one()
     failed_agent_row = (
-        await db.execute(
-            text("SELECT id FROM agents WHERE name = 'Financial Risk Analyst'")
-        )
+        await db.execute(text("SELECT id FROM agents WHERE name = 'Financial Risk Analyst'"))
     ).scalar_one()
     takers = (
         await db.execute(
@@ -306,9 +304,7 @@ async def test_b04_swarm_ablation_routes_around_failed_agent(db: AsyncConnection
     taker_ids = {row[0] for row in takers}
     dropped = (
         await db.execute(
-            text(
-                "SELECT DISTINCT agent_id FROM turn_log WHERE run_id = :r AND status = 'failed'"
-            ),
+            text("SELECT DISTINCT agent_id FROM turn_log WHERE run_id = :r AND status = 'failed'"),
             {"r": run_id},
         )
     ).fetchall()

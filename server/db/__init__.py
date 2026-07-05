@@ -206,8 +206,7 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             # Resilient runs: phase/heartbeat/config columns on swarm_runs
             "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS phase TEXT",
             "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS current_round INTEGER",
-            "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS"
-            " heartbeat_at TIMESTAMP WITH TIME ZONE",
+            "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS heartbeat_at TIMESTAMP WITH TIME ZONE",
             "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS config TEXT",
             # Ratified synthesis: the takers' vote on the synthesised answer
             "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS ratification TEXT",

@@ -202,7 +202,9 @@ export function DraftBoard({
       new Map(
         state.confirmed
           .filter((c) => c.source_draft_id)
-          .map((c) => [c.source_draft_id as string, c.round_confirmed] as const),
+          .map(
+            (c) => [c.source_draft_id as string, c.round_confirmed] as const,
+          ),
       ),
     [state.confirmed],
   );
@@ -637,7 +639,9 @@ export function DraftBoard({
             <div
               style={{
                 width:
-                  viewMode === "graph" ? "min(1240px, 94vw)" : "min(860px, 90vw)",
+                  viewMode === "graph"
+                    ? "min(1240px, 94vw)"
+                    : "min(860px, 90vw)",
                 maxHeight: "85vh",
                 height: viewMode === "graph" ? "min(760px, 85vh)" : undefined,
                 display: "flex",
@@ -768,7 +772,9 @@ export function DraftBoard({
               </div>
 
               {viewMode === "graph" ? (
-                <div style={{ flex: 1, minHeight: 0, padding: "8px 12px 12px" }}>
+                <div
+                  style={{ flex: 1, minHeight: 0, padding: "8px 12px 12px" }}
+                >
                   <BoardGraphView
                     draft={filteredDraft}
                     promotedMap={promotedMap}

@@ -66,7 +66,8 @@ const MAX_SCALE = 2.4;
  *  still matches the line's direction exactly — no more skewed arrows. */
 function edgeLateralOffset(id: string): number {
   let hash = 0;
-  for (let i = 0; i < id.length; i++) hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
+  for (let i = 0; i < id.length; i++)
+    hash = (hash * 31 + id.charCodeAt(i)) >>> 0;
   return ((hash % 5) - 2) * 2.2;
 }
 
@@ -127,8 +128,22 @@ function edgeGeometry(
   const ux = dx / dist;
   const uy = dy / dist;
 
-  const p1 = clipToBoundary(edge.x1, edge.y1, ux, uy, endpointShape(edge.fromKey, layout), 4);
-  const p2 = clipToBoundary(edge.x2, edge.y2, -ux, -uy, endpointShape(edge.toKey, layout), 7);
+  const p1 = clipToBoundary(
+    edge.x1,
+    edge.y1,
+    ux,
+    uy,
+    endpointShape(edge.fromKey, layout),
+    4,
+  );
+  const p2 = clipToBoundary(
+    edge.x2,
+    edge.y2,
+    -ux,
+    -uy,
+    endpointShape(edge.toKey, layout),
+    7,
+  );
 
   const offset = edgeLateralOffset(edge.id);
   const nx = -uy * offset;
@@ -196,11 +211,15 @@ export function BoardGraphView({
   const [selected, setSelected] = useState<Selected>(null);
   const [spotlight, setSpotlight] = useState(done);
   const [expandedEntryId, setExpandedEntryId] = useState<string | null>(null);
-  const [disabledKinds, setDisabledKinds] = useState<Set<GraphEdgeKind>>(new Set());
-  const [disabledEntryTypes, setDisabledEntryTypes] = useState<Set<DraftEntry["entry_type"]>>(
+  const [disabledKinds, setDisabledKinds] = useState<Set<GraphEdgeKind>>(
     new Set(),
   );
-  const [disabledAgentIds, setDisabledAgentIds] = useState<Set<string>>(new Set());
+  const [disabledEntryTypes, setDisabledEntryTypes] = useState<
+    Set<DraftEntry["entry_type"]>
+  >(new Set());
+  const [disabledAgentIds, setDisabledAgentIds] = useState<Set<string>>(
+    new Set(),
+  );
   const [view, setView] = useState({ x: 40, y: 30, scale: 0.85 });
   const [isPanning, setIsPanning] = useState(false);
 
@@ -335,7 +354,8 @@ export function BoardGraphView({
     if (selected.kind === "agent") {
       nodeKeys.add(`agent:${selected.id}`);
       for (const n of layout.nodes) {
-        if (n.entry.author_id === selected.id) nodeKeys.add(`entry:${n.entry.id}`);
+        if (n.entry.author_id === selected.id)
+          nodeKeys.add(`entry:${n.entry.id}`);
       }
     } else {
       nodeKeys.add(`entry:${selected.id}`);
@@ -369,8 +389,10 @@ export function BoardGraphView({
       entryType: DraftEntry["entry_type"],
       authorId: string,
     ) => {
-      if (highlight) return highlight.nodeKeys.has(`entry:${entryId}`) ? 1 : 0.08;
-      if (disabledEntryTypes.has(entryType) || disabledAgentIds.has(authorId)) return 0.2;
+      if (highlight)
+        return highlight.nodeKeys.has(`entry:${entryId}`) ? 1 : 0.08;
+      if (disabledEntryTypes.has(entryType) || disabledAgentIds.has(authorId))
+        return 0.2;
       if (!visible) return 0.32;
       if (spotlight && !confirmed) return 0.26;
       return 1;
@@ -385,7 +407,13 @@ export function BoardGraphView({
         edge.kind === "mention" ? 0.55 : edge.kind === "citation" ? 0.85 : 0.75;
       const filteredOut =
         disabledKinds.has(edge.kind) || disabledAgentIds.has(edge.ownerAgentId);
-      const opacity = highlight ? (isHi ? 1 : 0.04) : filteredOut ? 0.06 : baseOpacity;
+      const opacity = highlight
+        ? isHi
+          ? 1
+          : 0.04
+        : filteredOut
+          ? 0.06
+          : baseOpacity;
       // Reply/mention edges take the author's own accent (whose thought is
       // whose); citation and vote are recolored to the app's existing
       // "consensus" language (gold = cited toward confirmation, green =
@@ -433,7 +461,8 @@ export function BoardGraphView({
         >
           {layout.hubs.map((hub) => {
             const color = agentColor(hub.id, agents, promotedAgentIds);
-            const isSelected = selected?.kind === "agent" && selected.id === hub.id;
+            const isSelected =
+              selected?.kind === "agent" && selected.id === hub.id;
             return (
               <button
                 key={hub.id}
@@ -466,7 +495,9 @@ export function BoardGraphView({
                     flexShrink: 0,
                   }}
                 />
-                <span style={{ fontSize: 10.5, fontWeight: 700, color: t.text }}>
+                <span
+                  style={{ fontSize: 10.5, fontWeight: 700, color: t.text }}
+                >
                   {hub.name}
                 </span>
                 {hub.entryCount > 0 ? (
@@ -502,7 +533,14 @@ export function BoardGraphView({
           })}
         </div>
 
-        <div style={{ display: "flex", alignItems: "center", gap: 4, flexShrink: 0 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 4,
+            flexShrink: 0,
+          }}
+        >
           {selected && (
             <button
               onClick={() => setSelected(null)}
@@ -512,13 +550,25 @@ export function BoardGraphView({
               <X size={12} strokeWidth={2} />
             </button>
           )}
-          <button onClick={() => zoomBy(0.82)} title="Zoom out" style={toolBtnStyle(dark, false)}>
+          <button
+            onClick={() => zoomBy(0.82)}
+            title="Zoom out"
+            style={toolBtnStyle(dark, false)}
+          >
             <ZoomOut size={12} strokeWidth={2} />
           </button>
-          <button onClick={() => zoomBy(1.22)} title="Zoom in" style={toolBtnStyle(dark, false)}>
+          <button
+            onClick={() => zoomBy(1.22)}
+            title="Zoom in"
+            style={toolBtnStyle(dark, false)}
+          >
             <ZoomIn size={12} strokeWidth={2} />
           </button>
-          <button onClick={fitToView} title="Fit to view" style={toolBtnStyle(dark, false)}>
+          <button
+            onClick={fitToView}
+            title="Fit to view"
+            style={toolBtnStyle(dark, false)}
+          >
             <Scan size={12} strokeWidth={2} />
           </button>
         </div>
@@ -553,7 +603,11 @@ export function BoardGraphView({
               color: t.textDim,
             }}
           >
-            <Network size={30} strokeWidth={1.3} color={`rgba(196,55,79,${dark ? 0.22 : 0.16})`} />
+            <Network
+              size={30}
+              strokeWidth={1.3}
+              color={`rgba(196,55,79,${dark ? 0.22 : 0.16})`}
+            />
             <span style={{ fontSize: 12, fontWeight: 600 }}>
               Nothing to graph yet
             </span>
@@ -598,7 +652,10 @@ export function BoardGraphView({
                 const { opacity, color, width } = edgeStyle(edge);
                 const showArrow = edge.kind !== "mention";
                 return (
-                  <g key={edge.id} style={{ opacity, transition: "opacity 0.15s" }}>
+                  <g
+                    key={edge.id}
+                    style={{ opacity, transition: "opacity 0.15s" }}
+                  >
                     <path
                       d={d}
                       fill="none"
@@ -644,7 +701,11 @@ export function BoardGraphView({
               <GraphEntryCard
                 key={node.entry.id}
                 node={node}
-                color={agentColor(node.entry.author_id, agents, promotedAgentIds)}
+                color={agentColor(
+                  node.entry.author_id,
+                  agents,
+                  promotedAgentIds,
+                )}
                 opacity={entryOpacity(
                   node.entry.id,
                   node.entry.is_visible,
@@ -652,7 +713,9 @@ export function BoardGraphView({
                   node.entry.entry_type,
                   node.entry.author_id,
                 )}
-                selected={selected?.kind === "entry" && selected.id === node.entry.id}
+                selected={
+                  selected?.kind === "entry" && selected.id === node.entry.id
+                }
                 threshold={threshold}
                 onToggleSelect={() =>
                   setSelected((prev) =>
@@ -695,7 +758,9 @@ export function BoardGraphView({
                 label="Reply"
                 swatch={t.textSub}
                 active={!disabledKinds.has("reply")}
-                onClick={() => setDisabledKinds((prev) => toggleMembership(prev, "reply"))}
+                onClick={() =>
+                  setDisabledKinds((prev) => toggleMembership(prev, "reply"))
+                }
               />
               <LegendRow
                 icon={Quote}
@@ -703,7 +768,9 @@ export function BoardGraphView({
                 swatch="#b5860d"
                 dashed
                 active={!disabledKinds.has("citation")}
-                onClick={() => setDisabledKinds((prev) => toggleMembership(prev, "citation"))}
+                onClick={() =>
+                  setDisabledKinds((prev) => toggleMembership(prev, "citation"))
+                }
               />
               <LegendRow
                 icon={AtSign}
@@ -711,14 +778,18 @@ export function BoardGraphView({
                 swatch={t.textDim}
                 dotted
                 active={!disabledKinds.has("mention")}
-                onClick={() => setDisabledKinds((prev) => toggleMembership(prev, "mention"))}
+                onClick={() =>
+                  setDisabledKinds((prev) => toggleMembership(prev, "mention"))
+                }
               />
               <LegendRow
                 icon={ThumbsUp}
                 label="Vote"
                 swatch="#3dba8c"
                 active={!disabledKinds.has("vote")}
-                onClick={() => setDisabledKinds((prev) => toggleMembership(prev, "vote"))}
+                onClick={() =>
+                  setDisabledKinds((prev) => toggleMembership(prev, "vote"))
+                }
               />
             </div>
 
@@ -730,7 +801,9 @@ export function BoardGraphView({
                 swatch={t.textSub}
                 active={!disabledEntryTypes.has("proposal")}
                 onClick={() =>
-                  setDisabledEntryTypes((prev) => toggleMembership(prev, "proposal"))
+                  setDisabledEntryTypes((prev) =>
+                    toggleMembership(prev, "proposal"),
+                  )
                 }
               />
               <LegendRow
@@ -739,7 +812,9 @@ export function BoardGraphView({
                 swatch={t.textDim}
                 active={!disabledEntryTypes.has("reply")}
                 onClick={() =>
-                  setDisabledEntryTypes((prev) => toggleMembership(prev, "reply"))
+                  setDisabledEntryTypes((prev) =>
+                    toggleMembership(prev, "reply"),
+                  )
                 }
               />
               <LegendRow
@@ -748,7 +823,9 @@ export function BoardGraphView({
                 swatch="#3dba8c"
                 active={!disabledEntryTypes.has("vote")}
                 onClick={() =>
-                  setDisabledEntryTypes((prev) => toggleMembership(prev, "vote"))
+                  setDisabledEntryTypes((prev) =>
+                    toggleMembership(prev, "vote"),
+                  )
                 }
               />
               <LegendRow
@@ -757,7 +834,9 @@ export function BoardGraphView({
                 swatch="#7b9ec0"
                 active={!disabledEntryTypes.has("system")}
                 onClick={() =>
-                  setDisabledEntryTypes((prev) => toggleMembership(prev, "system"))
+                  setDisabledEntryTypes((prev) =>
+                    toggleMembership(prev, "system"),
+                  )
                 }
               />
             </div>
@@ -782,7 +861,9 @@ export function BoardGraphView({
                   <button
                     key={hub.id}
                     onClick={() =>
-                      setDisabledAgentIds((prev) => toggleMembership(prev, hub.id))
+                      setDisabledAgentIds((prev) =>
+                        toggleMembership(prev, hub.id),
+                      )
                     }
                     title={active ? `Dim ${hub.name}` : `Show ${hub.name}`}
                     style={{
@@ -807,7 +888,9 @@ export function BoardGraphView({
                         flexShrink: 0,
                       }}
                     />
-                    <span style={{ fontSize: 9.5, color: t.textSub }}>{hub.name}</span>
+                    <span style={{ fontSize: 9.5, color: t.textSub }}>
+                      {hub.name}
+                    </span>
                   </button>
                 );
               })}
@@ -822,7 +905,11 @@ export function BoardGraphView({
             return (
               <EntryDetailModal
                 node={node}
-                color={agentColor(node.entry.author_id, agents, promotedAgentIds)}
+                color={agentColor(
+                  node.entry.author_id,
+                  agents,
+                  promotedAgentIds,
+                )}
                 threshold={threshold}
                 onClose={() => setExpandedEntryId(null)}
               />
@@ -877,7 +964,11 @@ function LegendRow({
   active,
   onClick,
 }: {
-  icon: React.ComponentType<{ size?: number; strokeWidth?: number; color?: string }>;
+  icon: React.ComponentType<{
+    size?: number;
+    strokeWidth?: number;
+    color?: string;
+  }>;
   label: string;
   swatch: string;
   dashed?: boolean;
@@ -888,7 +979,9 @@ function LegendRow({
   return (
     <button
       onClick={onClick}
-      title={active ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`}
+      title={
+        active ? `Hide ${label.toLowerCase()}` : `Show ${label.toLowerCase()}`
+      }
       style={{
         display: "flex",
         alignItems: "center",

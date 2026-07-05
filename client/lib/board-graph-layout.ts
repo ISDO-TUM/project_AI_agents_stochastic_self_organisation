@@ -122,7 +122,6 @@ const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 const MAX_RELAX_ENTRIES = 320;
 const MAX_RELAX_ITERATIONS = 60;
 
-
 function estimateCardSize(entry: FlatEntry): { w: number; h: number } {
   if (entry.entry_type === "vote") return { w: 160, h: 36 };
   if (entry.entry_type === "system") return { w: 184, h: 30 };
@@ -281,10 +280,12 @@ export function computeBoardGraphLayout(
   const displayName = new Map<string, string>();
   for (const a of agents) if (a.name) displayName.set(a.id, a.name);
   for (const e of flat) {
-    if (!displayName.has(e.author_id)) displayName.set(e.author_id, e.author_name);
+    if (!displayName.has(e.author_id))
+      displayName.set(e.author_id, e.author_name);
   }
   const nameToId = new Map<string, string>();
-  for (const [id, name] of displayName) if (!nameToId.has(name)) nameToId.set(name, id);
+  for (const [id, name] of displayName)
+    if (!nameToId.has(name)) nameToId.set(name, id);
 
   // Agents who only cited/voted on someone else's entry (never authored
   // their own) would otherwise be entirely invisible — surface them as
@@ -456,7 +457,10 @@ export function computeBoardGraphLayout(
     const cy = node.y + node.h / 2;
     const r = Math.hypot(cx, cy) || 0.001;
     const a = Math.atan2(cy, cx);
-    const delta = Math.atan2(Math.sin(a - wedge.angle), Math.cos(a - wedge.angle));
+    const delta = Math.atan2(
+      Math.sin(a - wedge.angle),
+      Math.cos(a - wedge.angle),
+    );
     const limit = wedge.half * 0.94;
     const clampedDelta = Math.min(limit, Math.max(-limit, delta));
     const clamped = wedge.angle + clampedDelta;
@@ -480,7 +484,12 @@ export function computeBoardGraphLayout(
     maxY = Math.max(maxY, y1);
   };
   for (const h of hubs) {
-    expand(h.x - HUB_RADIUS, h.y - HUB_RADIUS, h.x + HUB_RADIUS, h.y + HUB_RADIUS);
+    expand(
+      h.x - HUB_RADIUS,
+      h.y - HUB_RADIUS,
+      h.x + HUB_RADIUS,
+      h.y + HUB_RADIUS,
+    );
   }
   for (const nd of nodes) expand(nd.x, nd.y, nd.x + nd.w, nd.y + nd.h);
   if (!isFinite(minX)) {

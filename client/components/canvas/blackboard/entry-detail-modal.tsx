@@ -78,7 +78,11 @@ export function EntryDetailModal({
             display: "flex",
             flexDirection: "column",
             background: dark ? "rgba(12,10,4,0.97)" : "rgba(255,253,245,0.99)",
-            border: `1px solid ${node.confirmedRound !== null ? "rgba(181,134,13,0.4)" : `${color}55`}`,
+            border: `1px solid ${
+              node.confirmedRound !== null
+                ? "rgba(181,134,13,0.4)"
+                : `${color}55`
+            }`,
             borderRadius: 16,
             overflow: "hidden",
             boxShadow: "0 30px 90px rgba(0,0,0,0.5)",
@@ -91,7 +95,9 @@ export function EntryDetailModal({
               alignItems: "center",
               gap: 8,
               padding: "12px 16px",
-              borderBottom: `1px solid ${dark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.07)"}`,
+              borderBottom: `1px solid ${
+                dark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.07)"
+              }`,
               flexShrink: 0,
             }}
           >
@@ -174,7 +180,10 @@ export function EntryDetailModal({
           </div>
 
           {/* Body */}
-          <div style={{ overflowY: "auto", padding: "14px 18px 16px" }} className="pscroll">
+          <div
+            style={{ overflowY: "auto", padding: "14px 18px 16px" }}
+            className="pscroll"
+          >
             {!entry.is_visible && (
               <div
                 style={{
@@ -194,7 +203,14 @@ export function EntryDetailModal({
             <div style={{ fontSize: 13, lineHeight: 1.6, marginBottom: 12 }}>
               <MarkdownRenderer content={entry.content} fontSize={13} compact />
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                flexWrap: "wrap",
+              }}
+            >
               <CitationRing
                 count={entry.citation_count}
                 threshold={threshold}
