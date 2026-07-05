@@ -91,6 +91,10 @@ export interface GraphEntryNode {
   w: number;
   h: number;
   confirmedRound: number | null;
+  /** true = renders as a small pill (declutter tiering, proposal/reply only).
+   *  Decided once per layout by significance tiering below the density gate;
+   *  votes/system entries are already pill-styled by type and stay `false`. */
+  compact: boolean;
 }
 
 export interface GraphLayout {
@@ -122,7 +126,18 @@ const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
 const MAX_RELAX_ENTRIES = 320;
 const MAX_RELAX_ITERATIONS = 60;
 
-function estimateCardSize(entry: FlatEntry): { w: number; h: number } {
+/** Above this many proposal/reply entries, low-significance ones collapse to
+ *  compact pills instead of full cards (graph declutter). Not configurable —
+ *  runs at or under the limit render identically to before (density gate). */
+export const FULL_CARD_LIMIT = 10;
+
+function estimateCardSize(
+  entry: FlatEntry,
+  compact = false,
+): { w: number; h: number } {
+  if (compact && (entry.entry_type === "proposal" || entry.entry_type === "reply")) {
+    return { w: 170, h: 30 };
+  }
   if (entry.entry_type === "vote") return { w: 160, h: 36 };
   if (entry.entry_type === "system") return { w: 184, h: 30 };
   const w = entry.entry_type === "proposal" ? 240 : 214;
@@ -266,6 +281,28 @@ export function computeBoardGraphLayout(
     if (a.round !== b.round) return a.round - b.round;
     return a.created_at.localeCompare(b.created_at);
   });
+
+  // ── Significance tiering (proposal/reply only) ──────────────────────────
+  // ≤ FULL_CARD_LIMIT such entries: everything renders full (density gate).
+  // Above it: confirmed entries are always full; remaining full slots go to
+  // the highest-cited (tie: earliest) until the limit; the rest are pills.
+  // Nothing is ever hidden — pills are smaller, not absent.
+  const tierable = flat.filter(
+    (e) => e.entry_type === "proposal" || e.entry_type === "reply",
+  );
+  const compactIds = new Set<string>();
+  if (tierable.length > FULL_CARD_LIMIT) {
+    const confirmed = tierable.filter((e) => promotedMap.has(e.id));
+    const rest = tierable
+      .filter((e) => !promotedMap.has(e.id))
+      .sort((a, b) =>
+        a.citation_count !== b.citation_count
+          ? b.citation_count - a.citation_count
+          : a.created_at.localeCompare(b.created_at),
+      );
+    const fullSlotsLeft = Math.max(0, FULL_CARD_LIMIT - confirmed.length);
+    for (const e of rest.slice(fullSlotsLeft)) compactIds.add(e.id);
+  }
 
   const byAuthor = new Map<string, FlatEntry[]>();
   for (const e of flat) {
@@ -411,7 +448,8 @@ export function computeBoardGraphLayout(
       const a = angle + wedgeOffset;
       const cx = r * Math.cos(a);
       const cy = r * Math.sin(a);
-      const { w, h } = estimateCardSize(entry);
+      const compact = compactIds.has(entry.id);
+      const { w, h } = estimateCardSize(entry, compact);
       nodes.push({
         entry,
         x: cx - w / 2,
@@ -419,6 +457,7 @@ export function computeBoardGraphLayout(
         w,
         h,
         confirmedRound,
+        compact,
       });
     });
 

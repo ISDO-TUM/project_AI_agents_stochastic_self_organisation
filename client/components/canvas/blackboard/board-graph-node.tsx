@@ -282,6 +282,93 @@ export function GraphEntryCard({
     );
   }
 
+  // Graph declutter: above the density gate, low-significance proposal/reply
+  // entries collapse to a small pill instead of a full card — nothing is
+  // hidden, just smaller; full content is one click away via the expand modal.
+  if (node.compact && (entry.entry_type === "proposal" || entry.entry_type === "reply")) {
+    const PillIcon = entry.entry_type === "proposal" ? Lightbulb : Reply;
+    return (
+      <motion.div
+        layout
+        initial={false}
+        animate={{ opacity, scale: selected ? 1.06 : 1 }}
+        whileHover={{ scale: 1.07 }}
+        transition={{ duration: 0.2 }}
+        onMouseDown={(e) => e.stopPropagation()}
+        onClick={(e) => {
+          e.stopPropagation();
+          onToggleSelect();
+        }}
+        style={{
+          ...baseStyle,
+          height: node.h,
+          display: "flex",
+          alignItems: "center",
+          gap: 5,
+          padding: "0 8px",
+          borderRadius: 100,
+          background: dark ? `${color}12` : `${color}0d`,
+          border: `1.5px solid ${
+            node.confirmedRound !== null ? GOLD : selected ? color : `${color}45`
+          }`,
+          cursor: "pointer",
+          boxShadow: selected ? `0 0 10px ${color}45` : "none",
+        }}
+      >
+        <PillIcon size={10} strokeWidth={2} color={`${color}cc`} style={{ flexShrink: 0 }} />
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 700,
+            color: t.text,
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+            whiteSpace: "nowrap",
+            flex: 1,
+            minWidth: 0,
+          }}
+        >
+          {entry.author_name}
+        </span>
+        <span
+          style={{
+            fontSize: 8.5,
+            color: t.textDim,
+            fontFamily: "'JetBrains Mono', monospace",
+            flexShrink: 0,
+          }}
+        >
+          R{entry.round}
+        </span>
+        {entry.citation_count > 0 && (
+          <span style={{ fontSize: 8.5, color: t.textDim, flexShrink: 0 }}>
+            ♡{entry.citation_count}
+          </span>
+        )}
+        <button
+          onMouseDown={(e) => e.stopPropagation()}
+          onClick={(e) => {
+            e.stopPropagation();
+            onExpand();
+          }}
+          title="Expand full content"
+          style={{
+            background: "none",
+            border: "none",
+            cursor: "pointer",
+            padding: 2,
+            margin: -2,
+            display: "flex",
+            color: t.textDim,
+            flexShrink: 0,
+          }}
+        >
+          <Maximize2 size={9} strokeWidth={2} />
+        </button>
+      </motion.div>
+    );
+  }
+
   // proposal / reply — the main "contribution card"
   const isProposal = entry.entry_type === "proposal";
   const Icon = isProposal ? Lightbulb : Reply;
