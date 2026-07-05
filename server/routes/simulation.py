@@ -8,9 +8,11 @@ blackboard/audit/status views live in ``server.market_hive``.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncGenerator
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
@@ -35,6 +37,75 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/simulation", tags=["Simulation"])
 
 DBDep = Annotated[AsyncConnection, Depends(get_db)]
+
+# Next's dev rewrite proxy (and some reverse proxies in front of prod) silently
+# kill an SSE connection after ~30s with no bytes on the wire (Next's own
+# default is exactly proxyTimeout=30000 when unset). A discussion round with
+# several concurrent multi-thread turns, each now allowed to run for minutes
+# under the LLM provider's own hang backstop, can easily produce a silent gap
+# longer than that between real ``SimulationStep`` frames — the proxy then
+# tears down the stream mid-run with no error surfaced anywhere. Keep well
+# under that ceiling so a keepalive comment always wins the race.
+_SSE_KEEPALIVE_S = 15.0
+
+
+_PUMP_DONE = object()
+
+
+async def _pump(steps: AsyncGenerator[str, None], queue: asyncio.Queue[Any]) -> None:
+    """Drive ``steps`` to completion in one persistent task, forwarding each
+    frame (or the terminal exception/sentinel) onto ``queue``.
+
+    Must run as a single long-lived task for ``steps``' entire lifetime: the
+    swarm route sets a ``ContextVar`` token once per run and resets it in a
+    ``finally`` when the generator closes — if each pull of ``steps`` ran in a
+    *different* task (e.g. wrapping ``__anext__()`` in a fresh
+    ``ensure_future`` per call), that reset would run in a different context
+    than the matching ``set()`` and raise. Pumping to a queue keeps the whole
+    generator — set and reset alike — inside this one task/context.
+    """
+    try:
+        async for frame in steps:
+            await queue.put(frame)
+    except BaseException as exc:  # noqa: BLE001 - forwarded to the consumer below
+        await queue.put(exc)
+    else:
+        await queue.put(_PUMP_DONE)
+
+
+async def _with_keepalive(
+    steps: AsyncGenerator[str, None],
+) -> AsyncGenerator[str, None]:
+    """Interleave SSE comment frames into ``steps`` so no gap between real
+    frames ever exceeds ``_SSE_KEEPALIVE_S`` — defeats proxy idle-connection
+    timeouts. SSE comments (lines starting with ``:``) are ignored by any
+    spec-compliant client parser, so this is invisible to ``useSwarmRun``.
+
+    ``steps`` is pumped by one background task (see ``_pump``); this generator
+    only ever waits on the queue with a timeout, so a keepalive tick never
+    cancels the run in progress — only tearing down this generator itself
+    (a real client disconnect) cancels the pump, which is the one case where
+    cancellation should propagate down into ``run_swarm``.
+    """
+    queue: asyncio.Queue[Any] = asyncio.Queue()
+    pump_task = asyncio.ensure_future(_pump(steps, queue))
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=_SSE_KEEPALIVE_S)
+            except TimeoutError:
+                yield ": keepalive\n\n"
+                continue
+            if item is _PUMP_DONE:
+                return
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+    finally:
+        if not pump_task.done():
+            pump_task.cancel()
+            with contextlib.suppress(BaseException):
+                await pump_task
 
 
 async def _run_batch_background(
@@ -170,7 +241,7 @@ async def _swarm_resume_event_stream(
 )
 async def resume_simulation(run_id: str) -> StreamingResponse:
     return StreamingResponse(
-        _swarm_resume_event_stream(run_id, current_credentials()),
+        _with_keepalive(_swarm_resume_event_stream(run_id, current_credentials())),
         media_type="text/event-stream",
         headers={
             "Cache-Control": "no-cache",
@@ -254,7 +325,9 @@ async def run_simulation(
             user_id=user_id,
         )
         return StreamingResponse(
-            _swarm_event_stream(config, current_credentials(), parent_run_id=body.parent_run_id),
+            _with_keepalive(
+                _swarm_event_stream(config, current_credentials(), parent_run_id=body.parent_run_id)
+            ),
             media_type="text/event-stream",
             headers={
                 # Stream incrementally: disable client/proxy buffering so each

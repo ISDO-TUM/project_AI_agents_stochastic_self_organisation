@@ -1469,21 +1469,45 @@ def _ratify_turn(
     what the candidate is actually grounded in, or it has nothing to check the
     draft against but "(none)" and will reflexively object that nothing was
     confirmed even when the run produced real, ratifiable findings.
+
+    Resilient like ``_board_turn``/``_auction_turn``: this used to be the only
+    turn type with no timeout/retry wrapper, so a single provider hiccup during
+    the very last sub-round would crash ``run_swarm`` right before the answer
+    it already earned was produced. A turn that still fails after one retry is
+    treated as a silent non-vote (the same outcome as the agent calling neither
+    ``approve_synthesis`` nor ``revise_synthesis``), never propagated.
     """
 
     async def run(conn: AsyncConnection) -> list[SimulationStep]:
-        await agent_runner(
-            agent,
-            user_prompt=ratify_user_prompt(candidate, findings),
-            system_suffix=RATIFY_SYSTEM_SUFFIX,
-            tool_names=["approve_synthesis", "revise_synthesis"],
-            tool_context={
-                "db": conn,
-                "run_id": run_id,
-                "agent_id": agent["id"],
-                "ratification_votes": votes,
-            },
-        )
+        tool_context = {
+            "db": conn,
+            "run_id": run_id,
+            "agent_id": agent["id"],
+            "ratification_votes": votes,
+        }
+
+        async def attempt() -> tuple[str, list[ToolCall]]:
+            return await asyncio.wait_for(
+                agent_runner(
+                    agent,
+                    user_prompt=ratify_user_prompt(candidate, findings),
+                    system_suffix=RATIFY_SYSTEM_SUFFIX,
+                    tool_names=["approve_synthesis", "revise_synthesis"],
+                    tool_context=tool_context,
+                ),
+                timeout=TURN_TIMEOUT_S,
+            )
+
+        try:
+            await attempt()
+        except Exception:
+            logger.exception("ratification turn failed once for %s — retrying", agent.get("id"))
+            await _reset_transaction(conn)
+            try:
+                await attempt()
+            except Exception:
+                logger.exception("ratification turn failed twice for %s", agent.get("id"))
+                await _reset_transaction(conn)
         return []
 
     return _Turn(agent_name=agent["name"], node_id=agent["id"], run=run)
@@ -1623,6 +1647,33 @@ async def run_swarm(
         # process death (no chance to even reach this handler) is instead
         # caught later by `reap_stale_runs` flipping the stale 'running' row
         # to 'interrupted' for resume.
+        raise
+    except (GeneratorExit, asyncio.CancelledError):
+        # A dropped client (e.g. a reverse proxy that killed the SSE connection
+        # after a silent gap) tears down this generator via GeneratorExit, or
+        # the task driving it gets cancelled outright — either way these are
+        # BaseException, not Exception, so the handler above never sees them,
+        # and previously the run just sat on status='running' forever (only
+        # `reap_stale_runs` at the *next* server boot would ever reclaim it).
+        # No `yield` is possible past this point (the generator is closing),
+        # so best-effort flip the row directly instead of going through
+        # `_complete_run` (which also stamps phase='done'/final_answer and
+        # would make the row look finished rather than resumable).
+        logger.warning("Swarm run %s cancelled mid-stream — marking interrupted", run_id)
+        try:
+            await _reset_transaction(db)
+            await db.execute(
+                text(
+                    "UPDATE swarm_runs SET status = 'interrupted' "
+                    "WHERE id = :id AND status = 'running'"
+                ),
+                {"id": run_id},
+            )
+            await db.commit()
+            if recorder is not None:
+                await recorder.finish("interrupted")
+        except Exception:
+            logger.exception("Failed to mark swarm run %s as interrupted", run_id)
         raise
 
 

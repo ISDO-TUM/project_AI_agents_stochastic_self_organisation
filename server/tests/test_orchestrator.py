@@ -322,6 +322,34 @@ async def test_auction_abstainers_are_not_takers(db: AsyncConnection) -> None:
     assert takers == ["a1"]
 
 
+async def test_run_swarm_marks_interrupted_on_generator_close(db: AsyncConnection) -> None:
+    """A dropped SSE client (proxy idle-timeout, closed browser tab) closes the
+    generator driving ``run_swarm`` via ``GeneratorExit``. Before the fix,
+    ``run_swarm``'s ``except Exception`` handler never saw it — GeneratorExit
+    and asyncio.CancelledError are BaseException, not Exception — so the row
+    was left on status='running' forever (only the next server boot's
+    ``reap_stale_runs`` would ever reclaim it)."""
+    await _insert_agent(db, "a1", "Alpha")
+
+    gen = run_swarm(
+        SwarmRunConfig(prompt="Analyze this contract"),
+        db,
+        agent_runner=_scripted_runner(),
+    )
+    first = await gen.__anext__()
+    run_id = _run_id([first])
+
+    await gen.aclose()
+
+    run = (
+        (await db.execute(text("SELECT status FROM swarm_runs WHERE id = :id"), {"id": run_id}))
+        .mappings()
+        .fetchone()
+    )
+    assert run is not None
+    assert run["status"] == "interrupted"
+
+
 async def test_auction_zero_bidders_aborts_run(db: AsyncConnection) -> None:
     await _insert_agent(db, "a1", "Alpha")
     await _insert_agent(db, "a2", "Beta")

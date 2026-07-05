@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator
 from typing import Any
@@ -1603,6 +1604,49 @@ async def test_swarm_run_streams_simulation_steps_as_sse(client: AsyncClient) ->
     assert "data: " in body
     assert "Contract created" in body
     assert "convergence" in body
+
+
+@pytest.mark.asyncio
+async def test_with_keepalive_pads_slow_gaps_without_cancelling_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tick during a slow step must interleave a keepalive comment, not
+    abort the step. Regression: wrapping ``it.__anext__()`` directly in
+    ``asyncio.wait_for`` cancels the wrapped coroutine on every timeout tick —
+    that would silently kill a genuinely slow (not hung) swarm turn instead of
+    just padding the gap around it, exactly the bug this wrapper exists to
+    avoid on the *proxy* side."""
+    import server.routes.simulation as sim_routes
+
+    monkeypatch.setattr(sim_routes, "_SSE_KEEPALIVE_S", 0.05)
+
+    async def slow_steps() -> AsyncIterator[str]:
+        await asyncio.sleep(0.2)
+        yield "data: real\n\n"
+
+    frames = [frame async for frame in sim_routes._with_keepalive(slow_steps())]
+
+    assert frames.count(": keepalive\n\n") >= 2
+    assert frames[-1] == "data: real\n\n"
+
+
+@pytest.mark.asyncio
+async def test_with_keepalive_propagates_underlying_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real failure from the wrapped stream must still surface, not vanish
+    into a keepalive loop."""
+    import server.routes.simulation as sim_routes
+
+    monkeypatch.setattr(sim_routes, "_SSE_KEEPALIVE_S", 0.05)
+
+    async def failing_steps() -> AsyncIterator[str]:
+        yield "data: one\n\n"
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        async for _ in sim_routes._with_keepalive(failing_steps()):
+            pass
 
 
 @pytest.mark.asyncio
