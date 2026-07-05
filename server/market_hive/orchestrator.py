@@ -398,7 +398,12 @@ def _board_turn(
         raise ValueError("provide exactly one of user_prompt / prompt_builder")
 
     async def run(conn: AsyncConnection) -> list[SimulationStep]:
-        prompt = user_prompt if user_prompt is not None else await prompt_builder(conn)
+        if user_prompt is not None:
+            prompt = user_prompt
+        elif prompt_builder is not None:
+            prompt = await prompt_builder(conn)
+        else:
+            raise ValueError("provide exactly one of user_prompt / prompt_builder")
 
         async def attempt() -> tuple[str, list[ToolCall]]:
             return await asyncio.wait_for(
@@ -565,6 +570,8 @@ async def _load_contract_and_threads(
         .mappings()
         .fetchone()
     )
+    if contract_row is None:
+        raise ValueError(f"run {run_id!r} has no contract")
     contract = ContractSchema(**dict(contract_row))
     thread_rows = (
         (
@@ -874,9 +881,7 @@ async def _run_round_one(
     # (phase, round) is never re-driven through another LLM call.
     already_done = await journal.completed_turns(db, phase="round_1", round=1)
 
-    def _wave_turns(
-        wave: list[str], prompts_by_thread: dict[str, str] | None
-    ) -> list[_Turn]:
+    def _wave_turns(wave: list[str], prompts_by_thread: dict[str, str] | None) -> list[_Turn]:
         turns: list[_Turn] = []
         for thread in threads:
             coworkers = [agents_by_id[t]["name"] for t in takers if t in agents_by_id]
@@ -1094,12 +1099,14 @@ async def _run_discussion_round(
                         agent_id=agent_id,
                     )
                     digest = format_entries_digest(entries) if entries else None
-                    return rounds_user_prompt(
-                        contract,
-                        thread,
-                        round=round,
-                        max_rounds=config.max_rounds,
-                        relevant_posts=digest,
+                    return str(
+                        rounds_user_prompt(
+                            contract,
+                            thread,
+                            round=round,
+                            max_rounds=config.max_rounds,
+                            relevant_posts=digest,
+                        )
                     )
 
                 return build
@@ -1505,8 +1512,7 @@ async def _run_swarm_steps(
             (
                 await db.execute(
                     text(
-                        "SELECT status, phase, current_round, config FROM swarm_runs "
-                        "WHERE id = :id"
+                        "SELECT status, phase, current_round, config FROM swarm_runs WHERE id = :id"
                     ),
                     {"id": resume_run_id},
                 )
@@ -1531,11 +1537,15 @@ async def _run_swarm_steps(
         session_id = run_id
         if parent_run_id is not None:
             parent_row = (
-                await db.execute(
-                    text("SELECT status, session_id FROM swarm_runs WHERE id = :id"),
-                    {"id": parent_run_id},
+                (
+                    await db.execute(
+                        text("SELECT status, session_id FROM swarm_runs WHERE id = :id"),
+                        {"id": parent_run_id},
+                    )
                 )
-            ).mappings().fetchone()
+                .mappings()
+                .fetchone()
+            )
             if parent_row is None:
                 raise ValueError(f"parent run {parent_run_id!r} not found")
             if parent_row["status"] == "running":
@@ -1583,18 +1593,14 @@ async def _run_swarm_steps(
     # Market Maker and the auction can see the session context.
     carried: list[ConfirmedEntrySchema] = []
     if resume_run_id is None and parent_run_id is not None:
-        carried = await carry_forward_findings(
-            db, parent_run_id=parent_run_id, child_run_id=run_id
-        )
+        carried = await carry_forward_findings(db, parent_run_id=parent_run_id, child_run_id=run_id)
         if carried:
             yield _step(
                 "system", f"Carried {len(carried)} ratified findings from the previous run."
             )
     session_context: str | None = None
     if carried:
-        digest = "\n".join(
-            f"- {c.content[len('[carried] '):][:200]}" for c in carried[:12]
-        )
+        digest = "\n".join(f"- {c.content[len('[carried] ') :][:200]}" for c in carried[:12])
         session_context = (
             "PREVIOUSLY RATIFIED FINDINGS (from the prior run in this session — "
             "settled ground truth; scope only what is new or changed):\n" + digest
@@ -1724,9 +1730,7 @@ async def _run_swarm_steps(
     # ``resume_from`` past "vote" means the recorded phase is a discussion round
     # (f"round_{N}") — re-enter at its recorded round; otherwise start at 2 as usual.
     discussion_start = (
-        max(2, recorded_round)
-        if resume_from > _phase_index("vote", config.max_rounds)
-        else 2
+        max(2, recorded_round) if resume_from > _phase_index("vote", config.max_rounds) else 2
     )
     for round in range(discussion_start, config.max_rounds + 1):
         last_round = round

@@ -64,7 +64,8 @@ async def compute_run_metrics(db: AsyncConnection, run_id: str) -> dict[str, Any
 
 async def _optional_block(db: AsyncConnection, run_id: str, fn: Any) -> dict[str, Any] | None:
     try:
-        return await fn(db, run_id)
+        result: dict[str, Any] | None = await fn(db, run_id)
+        return result
     except Exception:
         await db.rollback()
         return None
@@ -113,9 +114,7 @@ async def _citations_block(db: AsyncConnection, run_id: str) -> dict[str, Any]:
     """Citation concentration: Gini over each author's total citations
     received, plus mean per-entry Shannon entropy over citer distribution."""
     total = (
-        await db.execute(
-            text("SELECT COUNT(*) FROM citations WHERE run_id = :r"), {"r": run_id}
-        )
+        await db.execute(text("SELECT COUNT(*) FROM citations WHERE run_id = :r"), {"r": run_id})
     ).scalar_one()
 
     by_author = (
@@ -174,9 +173,7 @@ async def _convergence_block(db: AsyncConnection, run_id: str) -> dict[str, Any]
     ).scalar_one()
     evaporated = (
         await db.execute(
-            text(
-                "SELECT COUNT(*) FROM draft_entries WHERE run_id = :r AND is_visible = false"
-            ),
+            text("SELECT COUNT(*) FROM draft_entries WHERE run_id = :r AND is_visible = false"),
             {"r": run_id},
         )
     ).scalar_one()
@@ -201,7 +198,7 @@ async def _participation_block(db: AsyncConnection, run_id: str) -> dict[str, An
             {"r": run_id},
         )
     ).fetchall()
-    posts_by_agent = dict(post_rows)
+    posts_by_agent: dict[str, int] = {str(author_id): int(n) for author_id, n in post_rows}
 
     total_bids = (
         await db.execute(text("SELECT COUNT(*) FROM bids WHERE run_id = :r"), {"r": run_id})
@@ -217,15 +214,11 @@ async def _participation_block(db: AsyncConnection, run_id: str) -> dict[str, An
     skip_rate: float | None = None
     try:
         total_turns = (
-            await db.execute(
-                text("SELECT COUNT(*) FROM turn_log WHERE run_id = :r"), {"r": run_id}
-            )
+            await db.execute(text("SELECT COUNT(*) FROM turn_log WHERE run_id = :r"), {"r": run_id})
         ).scalar_one()
         skipped = (
             await db.execute(
-                text(
-                    "SELECT COUNT(*) FROM turn_log WHERE run_id = :r AND status = 'skipped'"
-                ),
+                text("SELECT COUNT(*) FROM turn_log WHERE run_id = :r AND status = 'skipped'"),
                 {"r": run_id},
             )
         ).scalar_one()
@@ -246,15 +239,12 @@ async def _contestation_block(db: AsyncConnection, run_id: str) -> dict[str, Any
     ``confirmed_entries.status`` — pre-feature databases. ``None`` when the
     feature exists but nothing contestation-related happened this run."""
     disputes_total = (
-        await db.execute(
-            text("SELECT COUNT(*) FROM disputes WHERE run_id = :r"), {"r": run_id}
-        )
+        await db.execute(text("SELECT COUNT(*) FROM disputes WHERE run_id = :r"), {"r": run_id})
     ).scalar_one()
     contested = (
         await db.execute(
             text(
-                "SELECT COUNT(*) FROM confirmed_entries "
-                "WHERE run_id = :r AND status = 'contested'"
+                "SELECT COUNT(*) FROM confirmed_entries WHERE run_id = :r AND status = 'contested'"
             ),
             {"r": run_id},
         )
@@ -262,8 +252,7 @@ async def _contestation_block(db: AsyncConnection, run_id: str) -> dict[str, Any
     retracted = (
         await db.execute(
             text(
-                "SELECT COUNT(*) FROM confirmed_entries "
-                "WHERE run_id = :r AND status = 'retracted'"
+                "SELECT COUNT(*) FROM confirmed_entries WHERE run_id = :r AND status = 'retracted'"
             ),
             {"r": run_id},
         )
@@ -281,22 +270,19 @@ async def _ratification_block(db: AsyncConnection, run_id: str) -> dict[str, Any
     """The run's ratification vote (ratified synthesis). ``None`` when the
     column doesn't exist (caught by ``_optional_block``) or was never set."""
     raw = (
-        await db.execute(
-            text("SELECT ratification FROM swarm_runs WHERE id = :r"), {"r": run_id}
-        )
+        await db.execute(text("SELECT ratification FROM swarm_runs WHERE id = :r"), {"r": run_id})
     ).scalar()
     if not raw:
         return None
-    return json.loads(raw)
+    result: dict[str, Any] = json.loads(raw)
+    return result
 
 
 async def _cost_block(db: AsyncConnection, run_id: str) -> dict[str, Any]:
     """Total tokens spent and tokens per confirmed finding (``None`` when
     nothing confirmed — the ratio is undefined, not infinite)."""
     raw = (
-        await db.execute(
-            text("SELECT token_usage FROM swarm_runs WHERE id = :r"), {"r": run_id}
-        )
+        await db.execute(text("SELECT token_usage FROM swarm_runs WHERE id = :r"), {"r": run_id})
     ).scalar()
     usage = json.loads(raw) if raw else {}
     tokens_total = usage.get("total", 0)

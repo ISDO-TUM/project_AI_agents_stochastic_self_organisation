@@ -154,7 +154,8 @@ async def _make_engine(*, offline: bool) -> AsyncEngine:
     from server.db import get_engine, init_db
 
     await init_db()
-    return get_engine()
+    real_engine: AsyncEngine = get_engine()
+    return real_engine
 
 
 async def _run_one(

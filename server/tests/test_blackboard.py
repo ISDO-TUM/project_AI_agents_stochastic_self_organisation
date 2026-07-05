@@ -960,7 +960,7 @@ async def test_dispute_rejects_duplicate(db: AsyncConnection) -> None:
 
 async def test_dispute_rejects_non_confirmed_target(db: AsyncConnection) -> None:
     run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
-    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+    _agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
 
     bb = Blackboard(db)
     result = await bb.dispute(
@@ -1158,13 +1158,16 @@ async def test_check_promotions_dedup_merges_near_duplicate(db: AsyncConnection)
     assert len(confirmed_rows) == 1
 
     merged_into = (
-        await db.execute(text("SELECT merged_into FROM draft_entries WHERE id = :id"), {"id": entry2})
+        await db.execute(
+            text("SELECT merged_into FROM draft_entries WHERE id = :id"), {"id": entry2}
+        )
     ).scalar_one()
     assert merged_into == confirmed_id
 
     citation_count = (
         await db.execute(
-            text("SELECT citation_count FROM confirmed_entries WHERE id = :id"), {"id": confirmed_id}
+            text("SELECT citation_count FROM confirmed_entries WHERE id = :id"),
+            {"id": confirmed_id},
         )
     ).scalar_one()
     assert citation_count == 2  # original + the merged entry's distinct citer
@@ -1192,12 +1195,20 @@ async def test_check_promotions_dedup_skipped_when_embeddings_zero(db: AsyncConn
     # _offline_embeddings makes post() fall back to the zero vector for both —
     # identical zero vectors, yet dedup must NOT treat them as a match.
     entry1 = await bb.post(
-        run_id=run_id, thread_id=thread_id, author_id=agent_a,
-        content="First finding", entry_type="proposal", round=1,
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_a,
+        content="First finding",
+        entry_type="proposal",
+        round=1,
     )
     entry2 = await bb.post(
-        run_id=run_id, thread_id=thread_id, author_id=agent_c,
-        content="Second finding", entry_type="proposal", round=1,
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_c,
+        content="Second finding",
+        entry_type="proposal",
+        round=1,
     )
 
     await bb.cite(run_id=run_id, citing_agent_id=agent_b, entry_ids=[entry1], round=2)

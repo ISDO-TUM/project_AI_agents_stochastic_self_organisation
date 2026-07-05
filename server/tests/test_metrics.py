@@ -138,10 +138,9 @@ def _expected_duplication() -> float:
     vectors, so the test pins the *formula* rather than a hand-typed literal."""
     vecs = [_E1, _E2, _E3, _E4]
     max_per_entry = [
-        max(cosine(v, other) for j, other in enumerate(vecs) if j != i)
-        for i, v in enumerate(vecs)
+        max(cosine(v, other) for j, other in enumerate(vecs) if j != i) for i, v in enumerate(vecs)
     ]
-    return sum(max_per_entry) / len(max_per_entry)
+    return float(sum(max_per_entry) / len(max_per_entry))
 
 
 async def test_metrics_exact_values(db: AsyncConnection) -> None:
@@ -196,9 +195,7 @@ async def test_participation_block_reports_posts_and_abstention(db: AsyncConnect
 async def test_contestation_present_when_disputes_exist(db: AsyncConnection) -> None:
     run_id, _e1, _e3 = await _seed_fixture_run(db)
     confirmed_id = (
-        await db.execute(
-            text("SELECT id FROM confirmed_entries WHERE run_id = :r"), {"r": run_id}
-        )
+        await db.execute(text("SELECT id FROM confirmed_entries WHERE run_id = :r"), {"r": run_id})
     ).scalar_one()
     await db.execute(
         text(

@@ -51,9 +51,7 @@ class PostToBlackboardInput(BaseModel):
             "any value except 'new'."
         ),
     )
-    stance_target: str | None = Field(
-        default=None, description="entry_id the stance refers to."
-    )
+    stance_target: str | None = Field(default=None, description="entry_id the stance refers to.")
     evidence: list[str] = Field(
         default_factory=list,
         description="File names (from your attached files) backing the claim.",
@@ -74,7 +72,6 @@ class DisputeInput(BaseModel):
 
 class VoteInput(BaseModel):
     entry_id: str = Field(description="ID of a round-1 proposal to endorse.")
-
 
 
 class GetConfirmedInput(BaseModel):
@@ -122,7 +119,7 @@ class ReadBlackboardTool(Tool):
             k=validated_input.k,
             agent_id=agent_id,
         )
-        return format_entries_digest(entries)
+        return str(format_entries_digest(entries))
 
 
 class PostToBlackboardTool(Tool):
@@ -270,10 +267,7 @@ class CiteTool(Tool):
             reasons=reasons,
         )
         note = ', "note": "cap of 3 reached — extra ids skipped"' if capped else ""
-        return (
-            f'{{"cited": {result["cited"]}, '
-            f'"skipped_self": {result["skipped_self"]}{note}}}'
-        )
+        return f'{{"cited": {result["cited"]}, "skipped_self": {result["skipped_self"]}{note}}}'
 
 
 class VoteTool(Tool):
@@ -374,9 +368,7 @@ class GetConfirmedTool(Tool):
 
 class ApproveSynthesisTool(Tool):
     name = "approve_synthesis"
-    description = (
-        "Approve the draft final answer as a faithful summary of the confirmed findings."
-    )
+    description = "Approve the draft final answer as a faithful summary of the confirmed findings."
     input_model = ApproveSynthesisInput
 
     async def execute(
