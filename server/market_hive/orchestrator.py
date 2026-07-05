@@ -34,7 +34,12 @@ from server.llm.base_provider import BaseLLMProvider
 from server.llm.langfuse_setup import agent_trace_metadata, langfuse_metadata
 from server.market_hive.assignment import assign_takers_to_threads
 from server.market_hive.auction import AuctionEngine, Invitation
-from server.market_hive.blackboard import Blackboard, carry_forward_findings, format_entries_digest
+from server.market_hive.blackboard import (
+    Blackboard,
+    carry_forward_findings,
+    format_entries_digest,
+    promotion_threshold,
+)
 from server.market_hive.contract_source import FallbackContractSource
 from server.market_hive.convergence import ConvergenceEngine
 from server.market_hive.history import SwarmHistoryRecorder
@@ -1915,11 +1920,13 @@ async def _run_swarm_steps(
     # Single-thread contracts put every taker on the one thread; multi-thread
     # contracts match takers to threads by capability/thread embedding.
     takers_by_thread = await assign_takers_to_threads(db, takers=takers, threads=threads)
-    # Same formula as Blackboard.check_promotions (PRD §15): M = max(1, n_takers // 3 + 1).
-    # Computed once here, from the taker count that stays fixed for the rest of the
-    # run, and pushed to the UI so it never has to approximate it client-side.
+    # Same helper Blackboard.check_promotions uses, so the UI's displayed M is
+    # always the exact value promotion enforces. Computed once here from the taker
+    # count that stays fixed for the rest of the run, and pushed to the UI so it
+    # never has to approximate it client-side.
     promotion_thresholds = {
-        thread.id: max(1, len(takers_by_thread.get(thread.id, [])) // 3 + 1) for thread in threads
+        thread.id: promotion_threshold(len(takers_by_thread.get(thread.id, [])))
+        for thread in threads
     }
     if len(threads) > 1:
         yield _step(

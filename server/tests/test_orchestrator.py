@@ -1032,7 +1032,10 @@ async def test_discussion_prompts_carry_injected_relevant_posts(db: AsyncConnect
     assert captured, "no discussion turns ran"
     for p in captured:
         assert "RELEVANT EXISTING POSTS" in p
-        assert "cite(entry_ids=[...]) it instead of restating" in p
+        # The retrieval block still nudges citing over restating; wording now frames
+        # citing as complementary to replying (endorsement drives promotion).
+        assert "cite(entry_ids=[...])" in p
+        assert "confirmed finding" in p
         assert "proposal" in p  # round-1 content surfaced through retrieval
         assert "] Alpha · Round 1 · proposal" in p or "] Beta · Round 1 · proposal" in p
 

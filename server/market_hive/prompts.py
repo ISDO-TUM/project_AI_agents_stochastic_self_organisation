@@ -216,8 +216,13 @@ def rounds_system_suffix(temperature_instruction: str) -> str:
         "rejected).\n"
         "- Set claim (one-sentence thesis), stance ('supports'/'refutes'/'refines' + "
         "stance_target) and evidence on every post.\n"
-        "- Use cite(entry_ids=[...]) ONLY for entries you build on or agree with — "
-        "express disagreement in your reply content, not by citing.\n"
+        "- When you post a reply that supports, refines, or builds on another "
+        "entry, you MUST also cite(entry_ids=[...]) that same entry in this turn — "
+        "replying to a point and endorsing it are complementary, not alternatives. "
+        "Citation is how consensus forms: an entry that enough distinct teammates "
+        "cite is promoted to a confirmed finding, and without citations nothing your "
+        "team agrees on is ever confirmed. Cite ONLY entries you genuinely agree "
+        "with; express disagreement in your reply content, never by citing.\n"
         "- Use dispute(entry_id, reason) ONLY against a CONFIRMED finding you can show "
         "is wrong — it takes M agents to contest, exactly like promotion.\n"
         "- If the work is blocked by an expertise NOBODY on the team has, you may "
@@ -246,10 +251,13 @@ def rounds_user_prompt(
         "RELEVANT EXISTING POSTS (retrieved for you — most relevant to your "
         "expertise):\n"
         f"{relevant_posts}\n\n"
-        "If your point is already made above, cite(entry_ids=[...]) it instead of "
-        "restating it. Post a reply ONLY if it adds something new — a different "
-        "angle, a disagreement, or new evidence. Duplicated content will be "
-        "treated as noise, not reinforcement.\n\n"
+        "If a point you agree with is already made above, cite(entry_ids=[...]) it — "
+        "that endorsement is what promotes it to a confirmed finding. If you also "
+        "have something new to add — a different angle, a disagreement, or new "
+        "evidence — post a reply for that; and when your reply supports or refines "
+        "one of the posts above, cite that post in the same turn. Do not merely "
+        "restate a point already made: rewording someone else's post is noise, but "
+        "citing it is real reinforcement.\n\n"
         if relevant_posts
         else ""
     )
@@ -263,7 +271,8 @@ def rounds_user_prompt(
         f'You may call read_blackboard(thread_id="{thread.id}") to browse beyond '
         "the excerpts above, then "
         f'post_to_blackboard(entry_type="reply", reply_to=..., thread_id="{thread.id}") '
-        "with your analysis and cite(entry_ids=[...]) the entries you build on."
+        "with your analysis, and cite(entry_ids=[...]) every entry your reply "
+        "supports or builds on — that is what lets the team's agreement be confirmed."
     )
 
 

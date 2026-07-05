@@ -369,7 +369,7 @@ export function Canvas({
   const offY = pan.y % gridSize;
 
   const canvasBg = dark
-    ? `radial-gradient(ellipse 80% 60% at 50% 0%, rgba(139,26,47,0.07) 0%, transparent 70%), #111018`
+    ? `radial-gradient(ellipse 80% 60% at 50% 0%, rgba(139,26,47,0.07) 0%, transparent 70%), #16141e`
     : `radial-gradient(ellipse 80% 60% at 50% 0%, rgba(139,26,47,0.04) 0%, transparent 70%), #f0eef8`;
 
   return (
@@ -412,7 +412,7 @@ export function Canvas({
                 cx={1}
                 cy={1}
                 r={0.9}
-                fill={dark ? "rgba(255,255,255,0.07)" : "rgba(0,0,0,0.1)"}
+                fill={dark ? "rgba(255,255,255,0.09)" : "rgba(0,0,0,0.1)"}
               />
             </pattern>
           </defs>

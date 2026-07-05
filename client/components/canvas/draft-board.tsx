@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { BlackboardState } from "@/lib/types";
 import { useTheme } from "@/lib/theme-context";
-import { getTheme, BURG_LT } from "@/lib/theme";
+import { getTheme, BURG_LT, SURFACE_DARK_RGB } from "@/lib/theme";
 import { Layers, Maximize2, Network, Rows3, X } from "lucide-react";
 import { computePromotionThreshold, countEntries } from "@/lib/blackboard-utils";
 import { ThreadFilterDropdown } from "./blackboard/thread-filter-dropdown";
@@ -469,7 +469,7 @@ export function DraftBoard({
         ref={bodyRef}
         onScroll={handleBodyScroll}
         style={{
-          background: dark ? "rgba(6,5,12,0.88)" : "rgba(248,246,255,0.94)",
+          background: dark ? `rgba(${SURFACE_DARK_RGB},0.92)` : "rgba(248,246,255,0.94)",
           border: `1px solid rgba(139,26,47,0.22)`,
           borderTop: "none",
           borderRadius: "0 0 12px 12px",
@@ -606,7 +606,7 @@ export function DraftBoard({
                 display: "flex",
                 flexDirection: "column",
                 background: dark
-                  ? "rgba(6,5,12,0.97)"
+                  ? `rgba(${SURFACE_DARK_RGB},0.97)`
                   : "rgba(248,246,255,0.99)",
                 border: "1px solid rgba(139,26,47,0.35)",
                 borderRadius: 16,

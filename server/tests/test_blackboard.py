@@ -11,7 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_en
 from sqlalchemy.pool import StaticPool
 
 from server.db.tables import metadata
-from server.market_hive.blackboard import Blackboard
+from server.market_hive.blackboard import Blackboard, promotion_threshold
 
 
 @pytest.fixture(autouse=True)
@@ -461,6 +461,100 @@ async def test_check_promotions_promotes_entry_with_enough_citations(
 
     confirmed = await bb.get_confirmed(run_id=run_id)
     assert len(confirmed) == 1
+
+
+def test_promotion_threshold_small_team_cap() -> None:
+    """M = about a third of participants, at least 1, capped at n-1 so it can never
+    exceed the number of agents able to endorse an entry. Only n≤2 changes versus
+    the old max(1, n//3+1): n=2 must drop 2→1 or a 2-taker thread can never promote
+    (only 1 possible non-self endorser). Everything n≥3 stays put."""
+    assert promotion_threshold(1) == 1
+    assert promotion_threshold(2) == 1  # was 2 (unreachable) — the fix
+    assert promotion_threshold(3) == 2  # unchanged — small team still needs agreement
+    assert promotion_threshold(4) == 2
+    assert promotion_threshold(5) == 2
+    assert promotion_threshold(6) == 3
+    assert promotion_threshold(9) == 4
+
+
+async def _seed_extra_agent(conn: AsyncConnection, name: str) -> str:
+    from sqlalchemy import text
+
+    aid = str(uuid.uuid4())
+    await conn.execute(
+        text(
+            "INSERT INTO agents (id, name, description, system_prompt, provider, model) "
+            "VALUES (:id, :name, :desc, :sp, :prov, :model)"
+        ),
+        {"id": aid, "name": name, "desc": "d", "sp": "s", "prov": "openai", "model": "gpt-4o"},
+    )
+    await conn.commit()
+    return aid
+
+
+async def test_check_promotions_promotes_on_votes_alone(db: AsyncConnection) -> None:
+    """A cold-start vote is an endorsement just like a citation: an entry that
+    enough distinct non-author agents *vote* for must promote even if nobody ran a
+    cite() call on it. Without this, round-1 votes expressed real agreement that
+    the promotion path silently ignored, so nothing ever confirmed on small runs."""
+    run_id = str(uuid.uuid4())
+    thread_id = str(uuid.uuid4())
+    author, voter1 = await _seed_two_agents(db, run_id, thread_id)
+    voter2 = await _seed_extra_agent(db, "C")
+
+    bb = Blackboard(db)
+    entry_id = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=author,
+        content="A proposal that earns votes but no explicit citations",
+        entry_type="proposal",
+        round=1,
+    )
+    # 3 participants → threshold 2. Two distinct non-author voters, zero citations.
+    await bb.vote(run_id=run_id, voter_id=voter1, entry_id=entry_id, thread_id=thread_id)
+    await bb.vote(run_id=run_id, voter_id=voter2, entry_id=entry_id, thread_id=thread_id)
+
+    promoted = await bb.check_promotions(
+        run_id=run_id, current_round=2, participants_by_thread={thread_id: 3}
+    )
+
+    assert len(promoted) == 1
+    assert promoted[0].source_draft_id == entry_id
+    assert promoted[0].citation_count == 2  # both voters counted as endorsers
+
+
+async def test_check_promotions_dedupes_vote_and_cite_from_same_agent(
+    db: AsyncConnection,
+) -> None:
+    """One agent both voting for and citing the same entry is still one endorser —
+    it must not count twice toward the threshold. With a 3-participant thread
+    (M=2) and only a single agent endorsing (via both a vote and a cite), the entry
+    must NOT promote, and its displayed count must read 1, not 2."""
+    run_id = str(uuid.uuid4())
+    thread_id = str(uuid.uuid4())
+    author, endorser = await _seed_two_agents(db, run_id, thread_id)
+    await _seed_extra_agent(db, "C")  # third participant, endorses nothing
+
+    bb = Blackboard(db)
+    entry_id = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=author,
+        content="Endorsed by one agent two different ways",
+        entry_type="proposal",
+        round=1,
+    )
+    await bb.vote(run_id=run_id, voter_id=endorser, entry_id=entry_id, thread_id=thread_id)
+    await bb.cite(run_id=run_id, citing_agent_id=endorser, entry_ids=[entry_id], round=2)
+
+    promoted = await bb.check_promotions(
+        run_id=run_id, current_round=2, participants_by_thread={thread_id: 3}
+    )
+    assert promoted == []  # one distinct endorser < threshold 2
+
+    entries = await bb.read(run_id=run_id, query="", thread_id=thread_id)
+    assert entries[0].citation_count == 1  # vote + cite from same agent = 1 endorser
 
 
 async def test_check_promotions_promotes_a_reply_not_just_proposals(

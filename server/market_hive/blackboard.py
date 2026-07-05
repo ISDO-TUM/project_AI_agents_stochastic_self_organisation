@@ -31,6 +31,45 @@ _ZERO_EMBEDDING = json.dumps([0.0] * 1536)
 DEDUP_EPS = 0.92
 
 
+# Distinct-endorser count per entry — a citation OR a cold-start vote, deduped by
+# agent, excluding self-endorsement. This is exactly the number check_promotions
+# counts against ``promotion_threshold``, so an entry's displayed ♡count and its
+# promotion ring can never disagree (a finding that promoted partly on votes would
+# otherwise show a citations-only ratio like "1/2" while really sitting at 2/2).
+# Callers embed this as a derived table and must bind ``:run_id``.
+_ENDORSER_COUNT_SUBQUERY = """
+    SELECT en.entry_id AS entry_id, COUNT(DISTINCT en.endorser) AS cnt
+    FROM (
+        SELECT cited_entry_id AS entry_id, citing_agent_id AS endorser
+        FROM citations WHERE run_id = :run_id
+        UNION
+        SELECT voted_entry_id AS entry_id, voter_agent_id AS endorser
+        FROM votes WHERE run_id = :run_id
+    ) en
+    JOIN draft_entries d2 ON d2.id = en.entry_id
+    WHERE en.endorser != d2.author_id
+    GROUP BY en.entry_id
+"""
+
+
+def promotion_threshold(n_participants: int) -> int:
+    """Distinct-endorser threshold M for promotion (and the contest/reaffirm
+    thresholds that mirror it).
+
+    Base formula (PRD §15): about a third of the thread's participants, at least
+    one — ``n // 3 + 1``. Capped at ``n - 1`` so M can never exceed the number of
+    agents actually able to endorse a given entry (an author can't endorse their
+    own post). Without the cap a 2-taker thread would need 2 distinct non-author
+    endorsers when only 1 exists, making promotion mathematically unreachable —
+    the "very small team" bug. ``max(1, …)`` keeps a 1-taker thread at 1.
+
+    Only n≤2 changes versus the old ``max(1, n // 3 + 1)``: n=2 goes 2→1 (now
+    reachable); every n≥3 is unchanged (e.g. n=3→2, n=6→3), so a small team still
+    needs genuine agreement, not one agent's unilateral endorsement.
+    """
+    return max(1, min(n_participants - 1, n_participants // 3 + 1))
+
+
 def format_entries_digest(entries: list[DraftEntrySchema]) -> str:
     """One consistent rendering for board excerpts.
 
@@ -334,7 +373,7 @@ class Blackboard:
         that just creates entries that can decay but never recover.
         """
         thread_clause = "AND de.thread_id = :thread_id" if thread_id is not None else ""
-        params: dict[str, Any] = {"run_id1": run_id, "run_id2": run_id}
+        params: dict[str, Any] = {"run_id": run_id}
         if thread_id is not None:
             params["thread_id"] = thread_id
 
@@ -349,21 +388,8 @@ class Blackboard:
                        COALESCE(cc.cnt, 0) AS citation_count
                 FROM draft_entries de
                 LEFT JOIN agents a ON a.id = de.author_id
-                LEFT JOIN (
-                    -- Promotion (check_promotions) counts DISTINCT citing agents —
-                    -- (citing_agent_id, cited_entry_id, round) is the DB's unique
-                    -- key, so the same agent re-citing an entry in a later round is
-                    -- a real, separate row. A plain COUNT(*) here would show a
-                    -- ratio that looks like it crossed the promotion threshold
-                    -- while the real distinct-citer count backing promotion never
-                    -- did (matches useSwarmRun.ts's CITE reducer, fixed the same
-                    -- way for the live SSE path).
-                    SELECT cited_entry_id, COUNT(DISTINCT citing_agent_id) AS cnt
-                    FROM   citations
-                    WHERE  run_id = :run_id1
-                    GROUP  BY cited_entry_id
-                ) cc ON cc.cited_entry_id = de.id
-                WHERE de.run_id = :run_id2
+                LEFT JOIN ({_ENDORSER_COUNT_SUBQUERY}) cc ON cc.entry_id = de.id
+                WHERE de.run_id = :run_id
                 {thread_clause}
                 """
             ),
@@ -434,15 +460,7 @@ class Blackboard:
                        COALESCE(cc.cnt, 0) AS citation_count
                 FROM draft_entries de
                 LEFT JOIN agents a ON a.id = de.author_id
-                LEFT JOIN (
-                    -- See top_k_visible's identical subquery: must dedupe by
-                    -- citing agent, not raw row count (same agent can re-cite
-                    -- across rounds).
-                    SELECT cited_entry_id, COUNT(DISTINCT citing_agent_id) AS cnt
-                    FROM   citations
-                    WHERE  run_id = :run_id
-                    GROUP  BY cited_entry_id
-                ) cc ON cc.cited_entry_id = de.id
+                LEFT JOIN ({_ENDORSER_COUNT_SUBQUERY}) cc ON cc.entry_id = de.id
                 WHERE de.run_id = :run_id
                   AND de.mention_agents LIKE :agent_id
                 {thread_clause}
@@ -760,16 +778,28 @@ class Blackboard:
         )
         already_promoted = {row[0] for row in result.fetchall()}
 
+        # An endorsement is a citation OR a cold-start vote — both express "another
+        # agent stands behind this entry", and promotion counts distinct endorsers.
+        # UNION (not UNION ALL) so an agent who both voted and later cited the same
+        # entry counts once. Self-endorsement is excluded (an author can't promote
+        # their own post) in the consuming queries below.
+        endorsements_cte = """
+            SELECT cited_entry_id AS entry_id, citing_agent_id AS endorser
+            FROM citations WHERE run_id = :run_id
+            UNION
+            SELECT voted_entry_id AS entry_id, voter_agent_id AS endorser
+            FROM votes WHERE run_id = :run_id
+        """
+
         result = await self._db.execute(
             text(
-                """
+                f"""
                 SELECT DISTINCT de.id, de.thread_id, de.author_id, de.content,
                        de.content_embedding, de.round, de.created_at
                 FROM draft_entries de
-                JOIN citations c
-                    ON c.cited_entry_id = de.id
-                   AND c.citing_agent_id != de.author_id
-                   AND c.run_id = de.run_id
+                JOIN ({endorsements_cte}) e
+                    ON e.entry_id = de.id
+                   AND e.endorser != de.author_id
                 WHERE de.run_id = :run_id
                 """
             ),
@@ -780,28 +810,28 @@ class Blackboard:
         ]
         if not candidates:
             logger.info(
-                "check_promotions run=%s round=%s: no citable, not-yet-promoted entries "
-                "(either nothing has been cited by anyone other than its own author yet, "
-                "or every cited entry is already promoted)",
+                "check_promotions run=%s round=%s: no endorsed, not-yet-promoted entries "
+                "(either nothing has been cited or voted for by anyone other than its own "
+                "author yet, or every endorsed entry is already promoted)",
                 run_id,
                 current_round,
             )
             return []
 
-        citer_result = await self._db.execute(
+        endorser_result = await self._db.execute(
             text(
-                """
-                SELECT c.cited_entry_id AS entry_id, c.citing_agent_id AS citer
-                FROM citations c
-                JOIN draft_entries de ON de.id = c.cited_entry_id
-                WHERE c.run_id = :run_id AND c.citing_agent_id != de.author_id
+                f"""
+                SELECT e.entry_id, e.endorser
+                FROM ({endorsements_cte}) e
+                JOIN draft_entries de ON de.id = e.entry_id
+                WHERE e.endorser != de.author_id
                 """
             ),
             {"run_id": run_id},
         )
-        citers_by_entry: dict[str, set[str]] = {}
-        for row in citer_result.mappings().fetchall():
-            citers_by_entry.setdefault(row["entry_id"], set()).add(row["citer"])
+        endorsers_by_entry: dict[str, set[str]] = {}
+        for row in endorser_result.mappings().fetchall():
+            endorsers_by_entry.setdefault(row["entry_id"], set()).add(row["endorser"])
 
         embeddings = {c["id"]: self._parse_embedding(c["content_embedding"]) for c in candidates}
 
@@ -812,7 +842,7 @@ class Blackboard:
         newly_promoted: list[ConfirmedEntrySchema] = []
         for thread_id, members in by_thread.items():
             n = (participants_by_thread or {}).get(thread_id, 1)
-            threshold = max(1, n // 3 + 1)
+            threshold = promotion_threshold(n)
             logger.info(
                 "check_promotions run=%s round=%s thread=%s: %d participants -> "
                 "threshold=%d distinct citers, %d cited candidate(s) to evaluate",
@@ -853,11 +883,11 @@ class Blackboard:
             for cluster_members in clusters.values():
                 pooled: set[str] = set()
                 for m in cluster_members:
-                    pooled |= citers_by_entry.get(m["id"], set())
+                    pooled |= endorsers_by_entry.get(m["id"], set())
                 if len(pooled) < threshold:
                     logger.info(
                         "check_promotions run=%s round=%s thread=%s: entry cluster %s short of "
-                        "threshold (%d/%d distinct citers) — not promoted this round",
+                        "threshold (%d/%d distinct endorsers) — not promoted this round",
                         run_id,
                         current_round,
                         thread_id,
@@ -869,7 +899,7 @@ class Blackboard:
 
                 ordered = sorted(
                     cluster_members,
-                    key=lambda m: (-len(citers_by_entry.get(m["id"], set())), m["created_at"]),
+                    key=lambda m: (-len(endorsers_by_entry.get(m["id"], set())), m["created_at"]),
                 )
                 representative, others = ordered[0], ordered[1:]
 
@@ -997,11 +1027,11 @@ class Blackboard:
 
     async def refresh_confirmed_citation_counts(self, *, run_id: str) -> list[ConfirmedEntrySchema]:
         """Sync an already-promoted finding's ``citation_count`` to its source
-        draft's current distinct-citer count.
+        draft's current distinct-endorser count (citations ∪ votes).
 
         ``citation_count`` on ``confirmed_entries`` was previously written once,
         at promotion time, and never touched again (only the dedup-merge path
-        bumped it, for citers landing on an already-merged duplicate). But the
+        bumped it, for endorsers landing on an already-merged duplicate). But the
         source draft keeps accruing citations after promotion like any other
         entry — the citation graph doesn't freeze — so the Confirmed layer's
         count silently went stale relative to what the Draft board kept
@@ -1010,23 +1040,34 @@ class Blackboard:
         column, so a genuinely more-endorsed finding could be out-ranked by one
         that just happened to promote earlier. Returns entries whose count
         actually changed, for the caller to also push to the live UI.
+
+        Counts the same distinct-endorser union (votes + citations) that
+        ``check_promotions`` sets at promotion time — otherwise this refresh would
+        silently overwrite a vote-inclusive promotion count with a citations-only
+        one and undercount findings that promoted partly on cold-start votes.
         """
         rows = (
             (
                 await self._db.execute(
                     text(
                         """
+                        WITH endorsements AS (
+                            SELECT cited_entry_id AS entry_id, citing_agent_id AS endorser
+                            FROM citations WHERE run_id = :run_id
+                            UNION
+                            SELECT voted_entry_id AS entry_id, voter_agent_id AS endorser
+                            FROM votes WHERE run_id = :run_id
+                        )
                         SELECT ce.id AS id,
-                               COUNT(DISTINCT c.citing_agent_id) AS new_count
+                               COUNT(DISTINCT e.endorser) AS new_count
                         FROM confirmed_entries ce
                         JOIN draft_entries de ON de.id = ce.source_draft_id
-                        LEFT JOIN citations c
-                            ON c.cited_entry_id = de.id
-                           AND c.citing_agent_id != de.author_id
-                           AND c.run_id = de.run_id
+                        LEFT JOIN endorsements e
+                            ON e.entry_id = de.id
+                           AND e.endorser != de.author_id
                         WHERE ce.run_id = :run_id AND ce.source_draft_id IS NOT NULL
                         GROUP BY ce.id, ce.citation_count
-                        HAVING COUNT(DISTINCT c.citing_agent_id) != ce.citation_count
+                        HAVING COUNT(DISTINCT e.endorser) != ce.citation_count
                         """
                     ),
                     {"run_id": run_id},
@@ -1177,7 +1218,7 @@ class Blackboard:
             if not distinct_disputers:
                 continue
             n = (participants_by_thread or {}).get(thread_id, 1)
-            threshold = max(1, n // 3 + 1)
+            threshold = promotion_threshold(n)
             if len(distinct_disputers) < threshold:
                 continue
 
@@ -1279,7 +1320,7 @@ class Blackboard:
                 )
             ).scalar_one()
             n = (participants_by_thread or {}).get(thread_id, 1)
-            threshold = max(1, n // 3 + 1)
+            threshold = promotion_threshold(n)
             if int(new_citers) < threshold:
                 continue
 
