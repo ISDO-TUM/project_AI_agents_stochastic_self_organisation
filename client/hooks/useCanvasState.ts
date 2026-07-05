@@ -1,6 +1,6 @@
 "use client";
 
-import { useReducer, useEffect, useCallback } from "react";
+import { useReducer, useEffect, useCallback, useRef } from "react";
 import {
   CanvasState,
   CanvasAction,
@@ -24,6 +24,7 @@ import {
   detachFile,
   patchAgentTools,
 } from "@/lib/api";
+import { loadCanvasStore, saveCanvasStore } from "@/lib/canvas-store";
 
 // The backend stores knowledge files as plain (id, name, content) rows — it has
 // no notion of "dataset" vs "text". We infer it from the file extension so a
@@ -114,13 +115,28 @@ export function useCanvasState() {
     edges: [],
   });
   const { agents, sources, edges } = state;
+  // Set once the initial load lands — gates the persist effect below so an
+  // offline start can't wipe the stored canvas.
+  const loadedRef = useRef(false);
 
   useEffect(() => {
     async function load() {
-      const [agentList, fileList] = await Promise.all([
-        fetchAgents(),
+      // The canvas is a stored client-side view over the DB: only nodes in the
+      // stored membership appear, at their stored positions. First run (no
+      // stored state) shows everything.
+      const stored = loadCanvasStore();
+      const [allAgents, allFiles] = await Promise.all([
+        fetchAgents(stored?.positions),
         fetchFiles(),
       ]);
+      const agentIds = stored ? new Set(stored.agentIds) : null;
+      const sourceIds = stored ? new Set(stored.sourceIds) : null;
+      const agentList = agentIds
+        ? allAgents.filter((a) => agentIds.has(a.id))
+        : allAgents;
+      const fileList = sourceIds
+        ? allFiles.filter((f) => sourceIds.has(f.id))
+        : allFiles;
 
       // Fetch each agent's attached files in parallel to build agent→file edges.
       const agentFileIds = await Promise.all(
@@ -135,7 +151,7 @@ export function useCanvasState() {
         name: f.name,
         type: inferSourceType(f.name),
         content: f.content,
-        position: {
+        position: stored?.positions[f.id] ?? {
           x: 180 + (i % 4) * 220,
           y: 480 + Math.floor(i / 4) * 180,
         },
@@ -165,10 +181,27 @@ export function useCanvasState() {
           edges: [...agentEdges, ...fileEdges],
         },
       });
+      loadedRef.current = true;
     }
 
     load().catch(() => {});
   }, []);
+
+  // Persist canvas membership + positions after every change, debounced so
+  // node drags don't write on every mousemove.
+  useEffect(() => {
+    if (!loadedRef.current) return;
+    const id = setTimeout(() => {
+      saveCanvasStore({
+        agentIds: agents.map((a) => a.id),
+        sourceIds: sources.map((s) => s.id),
+        positions: Object.fromEntries(
+          [...agents, ...sources].map((n) => [n.id, n.position]),
+        ),
+      });
+    }, 300);
+    return () => clearTimeout(id);
+  }, [agents, sources]);
 
   const saveAgent = useCallback(
     async (data: Agent) => {
@@ -228,14 +261,93 @@ export function useCanvasState() {
     [agents, edges],
   );
 
+  // Canvas-only removal: the agent stays in the DB (and in the agents list),
+  // it just stops being part of this canvas until re-added.
+  const removeAgentFromCanvas = useCallback((id: string) => {
+    dispatch({ type: "DELETE_AGENT", id });
+  }, []);
+
+  // Full delete: removes the agent from the DB and the canvas.
   const deleteAgent = useCallback(async (id: string) => {
     try {
       await deleteAgentApi(id);
     } catch {
-      // API unavailable — proceed with local delete
+      // API unavailable — proceed with local removal
     }
     dispatch({ type: "DELETE_AGENT", id });
   }, []);
+
+  /** Puts already-persisted agents (picked from the DB list) back on the
+   *  canvas, restoring their agent↔agent and agent↔file edges. No API writes —
+   *  the agents already exist. */
+  const addExistingAgents = useCallback(
+    async (toAdd: Agent[]) => {
+      const canvasIds = new Set([
+        ...agents.map((a) => a.id),
+        ...toAdd.map((a) => a.id),
+      ]);
+      toAdd.forEach((agent, i) => {
+        const withPos: Agent = {
+          ...agent,
+          position: {
+            x: 220 + ((i % 4) + Math.random()) * 180,
+            y: 200 + (Math.floor(i / 4) + Math.random()) * 160,
+          },
+        };
+        dispatch({ type: "ADD_AGENT", agent: withPos });
+        // Restore connections in both directions, but only to nodes on canvas.
+        agent.connections
+          .filter((toId) => canvasIds.has(toId))
+          .forEach((toId) =>
+            dispatch({
+              type: "ADD_EDGE",
+              edge: { id: uuid(), from: agent.id, to: toId },
+            }),
+          );
+        agents
+          .filter((a) => a.connections.includes(agent.id))
+          .forEach((a) =>
+            dispatch({
+              type: "ADD_EDGE",
+              edge: { id: uuid(), from: a.id, to: agent.id },
+            }),
+          );
+      });
+      // Carry the agents' attached documents onto the canvas: files not on it
+      // yet are added as source nodes, then the agent→file edges restored.
+      const sourceIds = new Set(sources.map((s) => s.id));
+      let placed = 0;
+      await Promise.all(
+        toAdd.map(async (agent) => {
+          const files = await fetchAgentFiles(agent.id).catch(() => []);
+          files.forEach((f) => {
+            if (!sourceIds.has(f.id)) {
+              sourceIds.add(f.id);
+              const i = sources.length + placed++;
+              dispatch({
+                type: "ADD_SOURCE",
+                source: {
+                  id: f.id,
+                  name: f.name,
+                  type: inferSourceType(f.name),
+                  content: f.content,
+                  position: {
+                    x: 180 + (i % 4) * 220,
+                    y: 480 + Math.floor(i / 4) * 180,
+                  },
+                },
+              });
+            }
+            dispatch({
+              type: "ADD_EDGE",
+              edge: { id: uuid(), from: agent.id, to: f.id },
+            });
+          });
+        }),
+      );
+    },
+    [agents, sources],
+  );
 
   const deleteEdge = useCallback(
     (id: string) => {
@@ -461,6 +573,8 @@ export function useCanvasState() {
     dispatch,
     saveAgent,
     deleteAgent,
+    removeAgentFromCanvas,
+    addExistingAgents,
     saveSource,
     deleteSource,
     connectNodes,
