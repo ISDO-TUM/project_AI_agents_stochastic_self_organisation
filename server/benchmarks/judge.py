@@ -53,7 +53,8 @@ class Judge(Protocol):
         provider: str,
         model: str,
         system_prompt: str | None = None,
-    ) -> tuple[str, list[ToolCall]]: ...
+    ) -> tuple[str, list[ToolCall]]:
+        pass
 
 
 def _build_judge_prompt(answer: str, task: BenchmarkTask) -> str:

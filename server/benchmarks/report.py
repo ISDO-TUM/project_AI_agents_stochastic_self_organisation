@@ -20,8 +20,10 @@ def build_report(rows: list[dict[str, Any]]) -> str:
         "",
         "## Mode Comparison",
         "",
-        "| Mode | Coverage (mean ± sd) | Grounded % | Contradictions (mean) "
-        "| Tokens (mean) | Wall s (mean) | Trials |",
+        (
+            "| Mode | Coverage (mean ± sd) | Grounded % | Contradictions (mean) "
+            + "| Tokens (mean) | Wall s (mean) | Trials |"
+        ),
         "|---|---|---|---|---|---|---|",
     ]
     for mode, mode_rows in sorted(by_mode.items()):

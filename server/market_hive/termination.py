@@ -39,7 +39,8 @@ class Synthesizer(Protocol):
         prompt: str,
         findings: list[ConfirmedEntrySchema],
         objections: list[str] | None = None,
-    ) -> str: ...
+    ) -> str:
+        raise NotImplementedError
 
 
 # 3, not 2: the round loop starts at round 2 (round 1 is proposals + votes), so a

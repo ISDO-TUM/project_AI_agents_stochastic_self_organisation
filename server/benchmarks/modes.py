@@ -55,7 +55,8 @@ class ModeAdapter(Protocol):
         *,
         agent_runner: AgentRunner | None = None,
         fail_agent: str | None = None,
-    ) -> BenchmarkResult: ...
+    ) -> BenchmarkResult:
+        raise NotImplementedError
 
 
 async def _seed_task(db: AsyncConnection, task: BenchmarkTask) -> list[str]:

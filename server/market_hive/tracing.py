@@ -20,11 +20,14 @@ from typing import Any, Protocol
 
 
 class Tracer(Protocol):
-    def run_span(self, run_id: str) -> AbstractContextManager[None]: ...
+    def run_span(self, run_id: str) -> AbstractContextManager[None]:
+        pass
 
-    def phase_span(self, name: str) -> AbstractContextManager[None]: ...
+    def phase_span(self, name: str) -> AbstractContextManager[None]:
+        pass
 
-    def turn(self, agent_id: str, round: int, tokens: int) -> None: ...
+    def turn(self, agent_id: str, round: int, tokens: int) -> None:
+        pass
 
 
 class _NoopSpan(AbstractContextManager[None]):
