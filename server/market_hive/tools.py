@@ -15,6 +15,12 @@ from server.tools.base import Tool
 # capped per round so endorsement stays a deliberate, bounded act.
 MAX_CITES_PER_ROUND = 3
 
+# Posts are capped to keep the board terse. A round-1 proposal may run longer
+# than a discussion reply, which should be a delta (a new point, disagreement,
+# or new evidence) — not a restatement of the whole analysis.
+MAX_PROPOSAL_CHARS = 3000
+MAX_REPLY_CHARS = 1500
+
 # ── Input models ─────────────────────────────────────────────────────────────
 
 
@@ -135,6 +141,23 @@ class PostToBlackboardTool(Tool):
     ) -> str:
         if not isinstance(validated_input, PostToBlackboardInput):
             raise TypeError(f"Expected PostToBlackboardInput, got {type(validated_input).__name__}")
+
+        # Length guard (terse board): reject before any DB work so the agent can
+        # retry with a shorter delta or call stand_down. Replies are held to a
+        # tighter ceiling than opening proposals.
+        cap = (
+            MAX_PROPOSAL_CHARS
+            if validated_input.entry_type == "proposal"
+            else MAX_REPLY_CHARS
+        )
+        if len(validated_input.content) > cap:
+            return (
+                f'{{"error": "post too long ({len(validated_input.content)} chars > '
+                f'{cap} limit) — shorten to a single delta (one new point, '
+                f'disagreement, or new evidence), or call stand_down if you have '
+                f'nothing material to add."}}'
+            )
+
         ctx = context or {}
         db = ctx["db"]
         run_id: str = ctx["run_id"]
@@ -164,6 +187,13 @@ class PostToBlackboardTool(Tool):
         if stance and stance != "new":
             if not stance_target:
                 return '{"error": "stance requires stance_target (the entry_id it refers to)."}'
+            # The LLM copies the 8-char id shown in read_blackboard's digest
+            # ("[{id[:8]}] ..."), not the full UUID — resolve it the same way
+            # reply_to and cite() already do, or every stance post gets rejected.
+            resolved_target = await Blackboard(db).resolve_entry_id(run_id, stance_target)
+            if resolved_target is None:
+                return '{"error": "stance_target does not match any entry id."}'
+            stance_target = resolved_target
             target_author = (
                 await db.execute(
                     text("SELECT author_id FROM draft_entries WHERE id = :id"),
@@ -479,7 +509,10 @@ class SubmitBidInput(BaseModel):
     justification: str = Field(description="Your reasoning for participating.")
     thread_id: str | None = Field(
         default=None,
-        description="Thread to bid on. None for contract-level bid.",
+        description=(
+            "The thread's bracketed id, e.g. \"3f9a...\" — never its title. "
+            "None for a contract-level bid."
+        ),
     )
 
 
@@ -487,7 +520,20 @@ class AbstainInput(BaseModel):
     reason: str = Field(description="Why you are opting out.")
     thread_id: str | None = Field(
         default=None,
-        description="Thread to abstain from. None for full contract abstention.",
+        description=(
+            "The thread's bracketed id, e.g. \"3f9a...\" — never its title. "
+            "None for full contract abstention."
+        ),
+    )
+
+
+class StandDownInput(BaseModel):
+    reason: str = Field(
+        description="Why you have nothing material left to add on this thread."
+    )
+    thread_id: str | None = Field(
+        default=None,
+        description="The thread you are standing down from. Defaults to your current thread.",
     )
 
 
@@ -510,11 +556,14 @@ class SubmitBidTool(Tool):
         preliminary_score: float = ctx.get("preliminary_score", 0.0)
 
         engine = AuctionEngine(db)
+        thread_id = await engine.resolve_thread_id(
+            contract_id=contract_id, thread_id=validated_input.thread_id
+        )
         await engine.record_bid(
             run_id=run_id,
             agent_id=agent_id,
             contract_id=contract_id,
-            thread_id=validated_input.thread_id,
+            thread_id=thread_id,
             justification=validated_input.justification,
             preliminary_score=preliminary_score,
         )
@@ -538,11 +587,53 @@ class AbstainTool(Tool):
         contract_id: str | None = ctx.get("contract_id")
 
         engine = AuctionEngine(db)
+        thread_id = await engine.resolve_thread_id(
+            contract_id=contract_id, thread_id=validated_input.thread_id
+        )
         await engine.record_abstention(
             run_id=run_id,
             agent_id=agent_id,
             contract_id=contract_id,
-            thread_id=validated_input.thread_id,
+            thread_id=thread_id,
+            reason=validated_input.reason,
+        )
+        return '{"ok": true}'
+
+
+class StandDownTool(Tool):
+    name = "stand_down"
+    description = (
+        "Declare you have NOTHING MATERIAL left to add on this thread — no new "
+        "point, disagreement, or evidence. You will be skipped in later rounds of "
+        "this thread. When every taker has stood down (or gone silent), the run "
+        "ends. Use this instead of restating points already made."
+    )
+    input_model = StandDownInput
+
+    async def execute(
+        self, validated_input: BaseModel, context: dict[str, Any] | None = None
+    ) -> str:
+        if not isinstance(validated_input, StandDownInput):
+            raise TypeError(f"Expected StandDownInput, got {type(validated_input).__name__}")
+        ctx = context or {}
+        db = ctx["db"]
+        run_id: str = ctx["run_id"]
+        agent_id: str = ctx["agent_id"]
+        round_: int = ctx.get("round", 1)
+        # Trust the orchestrator-assigned thread over the LLM's arg (same rule as
+        # post_to_blackboard), falling back to the tool arg only if unset.
+        thread_id: str | None = ctx.get("thread_id") or validated_input.thread_id
+        if not thread_id:
+            return '{"error": "stand_down needs a thread_id."}'
+
+        from server.market_hive.stand_down import record_stand_down
+
+        await record_stand_down(
+            db,
+            run_id=run_id,
+            agent_id=agent_id,
+            thread_id=thread_id,
+            round=round_,
             reason=validated_input.reason,
         )
         return '{"ok": true}'
@@ -567,6 +658,7 @@ def _register() -> None:
         RequestExpertiseTool(),
         SubmitBidTool(),
         AbstainTool(),
+        StandDownTool(),
     ):
         register(tool)
 

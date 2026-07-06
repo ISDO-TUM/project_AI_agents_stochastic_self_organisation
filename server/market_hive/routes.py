@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.db import get_db
 from server.db.tables import agent_trust, agents
-from server.market_hive.blackboard import Blackboard
+from server.market_hive.blackboard import _ENDORSER_COUNT_SUBQUERY, Blackboard
 from server.market_hive.schemas import (
     AgentTrustEntry,
     AmendmentSchema,
@@ -83,16 +83,12 @@ async def _fetch_draft_entries(
                    COALESCE(cc.cnt, 0) AS citation_count
             FROM draft_entries de
             LEFT JOIN agents a ON a.id = de.author_id
-            LEFT JOIN (
-                SELECT cited_entry_id, COUNT(*) AS cnt
-                FROM citations WHERE run_id = :run_id1
-                GROUP BY cited_entry_id
-            ) cc ON cc.cited_entry_id = de.id
-            WHERE de.run_id = :run_id2 {vis_clause}
+            LEFT JOIN ({_ENDORSER_COUNT_SUBQUERY}) cc ON cc.entry_id = de.id
+            WHERE de.run_id = :run_id {vis_clause}
             ORDER BY de.round ASC, de.created_at ASC
             """
         ),
-        {"run_id1": run_id, "run_id2": run_id},
+        {"run_id": run_id},
     )
     entries: list[DraftEntrySchema] = []
     for row in result.mappings().fetchall():

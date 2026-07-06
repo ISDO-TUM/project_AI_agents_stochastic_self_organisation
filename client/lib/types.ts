@@ -380,6 +380,26 @@ export interface ThreadInfo {
   required_expertise: string[];
   complexity: "low" | "medium" | "high";
   created_at: string;
+  /** Server-computed promotion threshold M for this thread (max(1, n_takers // 3 + 1)),
+   *  fixed once takers are assigned. Absent until the "Thread assignment" step arrives. */
+  promotion_threshold?: number;
+}
+
+/** The Market Maker's drafted contract: the structured scoping of the user's
+ *  prompt into a typed job (task kind, whether it splits into threads, the
+ *  expertise it demands, and how confident the scoping is). Streamed on the
+ *  run's `Contract created` frame (slim — no embedding/threads). */
+export interface ContractInfo {
+  id: string;
+  run_id: string;
+  original_prompt: string;
+  task_type: string;
+  task_nature: "single" | "multi";
+  required_expertise: string[];
+  complexity: "low" | "medium" | "high";
+  /** Market Maker's self-reported confidence in the scoping, 0–1. */
+  confidence: number;
+  created_at: string;
 }
 
 /** The Market Maker's drafted contract: the structured scoping of the user's

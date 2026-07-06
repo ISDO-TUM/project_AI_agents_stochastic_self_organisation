@@ -34,7 +34,12 @@ from server.llm.base_provider import BaseLLMProvider
 from server.llm.langfuse_setup import agent_trace_metadata, langfuse_metadata
 from server.market_hive.assignment import assign_takers_to_threads
 from server.market_hive.auction import AuctionEngine, Invitation
-from server.market_hive.blackboard import Blackboard, carry_forward_findings, format_entries_digest
+from server.market_hive.blackboard import (
+    Blackboard,
+    carry_forward_findings,
+    format_entries_digest,
+    promotion_threshold,
+)
 from server.market_hive.contract_source import FallbackContractSource
 from server.market_hive.convergence import ConvergenceEngine
 from server.market_hive.history import SwarmHistoryRecorder
@@ -60,6 +65,7 @@ from server.market_hive.schemas import (
     SwarmRunConfig,
     ThreadSchema,
 )
+from server.market_hive.stand_down import load_stood_down
 from server.market_hive.synthesis import FallbackAnswerSynthesizer
 from server.market_hive.termination import MaxRoundsTerminator, Synthesizer
 from server.market_hive.tracing import get_tracer
@@ -110,6 +116,17 @@ class Terminator(Protocol):
         config: SwarmRunConfig,
         db: AsyncConnection,
         status_flips: int = 0,
+        thread_ids: list[str] | None = None,
+    ) -> bool:
+        raise NotImplementedError
+
+    async def is_quiescent(
+        self,
+        *,
+        run_id: str,
+        round: int,
+        config: SwarmRunConfig,
+        db: AsyncConnection,
     ) -> bool:
         raise NotImplementedError
 
@@ -664,11 +681,25 @@ async def _load_threads(db: AsyncConnection, run_id: str) -> list[ThreadSchema]:
     return [ThreadSchema(**dict(row)) for row in rows]
 
 
-def _threads_payload(threads: list[ThreadSchema]) -> dict[str, Any]:
-    """The ``data`` payload carrying slim thread objects for the board's tabs."""
+def _threads_payload(
+    threads: list[ThreadSchema], thresholds: dict[str, int] | None = None
+) -> dict[str, Any]:
+    """The ``data`` payload carrying slim thread objects for the board's tabs.
+
+    ``thresholds`` (per-thread promotion threshold M, once takers are assigned)
+    is merged in when available so the UI can show the real, run-fixed value
+    instead of approximating it client-side from whatever authors happen to be
+    visible in the current filter (see PROMOTION_THRESHOLD in blackboard-utils.ts
+    — that approximation drifted as entries streamed in, which looked like the
+    threshold randomly changing across rounds).
+    """
+    dumped = [t.model_dump(mode="json", exclude={"thread_embedding"}) for t in threads]
+    if thresholds:
+        for t, d in zip(threads, dumped, strict=True):
+            d["promotion_threshold"] = thresholds.get(t.id)
     return {
         "thread_ids": [t.id for t in threads],
-        "threads": [t.model_dump(mode="json", exclude={"thread_embedding"}) for t in threads],
+        "threads": dumped,
     }
 
 
@@ -679,6 +710,19 @@ def _filter_by_thread(
     flat ``takers`` list) so a dropped-out agent stops getting turns in every
     later phase, not just the ones fed the flat list."""
     return {tid: [t for t in ts if t not in dropped] for tid, ts in takers_by_thread.items()}
+
+
+def _drop_stood_down(
+    takers_by_thread: dict[str, list[str]], stood_down: dict[str, set[str]]
+) -> dict[str, list[str]]:
+    """Remove agents that stood down on a thread from that thread's taker list.
+
+    A stand-down is per-thread: an agent may still be active on other threads.
+    """
+    return {
+        thread_id: [t for t in takers if t not in stood_down.get(thread_id, set())]
+        for thread_id, takers in takers_by_thread.items()
+    }
 
 
 def _fmt_assignment(
@@ -1124,6 +1168,7 @@ _ROUNDS_TOOLS = [
     "cite",
     "dispute",
     "request_expertise",
+    "stand_down",
 ]
 
 
@@ -1357,6 +1402,18 @@ async def _end_of_round(
         domain=domain,
         promoted_draft_ids={e.source_draft_id for e in promoted if e.source_draft_id},
         deleted_draft_ids=deleted_ids,
+    )
+
+    logger.info(
+        "End of round %d (run=%s): %d promoted, %d contested, %d reaffirmed, "
+        "%d soft-deleted (evaporated) — participants_by_thread=%s",
+        round,
+        run_id,
+        len(promoted),
+        len(contested),
+        len(reaffirmed),
+        len(deleted_ids),
+        participants_by_thread,
     )
 
 
@@ -1888,11 +1945,28 @@ async def _run_swarm_steps(
     # Single-thread contracts put every taker on the one thread; multi-thread
     # contracts match takers to threads by capability/thread embedding.
     takers_by_thread = await assign_takers_to_threads(db, takers=takers, threads=threads)
+    # Same helper Blackboard.check_promotions uses, so the UI's displayed M is
+    # always the exact value promotion enforces. Computed once here from the taker
+    # count that stays fixed for the rest of the run, and pushed to the UI so it
+    # never has to approximate it client-side.
+    promotion_thresholds = {
+        thread.id: promotion_threshold(len(takers_by_thread.get(thread.id, [])))
+        for thread in threads
+    }
     if len(threads) > 1:
         yield _step(
             "system",
             f"Thread assignment — {_fmt_assignment(takers_by_thread, threads, agents_by_id)}",
-            data={"takers_by_thread": takers_by_thread},
+            data={
+                "takers_by_thread": takers_by_thread,
+                **_threads_payload(threads, promotion_thresholds),
+            },
+        )
+    else:
+        yield _step(
+            "system",
+            "Thread assignment complete.",
+            data=_threads_payload(threads, promotion_thresholds),
         )
 
     # ── Round 1 — opening proposals (§9.3) ───────────────────────────────────
@@ -1960,12 +2034,18 @@ async def _run_swarm_steps(
             recorder.set_phase(round, "discussion")
         await journal.phase(db, f"round_{round}", round)
         _enter_phase(f"round_{round}")
+
+        # Skip agents that voluntarily stood down on a thread — they have declared
+        # they have nothing material left to add there.
+        stood_down = await load_stood_down(db, run_id)
+        round_takers_by_thread = _drop_stood_down(takers_by_thread, stood_down)
+
         async for step in _run_discussion_round(
             db,
             run_id,
             contract,
             threads,
-            takers_by_thread,
+            round_takers_by_thread,
             temperatures,
             round,
             agents_by_id,
@@ -2026,9 +2106,19 @@ async def _run_swarm_steps(
                 )
 
         if await terminator.should_terminate(
-            run_id=run_id, round=round, config=config, db=db, status_flips=status_flips["n"]
+            run_id=run_id,
+            round=round,
+            config=config,
+            db=db,
+            status_flips=status_flips["n"],
+            thread_ids=[t.id for t in threads],
         ):
             termination_reason = "equilibrium"
+            break
+
+        if await terminator.is_quiescent(run_id=run_id, round=round, config=config, db=db):
+            termination_reason = "quiescence"
+            yield _step("system", f"All agents have stood down — ending at round {round}.")
             break
 
     # ── Finalize: select + synthesize the answer, update trust, emit (§6.6, §6.7) ─
@@ -2054,6 +2144,22 @@ async def _run_swarm_steps(
     live_findings = [
         f for f in output.confirmed_layer if f.status == "confirmed" and f.entry_type == "finding"
     ]
+    if not live_findings:
+        by_status: dict[str, int] = {}
+        for f in output.confirmed_layer:
+            by_status[f.status] = by_status.get(f.status, 0) + 1
+        logger.warning(
+            "Swarm run %s finalizing round=%s reason=%s with ZERO live findings — no synthesis "
+            "will run, final_answer stays empty. confirmed_layer had %d row(s) total (%s), none "
+            "with status='confirmed' AND entry_type='finding'. Check the "
+            "'check_promotions'/'check_equilibrium' logs above for why nothing got promoted, or "
+            "whether every promoted row was an anchor/system row instead of a real finding.",
+            run_id,
+            last_round,
+            termination_reason,
+            len(output.confirmed_layer),
+            by_status or "no rows at all",
+        )
     findings_for_ratify = [(f.id, f.content) for f in live_findings]
     ratification: dict[str, Any] | None = None
     final_answer = output.final_answer

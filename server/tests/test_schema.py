@@ -273,3 +273,24 @@ async def test_reaper_marks_stale_running_runs_interrupted(db: AsyncConnection) 
     status_rows = (await db.execute(text("SELECT id, status FROM swarm_runs"))).fetchall()
     rows = {r[0]: r[1] for r in status_rows}
     assert rows["stale"] == "interrupted" and rows["fresh"] == "running"
+
+
+def test_max_rounds_defaults_to_five() -> None:
+    from server.market_hive.schemas import SwarmRunConfig
+
+    assert SwarmRunConfig(prompt="test").max_rounds == 5
+
+
+def test_quiescence_is_a_valid_termination_reason() -> None:
+    from server.market_hive.schemas import SwarmFinalOutput
+
+    # SwarmFinalOutput.termination_reason must accept "quiescence"
+    out = SwarmFinalOutput(
+        run_id="test_run",
+        answers={},
+        confirmed_layer=[],
+        final_answer=None,
+        termination_round=3,
+        termination_reason="quiescence",
+    )
+    assert out.termination_reason == "quiescence"
