@@ -21,6 +21,16 @@ MAX_CITES_PER_ROUND = 3
 MAX_PROPOSAL_CHARS = 3000
 MAX_REPLY_CHARS = 1500
 
+# Replies per taker per thread per round. A discussion turn is one delta, not
+# an essay serialized across a dozen posts — without this cap a single agent
+# can loop the tool-call machinery (up to max_iterations round-trips, see
+# BaseLLMProvider) into a dozen-post turn on its own, which is exactly what
+# stretched a real run to ~25 minutes despite only 4 takers and 9 rounds: one
+# agent posted as many as 12 replies in a single round. Two is enough for the
+# legitimate "reply to two different points" case the old unbounded design
+# was protecting.
+MAX_REPLIES_PER_ROUND = 2
+
 # ── Input models ─────────────────────────────────────────────────────────────
 
 
@@ -132,6 +142,8 @@ class PostToBlackboardTool(Tool):
     name = "post_to_blackboard"
     description = (
         "Write a proposal (round 1) or reply (rounds 2+) to the blackboard. "
+        f"Replies are capped at {MAX_REPLIES_PER_ROUND} per taker per thread per round — "
+        "each one must be a single delta, never a restatement. "
         "Returns the new entry ID."
     )
     input_model = PostToBlackboardInput
@@ -226,8 +238,14 @@ class PostToBlackboardTool(Tool):
         # same turn (the tool-call loop allows up to 20 iterations) — it did
         # nothing to stop the same agent choosing 'proposal' again in round 2,
         # 3, etc., which is just as much a duplicate opening stake, not a reply.
-        # 'reply' is intentionally not capped: a single discussion-round turn
-        # legitimately replying to two different points is not the same bug.
+        # 'reply' used to be uncapped by count (only by length) on the theory that
+        # a single turn legitimately replying to two different points isn't the
+        # proposal-spam bug above. In practice, nothing stopped the same taker
+        # from looping post_to_blackboard many times in one turn — one agent hit
+        # 12 replies in a single round in a real run, turning a 4-taker/9-round
+        # run into a ~25 minute one. MAX_REPLIES_PER_ROUND bounds that per
+        # taker/thread/round; two is still enough for the legitimate two-points
+        # case.
         if validated_input.entry_type == "proposal":
             existing = (
                 await db.execute(
@@ -248,6 +266,29 @@ class PostToBlackboardTool(Tool):
                     '{"error": "You already posted your opening proposal for this thread — '
                     "do not post another. Use cite(...) on others' proposals, or post a "
                     'reply (entry_type=\\"reply\\") if you have something new to add."}'
+                )
+        elif validated_input.entry_type == "reply":
+            reply_count = (
+                await db.execute(
+                    text(
+                        "SELECT COUNT(*) FROM draft_entries WHERE run_id = :run_id "
+                        "AND thread_id = :thread_id AND author_id = :author_id "
+                        "AND entry_type = 'reply' AND round = :round"
+                    ),
+                    {
+                        "run_id": run_id,
+                        "thread_id": thread_id,
+                        "author_id": author_id,
+                        "round": round_,
+                    },
+                )
+            ).scalar_one()
+            if reply_count >= MAX_REPLIES_PER_ROUND:
+                return (
+                    f'{{"error": "you already posted {reply_count} replies on this thread '
+                    f'this round (cap: {MAX_REPLIES_PER_ROUND}) — that is enough for one round. '
+                    'Call stand_down(reason) if you have nothing further, or cite(...) an '
+                    'existing point instead of posting again."}'
                 )
 
         bb = Blackboard(db)

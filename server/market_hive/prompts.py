@@ -13,6 +13,7 @@ from __future__ import annotations
 
 from server.market_hive.auction import Invitation
 from server.market_hive.schemas import ContractSchema, ThreadSchema
+from server.market_hive.tools import MAX_REPLIES_PER_ROUND
 
 # ── Auction phase (§9.1) ───────────────────────────────────────────────────────
 
@@ -232,10 +233,17 @@ def rounds_system_suffix(temperature_instruction: str) -> str:
         "call request_expertise(domain, reason, thread_id) to propose recruiting "
         "it — this triggers a team vote and is capped per run, so use it only for "
         "a genuine, blocking gap, not for topics the team can reasonably cover.\n"
-        "- BREVITY: a reply must be a DELTA — exactly one new point, one "
-        "disagreement, or one piece of new evidence. Do NOT restate or reword "
-        "analysis already on the board; rewording is noise and over-long posts are "
-        "rejected. Do NOT re-state your qualifications — that was round 1.\n"
+        "- BREVITY IS MANDATORY, NOT A SUGGESTION: a reply must be exactly ONE "
+        "DELTA — one new point, one disagreement, or one piece of new evidence. "
+        "Never restate or reword analysis already on the board — rewording is "
+        "noise, wastes the team's time, and over-long posts are rejected outright. "
+        "Do NOT re-state your qualifications — that was round 1.\n"
+        f"- HARD CAP: you may post_to_blackboard at most {MAX_REPLIES_PER_ROUND} "
+        "replies on this thread THIS ROUND — the tool rejects any further "
+        "attempt. Do not treat this as a target to hit; most rounds you should "
+        "post ZERO or ONE reply. If you find yourself reaching for a third "
+        "reply, that is a sign you are restating yourself — stop and stand down "
+        "instead.\n"
         "- If you have nothing material to add on this thread, call "
         "stand_down(reason) instead of posting. When every taker has stood down, "
         "the run ends — this is how the team finishes instead of repeating itself.\n"
