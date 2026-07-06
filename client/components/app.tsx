@@ -30,7 +30,6 @@ import {
   createFile,
   deleteFileApi,
   attachFile,
-  clearAll,
 } from "@/lib/api";
 import { Canvas } from "@/components/canvas";
 import { LogWall } from "@/components/log-wall";
@@ -94,6 +93,8 @@ export function App({ onModeSelected }: AppProps = {}) {
     dispatch,
     saveAgent,
     deleteAgent,
+    removeAgentFromCanvas,
+    addExistingAgents,
     saveSource,
     deleteSource,
     connectNodes,
@@ -346,7 +347,10 @@ export function App({ onModeSelected }: AppProps = {}) {
         !e.ctrlKey
       ) {
         if (selNode) {
-          if (agents.some((a) => a.id === selNode)) deleteAgent(selNode);
+          // Canvas gesture — removes agents from the canvas only; files are
+          // still deleted for real.
+          if (agents.some((a) => a.id === selNode))
+            removeAgentFromCanvas(selNode);
           else deleteSource(selNode);
           setSelNode(null);
         }
@@ -362,7 +366,7 @@ export function App({ onModeSelected }: AppProps = {}) {
     selNode,
     selEdge,
     agents,
-    deleteAgent,
+    removeAgentFromCanvas,
     deleteSource,
     deleteEdge,
     setPanel,
@@ -450,6 +454,7 @@ export function App({ onModeSelected }: AppProps = {}) {
       }
 
       // Render the imported canvas locally first so the user sees it instantly.
+      // The LOAD dispatch also updates the stored canvas membership.
       dispatch({ type: "LOAD", state: data });
       if (Array.isArray(data.selectedRules)) {
         setSelectedRules(
@@ -531,18 +536,21 @@ export function App({ onModeSelected }: AppProps = {}) {
     [simMode, agents, sources, setPanel],
   );
 
-  const nodeCtxItems = (id: string): ContextMenuItem[] => [
-    { label: "Edit", icon: "Settings2", fn: () => openPanel(id) },
-    {
-      label: "Delete",
-      icon: "Trash2",
-      danger: true,
-      fn: () => {
-        if (agents.some((a) => a.id === id)) deleteAgent(id);
-        else deleteSource(id);
+  const nodeCtxItems = (id: string): ContextMenuItem[] => {
+    const isAgent = agents.some((a) => a.id === id);
+    return [
+      { label: "Edit", icon: "Settings2", fn: () => openPanel(id) },
+      {
+        label: isAgent ? "Remove from Canvas" : "Delete",
+        icon: isAgent ? "Eraser" : "Trash2",
+        danger: !isAgent,
+        fn: () => {
+          if (isAgent) removeAgentFromCanvas(id);
+          else deleteSource(id);
+        },
       },
-    },
-  ];
+    ];
+  };
 
   const canvasCtxItems: ContextMenuItem[] = [
     {
@@ -600,7 +608,8 @@ export function App({ onModeSelected }: AppProps = {}) {
   }, [setPanel, setSelNode]);
 
   const onClear = useCallback(async () => {
-    await clearAll().catch(() => {});
+    // Clearing empties the canvas only — agents and files stay in the DB (and
+    // in the agents list); they can be re-added via the "Existing" tab.
     dispatch({ type: "CLEAR" });
     // Also wipe the swarm run state and boards so the canvas starts fresh.
     // Both run hooks must be reset: `blackboardState` falls back to
@@ -883,8 +892,20 @@ export function App({ onModeSelected }: AppProps = {}) {
             setPanel(null);
             setSourceOverlay(null);
           }}
+          onAddExisting={async (picked) => {
+            await addExistingAgents(picked);
+            setPanel(null);
+            setSourceOverlay(null);
+          }}
           onDelete={async (id) => {
             await deleteAgent(id);
+            setPanel(null);
+            setSourceOverlay(null);
+            setSelNode(null);
+            setCtx(null);
+          }}
+          onClearFromCanvas={(id) => {
+            removeAgentFromCanvas(id);
             setPanel(null);
             setSourceOverlay(null);
             setSelNode(null);

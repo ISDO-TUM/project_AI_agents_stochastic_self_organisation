@@ -67,7 +67,7 @@ async def _pump(steps: AsyncGenerator[str, None], queue: asyncio.Queue[Any]) -> 
     try:
         async for frame in steps:
             await queue.put(frame)
-    except BaseException as exc:  # noqa: BLE001 - forwarded to the consumer below
+    except BaseException as exc:  # forwarded to the consumer below
         await queue.put(exc)
     else:
         await queue.put(_PUMP_DONE)
