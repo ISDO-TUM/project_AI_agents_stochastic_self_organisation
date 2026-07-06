@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any, Literal
 
 from pydantic import BaseModel, Field
 from sqlalchemy import text
 
+from server.llm.embeddings import cosine, embed_texts
 from server.market_hive.auction import AuctionEngine
-from server.market_hive.blackboard import Blackboard, format_entries_digest
+from server.market_hive.blackboard import DEDUP_EPS, Blackboard, format_entries_digest
 from server.tools.base import Tool
 
 # Citation accountability (contestable consensus): reasons are required and
@@ -142,7 +144,8 @@ class PostToBlackboardTool(Tool):
     name = "post_to_blackboard"
     description = (
         "Write a proposal (round 1) or reply (rounds 2+) to the blackboard. "
-        f"Replies are capped at {MAX_REPLIES_PER_ROUND} per taker per thread per round — "
+        f"Replies are capped at {MAX_REPLIES_PER_ROUND} per taker per thread per round, and "
+        "are rejected if near-identical to one of your own earlier posts in this thread — "
         "each one must be a single delta, never a restatement. "
         "Returns the new entry ID."
     )
@@ -290,6 +293,60 @@ class PostToBlackboardTool(Tool):
                     'Call stand_down(reason) if you have nothing further, or cite(...) an '
                     'existing point instead of posting again."}'
                 )
+
+            # Semantic self-dedup: the count cap above stops a *volume* blowout
+            # in one round, but not a taker re-litigating the same clause round
+            # after round in slightly different words (the chronic pattern that
+            # keeps a thread from ever going quiet for check_equilibrium).
+            # Scoped to this taker's OWN prior posts in this thread only — two
+            # different agents independently landing on the same point is the
+            # citation/promotion signal working as intended, not something to
+            # suppress. Reuses DEDUP_EPS, the same cosine threshold the
+            # confirmed-entry clustering already uses for "same finding,
+            # different phrasing" (see blackboard.py's _find_dedup_target).
+            # Fails open (embeddings unavailable ⇒ no check) like every other
+            # embedding consumer in this codebase — never blocks a post just
+            # because the embedding API had a bad moment.
+            embed_input = (
+                f"{validated_input.claim}\n{validated_input.content}"
+                if validated_input.claim
+                else validated_input.content
+            )
+            candidate_vecs = await embed_texts([embed_input])
+            candidate_vec = candidate_vecs[0] if candidate_vecs else None
+            if candidate_vec and any(candidate_vec):
+                prior_embeddings = (
+                    await db.execute(
+                        text(
+                            "SELECT content_embedding FROM draft_entries WHERE run_id = :run_id "
+                            "AND thread_id = :thread_id AND author_id = :author_id "
+                            "AND entry_type = 'reply'"
+                        ),
+                        {
+                            "run_id": run_id,
+                            "thread_id": thread_id,
+                            "author_id": author_id,
+                        },
+                    )
+                ).scalars().all()
+                for raw in prior_embeddings:
+                    if not raw:
+                        continue
+                    try:
+                        prior_vec = json.loads(raw)
+                    except (json.JSONDecodeError, TypeError):
+                        continue
+                    if (
+                        prior_vec
+                        and any(prior_vec)
+                        and cosine(candidate_vec, prior_vec) >= DEDUP_EPS
+                    ):
+                        return (
+                            '{"error": "this reply is near-identical (semantic similarity check) '
+                            "to one of your own earlier posts on this thread — you are restating, "
+                            "not adding a delta. Call cite(...) on your earlier point if you still "
+                            'endorse it, or stand_down(reason) if you have nothing further."}'
+                        )
 
         bb = Blackboard(db)
         entry_id = await bb.post(
