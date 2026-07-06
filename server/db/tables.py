@@ -291,6 +291,21 @@ citations = Table(
     UniqueConstraint("citing_agent_id", "cited_entry_id", "round", name="uq_citations_per_round"),
 )
 
+# A taker's voluntary "I have nothing more to add" signal for a thread. Recorded
+# per round so the orchestrator can skip it in later rounds and the quiescence
+# terminator can reason about who has stopped. New table, no migration.
+swarm_stand_downs = Table(
+    "swarm_stand_downs",
+    metadata,
+    Column("run_id", Text, nullable=False, index=True),
+    Column("agent_id", Text, nullable=False),
+    Column("thread_id", Text, nullable=False),
+    Column("round", Integer, nullable=False),
+    Column("reason", Text, nullable=False, server_default=text("''")),
+    Column("created_at", DateTime(timezone=True), nullable=False, server_default=func.now()),
+    UniqueConstraint("run_id", "agent_id", "thread_id", name="uq_stand_down_agent_thread"),
+)
+
 votes = Table(
     "votes",
     metadata,

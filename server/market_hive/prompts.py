@@ -39,9 +39,13 @@ def _thread_listing(contract: ContractSchema) -> str:
     lines = []
     for t in contract.threads:
         expertise = ", ".join(t.required_expertise) or "any relevant expertise"
-        lines.append(f"- {t.title} [{expertise}]: {t.description}")
-    return "PLANNED WORK THREADS (you will be matched to the one(s) fitting you):\n" + "\n".join(
-        lines
+        lines.append(f'- [{t.id}] {t.title} [{expertise}]: {t.description}')
+    return (
+        "PLANNED WORK THREADS (you will be matched to the one(s) fitting you):\n"
+        + "\n".join(lines)
+        + "\n\nWhen bidding or abstaining on a specific thread, pass its bracketed "
+        "id verbatim as thread_id (e.g. thread_id=\"" + contract.threads[0].id + "\") — "
+        "never the thread's title."
     )
 
 
@@ -88,8 +92,11 @@ def round_one_system_suffix(temperature_instruction: str) -> str:
         "ROUND 1 INSTRUCTION: Write your opening proposal for this thread — but only "
         "the part of the analysis that genuinely calls for YOUR specific expertise; "
         "do not re-cover ground better owned by a co-worker's specialty just to be "
-        "thorough. When you do post, include (1) why you are qualified, (2) your "
-        "initial analysis and answer, and (3) the key clauses or evidence you rely on. "
+        "thorough. Be concise: lead with your one-sentence claim, then only the "
+        "points that need your expertise.\n"
+        "FORMAT: write clean GitHub-flavored Markdown — use `###` sub-headers, "
+        "`**bold**` labels, and `-` bullet lists (not run-on paragraphs). State your "
+        "qualification in ONE short sentence, not a paragraph.\n"
         "Fill the claim field with your one-sentence thesis, evidence with the file "
         "names you relied on, and stance ('new' for an opening proposal).\n\n"
         f"{temperature_instruction}"
@@ -162,7 +169,7 @@ def round_one_wave2_user_prompt(
         "not covered above: a different clause, a different risk, a disagreement, "
         "or new evidence. A proposal that mostly repeats what's already posted, "
         "reworded, is not a new proposal. If nothing is left to add, make no tool "
-        "call. To post, call "
+        "call. Keep it concise and in Markdown. To post, call "
         f'post_to_blackboard(entry_type="proposal", thread_id="{thread.id}").'
     )
 
@@ -206,17 +213,34 @@ def rounds_system_suffix(temperature_instruction: str) -> str:
         "- The contract and your thread are in the message below.\n"
         "- read_blackboard() is available if you need more than the retrieved excerpts "
         "in the message below.\n"
-        "- Use post_to_blackboard(reply_to=..., thread_id=...) to respond to a post.\n"
+        '- Use post_to_blackboard(entry_type="reply", reply_to=..., thread_id=...) to '
+        "respond to a post — entry_type is always \"reply\" here, never "
+        '"proposal" (that was round 1 only; posting another proposal will be '
+        "rejected).\n"
         "- Set claim (one-sentence thesis), stance ('supports'/'refutes'/'refines' + "
         "stance_target) and evidence on every post.\n"
-        "- Use cite(entry_ids=[...]) ONLY for entries you build on or agree with — "
-        "express disagreement in your reply content, not by citing.\n"
+        "- When you post a reply that supports, refines, or builds on another "
+        "entry, you MUST also cite(entry_ids=[...]) that same entry in this turn — "
+        "replying to a point and endorsing it are complementary, not alternatives. "
+        "Citation is how consensus forms: an entry that enough distinct teammates "
+        "cite is promoted to a confirmed finding, and without citations nothing your "
+        "team agrees on is ever confirmed. Cite ONLY entries you genuinely agree "
+        "with; express disagreement in your reply content, never by citing.\n"
         "- Use dispute(entry_id, reason) ONLY against a CONFIRMED finding you can show "
         "is wrong — it takes M agents to contest, exactly like promotion.\n"
         "- If the work is blocked by an expertise NOBODY on the team has, you may "
         "call request_expertise(domain, reason, thread_id) to propose recruiting "
         "it — this triggers a team vote and is capped per run, so use it only for "
-        "a genuine, blocking gap, not for topics the team can reasonably cover.\n\n"
+        "a genuine, blocking gap, not for topics the team can reasonably cover.\n"
+        "- BREVITY: a reply must be a DELTA — exactly one new point, one "
+        "disagreement, or one piece of new evidence. Do NOT restate or reword "
+        "analysis already on the board; rewording is noise and over-long posts are "
+        "rejected. Do NOT re-state your qualifications — that was round 1.\n"
+        "- If you have nothing material to add on this thread, call "
+        "stand_down(reason) instead of posting. When every taker has stood down, "
+        "the run ends — this is how the team finishes instead of repeating itself.\n"
+        "- FORMAT every post as clean GitHub-flavored Markdown: `**bold**` labels, "
+        "`-` bullet lists, short paragraphs.\n\n"
         f"{temperature_instruction}"
     )
 
@@ -239,10 +263,13 @@ def rounds_user_prompt(
         "RELEVANT EXISTING POSTS (retrieved for you — most relevant to your "
         "expertise):\n"
         f"{relevant_posts}\n\n"
-        "If your point is already made above, cite(entry_ids=[...]) it instead of "
-        "restating it. Post a reply ONLY if it adds something new — a different "
-        "angle, a disagreement, or new evidence. Duplicated content will be "
-        "treated as noise, not reinforcement.\n\n"
+        "If a point you agree with is already made above, cite(entry_ids=[...]) it — "
+        "that endorsement is what promotes it to a confirmed finding. If you also "
+        "have something new to add — a different angle, a disagreement, or new "
+        "evidence — post a reply for that; and when your reply supports or refines "
+        "one of the posts above, cite that post in the same turn. Do not merely "
+        "restate a point already made: rewording someone else's post is noise, but "
+        "citing it is real reinforcement.\n\n"
         if relevant_posts
         else ""
     )
@@ -254,8 +281,13 @@ def rounds_user_prompt(
         f"ROUND: {round} of {max_rounds}\n\n"
         f"{injected}"
         f'You may call read_blackboard(thread_id="{thread.id}") to browse beyond '
-        "the excerpts above, then post_to_blackboard(reply_to=...) with your "
-        "analysis and cite(entry_ids=[...]) the entries you build on."
+        "the excerpts above, then "
+        f'post_to_blackboard(entry_type="reply", reply_to=..., thread_id="{thread.id}") '
+        "with your analysis, and cite(entry_ids=[...]) every entry your reply "
+        "supports or builds on — that is what lets the team's agreement be confirmed.\n\n"
+        "If nothing above needs a new point, disagreement, or fresh evidence from "
+        "you, call stand_down(reason) rather than restating. Keep any reply short "
+        "and in Markdown."
     )
 
 

@@ -154,7 +154,7 @@ function HoverInfo({
               left: pos.left,
               top: pos.top,
               transform: pos.placeAbove ? "translateY(-100%)" : "none",
-              background: dark ? "#110e1a" : "#fffdfd",
+              background: dark ? "#231f31" : "#fffdfd",
               border: `1px solid ${t.borderHi}`,
               borderRadius: 10,
               boxShadow: "0 8px 24px rgba(0,0,0,0.28)",

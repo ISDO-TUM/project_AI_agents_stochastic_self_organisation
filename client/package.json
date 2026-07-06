@@ -23,6 +23,7 @@
     "recharts": "^3.9.0",
     "rehype-highlight": "^7.0.2",
     "rehype-sanitize": "^6.0.0",
+    "remark-breaks": "^4.0.0",
     "remark-gfm": "^4.0.1"
   },
   "devDependencies": {

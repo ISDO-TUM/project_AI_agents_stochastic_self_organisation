@@ -39,6 +39,7 @@ Two PRD points are reconciled here (both flagged in the progress doc):
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -48,6 +49,8 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.llm.embeddings import cosine
 from server.market_hive.trust import trust_for_all
+
+logger = logging.getLogger(__name__)
 
 # ── Defaults (mirror SWARM_DEFAULTS in PRD §15) ────────────────────────────────
 DEFAULT_INVITE_FLOOR = 0.3
@@ -201,6 +204,35 @@ class AuctionEngine:
         return invitations
 
     # ── Phase 2: recording self-selection ────────────────────────────────────
+
+    async def resolve_thread_id(
+        self, *, contract_id: str | None, thread_id: str | None
+    ) -> str | None:
+        """Validate an LLM-supplied ``thread_id`` against real threads for this contract.
+
+        The auction prompt shows agents each thread's id to copy verbatim, but an
+        LLM can still echo the title or invent an id instead — inserting that
+        straight into ``bids.thread_id`` would FK-violate (PRD "never block the
+        run" philosophy: a bad copy should degrade to a contract-level bid, not
+        crash the turn).
+        """
+        if thread_id is None or contract_id is None:
+            return thread_id
+        row = (
+            await self._db.execute(
+                text("SELECT 1 FROM threads WHERE id = :id AND contract_id = :contract_id"),
+                {"id": thread_id, "contract_id": contract_id},
+            )
+        ).fetchone()
+        if row is None:
+            logger.warning(
+                "auction: thread_id %r not found for contract %s — treating as "
+                "contract-level bid",
+                thread_id,
+                contract_id,
+            )
+            return None
+        return thread_id
 
     async def record_bid(
         self,

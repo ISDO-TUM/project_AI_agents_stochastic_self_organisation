@@ -4,9 +4,9 @@ import { useState, useRef, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { BlackboardState } from "@/lib/types";
 import { useTheme } from "@/lib/theme-context";
-import { getTheme, BURG_LT } from "@/lib/theme";
+import { getTheme, BURG_LT, SURFACE_DARK_RGB } from "@/lib/theme";
 import { Layers, Maximize2, Network, Rows3, X } from "lucide-react";
-import { computePromotionThreshold } from "@/lib/blackboard-utils";
+import { computePromotionThreshold, countEntries } from "@/lib/blackboard-utils";
 import { ThreadFilterDropdown } from "./blackboard/thread-filter-dropdown";
 import { BoardGraphView } from "./blackboard/board-graph-view";
 import { ContractCard } from "./blackboard/contract-card";
@@ -196,7 +196,22 @@ export function DraftBoard({
   // its own history (what was tried and didn't stick) is the point of it.
   const renderedDraft = filteredDraft;
   const hasContent = renderedDraft.length > 0;
-  const threshold = computePromotionThreshold(filteredDraft);
+  // Replies are nested under their parent's `children`, not appended to the
+  // top-level array — counting `renderedDraft.length` alone misses every new
+  // reply, so the "N new" scroll-nudge badge below only ever fired for new
+  // top-level proposals.
+  const totalEntryCount = countEntries(renderedDraft);
+  // Prefer the server's authoritative, run-fixed per-thread threshold (pushed once
+  // takers are assigned) over the client-side approximation — the approximation
+  // counts distinct authors in whatever's currently in view, which drifts as
+  // entries stream in and made the displayed threshold look like it randomly
+  // changed across rounds. Only available once a single thread is selected: the
+  // combined "all threads" view has no single true M, so it keeps the estimate.
+  const selectedThread = activeThreadId
+    ? state.threads.find((th) => th.id === activeThreadId)
+    : null;
+  const threshold =
+    selectedThread?.promotion_threshold ?? computePromotionThreshold(filteredDraft);
   // Referentially stable across renders so the graph view's layout memo holds
   // between streaming ticks (rebuilding this Map every render forced a full
   // relayout on every SSE event while the graph modal was open).
@@ -219,16 +234,22 @@ export function DraftBoard({
   ).length;
   const totalThreads = state.threads.length;
 
-  // Track new entries arriving while the user is scrolled up
+  // Track new entries (proposals AND replies) arriving while the user is
+  // scrolled up. Guarded against `activeThreadId` changes: switching the
+  // thread filter changes `totalEntryCount` on its own and must reset the
+  // baseline, not be mistaken for a burst of new entries.
+  const prevThreadIdRef = useRef(activeThreadId);
   useEffect(() => {
-    const diff = renderedDraft.length - prevLengthRef.current;
-    prevLengthRef.current = renderedDraft.length;
-    if (diff <= 0) return;
+    const filterChanged = prevThreadIdRef.current !== activeThreadId;
+    prevThreadIdRef.current = activeThreadId;
+    const diff = totalEntryCount - prevLengthRef.current;
+    prevLengthRef.current = totalEntryCount;
+    if (filterChanged || diff <= 0) return;
     const el = bodyRef.current;
     if (!el) return;
     const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
     if (!atBottom) setNewCount((n) => n + diff);
-  }, [renderedDraft.length]);
+  }, [totalEntryCount, activeThreadId]);
 
   const handleScrollToNew = () => {
     bodyRef.current?.scrollTo({
@@ -448,7 +469,7 @@ export function DraftBoard({
         ref={bodyRef}
         onScroll={handleBodyScroll}
         style={{
-          background: dark ? "rgba(6,5,12,0.88)" : "rgba(248,246,255,0.94)",
+          background: dark ? `rgba(${SURFACE_DARK_RGB},0.92)` : "rgba(248,246,255,0.94)",
           border: `1px solid rgba(139,26,47,0.22)`,
           borderTop: "none",
           borderRadius: "0 0 12px 12px",
@@ -585,7 +606,7 @@ export function DraftBoard({
                 display: "flex",
                 flexDirection: "column",
                 background: dark
-                  ? "rgba(6,5,12,0.97)"
+                  ? `rgba(${SURFACE_DARK_RGB},0.97)`
                   : "rgba(248,246,255,0.99)",
                 border: "1px solid rgba(139,26,47,0.35)",
                 borderRadius: 16,

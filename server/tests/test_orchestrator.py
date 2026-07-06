@@ -1032,7 +1032,10 @@ async def test_discussion_prompts_carry_injected_relevant_posts(db: AsyncConnect
     assert captured, "no discussion turns ran"
     for p in captured:
         assert "RELEVANT EXISTING POSTS" in p
-        assert "cite(entry_ids=[...]) it instead of restating" in p
+        # The retrieval block still nudges citing over restating; wording now frames
+        # citing as complementary to replying (endorsement drives promotion).
+        assert "cite(entry_ids=[...])" in p
+        assert "confirmed finding" in p
         assert "proposal" in p  # round-1 content surfaced through retrieval
         assert "] Alpha · Round 1 · proposal" in p or "] Beta · Round 1 · proposal" in p
 
@@ -1621,6 +1624,40 @@ async def test_refutes_own_entry_rejected(db: AsyncConnection) -> None:
     assert "error" in result
     n = (await db.execute(text("SELECT COUNT(*) FROM draft_entries"))).scalar_one()
     assert n == 1
+
+
+async def test_stance_target_resolves_truncated_display_id(db: AsyncConnection) -> None:
+    """read_blackboard's digest shows entries as "[{id[:8]}] ..." (format_entries_digest),
+    and agents copy that 8-char id back as stance_target — same truncation reply_to and
+    cite() already resolve. A real refine/refute against another agent's entry, addressed
+    by that truncated id, must succeed rather than being rejected as "no matching entry"."""
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+    tool = PostToBlackboardTool()
+    first = await tool.execute(
+        PostToBlackboardInput(content="original claim", entry_type="proposal", thread_id="t1"),
+        {"db": db, "run_id": "r1", "agent_id": "a1", "round": 1, "files": {}},
+    )
+    entry_id = json.loads(first)["entry_id"]
+    result = await tool.execute(
+        PostToBlackboardInput(
+            content="a refinement",
+            entry_type="reply",
+            thread_id="t1",
+            reply_to=entry_id[:8],
+            stance="refines",
+            stance_target=entry_id[:8],
+        ),
+        {"db": db, "run_id": "r1", "agent_id": "a2", "round": 2, "files": {}},
+    )
+    assert "entry_id" in result, result
+    row = (
+        (await db.execute(text("SELECT stance_target FROM draft_entries WHERE author_id = 'a2'")))
+        .mappings()
+        .fetchone()
+    )
+    assert row is not None
+    assert row["stance_target"] == entry_id
 
 
 async def test_cite_requires_reasons(db: AsyncConnection) -> None:

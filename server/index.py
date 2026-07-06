@@ -2,15 +2,16 @@ import asyncio
 import json
 import logging
 import os
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
 from server.db import close_db, init_db
 from server.llm.credentials import MissingCredentialsError
@@ -25,6 +26,20 @@ from server.routes import (
 )
 from server.topology.benchmarks import benchmark_router
 from server.topology.routes import history_router, rules_router, statistics_router
+
+# Uvicorn's own dictConfig (Config.configure_logging(), run before this module
+# is imported) only touches its own "uvicorn"/"uvicorn.error"/"uvicorn.access"
+# loggers — it never sets a level or handler on the root logger. Without this,
+# every `logging.getLogger(__name__).info(...)` in server/* (swarm promotion,
+# equilibrium, and termination decisions included) silently resolves to
+# root's default WARNING threshold and never reaches the terminal, even with
+# --reload running in the foreground. LOG_LEVEL lets DEBUG be dialed in for a
+# specific run without a code change.
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
 
 logger = logging.getLogger(__name__)
 
@@ -117,13 +132,44 @@ _SECURITY_HEADERS: dict[str, str] = {
 }
 
 
-@app.middleware("http")
-async def add_security_headers(request: Request, call_next: Callable[..., Any]) -> Response:
-    """Attach security-hardening response headers to every reply."""
-    response: Response = await call_next(request)
-    for header, value in _SECURITY_HEADERS.items():
-        response.headers[header] = value
-    return response
+class _SecurityHeadersMiddleware:
+    """Attach security-hardening response headers to every reply.
+
+    Implemented as a plain ASGI middleware rather than ``@app.middleware("http")``
+    (Starlette's ``BaseHTTPMiddleware``). ``BaseHTTPMiddleware`` runs the entire
+    downstream call — including this app's long-lived SSE ``StreamingResponse``
+    for ``POST /api/simulation/run`` — inside a *second* task with its own anyio
+    cancel scope. When a client disconnects mid-stream (a dropped proxy, or the
+    browser aborting the fetch — e.g. Next's Fast Refresh forcing a full page
+    reload), that scope cancels everything running underneath it, including the
+    swarm orchestrator's own best-effort "mark the run interrupted" cleanup and
+    the DB connection pool's teardown of the now-defunct connection. That was
+    producing a storm of ``asyncio.CancelledError`` / asyncpg "Exception
+    terminating connection" tracebacks on every dropped SSE connection, even
+    though the run itself was already being handled gracefully. A pure ASGI
+    middleware only wraps ``send``, so it adds no extra task or cancel scope
+    around the request.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_security_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                for header, value in _SECURITY_HEADERS.items():
+                    headers[header] = value
+            await send(message)
+
+        await self.app(scope, receive, send_with_security_headers)
+
+
+app.add_middleware(_SecurityHeadersMiddleware)
 
 
 @app.exception_handler(MissingCredentialsError)
