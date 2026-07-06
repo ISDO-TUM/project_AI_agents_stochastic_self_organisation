@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import uuid
 from collections.abc import AsyncGenerator
+from typing import Any
 
 import pytest
 from sqlalchemy import text
@@ -124,7 +125,9 @@ async def _create_minimal_schema(conn: AsyncConnection) -> None:
             entry_type TEXT NOT NULL DEFAULT 'finding',
             citation_count INTEGER NOT NULL DEFAULT 0,
             round_confirmed INTEGER NOT NULL,
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            status TEXT NOT NULL DEFAULT 'confirmed',
+            origin_run_id TEXT
         )
         """,
         """
@@ -190,16 +193,18 @@ async def _confirmed(
     entry_type: str = "finding",
     citation_count: int = 0,
     round_confirmed: int = 1,
+    status: str = "confirmed",
 ) -> str:
     entry_id = str(uuid.uuid4())
     await conn.execute(
         text(
             """
             INSERT INTO confirmed_entries
-                (id, run_id, thread_id, content, entry_type, citation_count, round_confirmed)
+                (id, run_id, thread_id, content, entry_type, citation_count,
+                 round_confirmed, status)
             VALUES
                 (:id, :run_id, :thread_id, :content, :entry_type,
-                 :citation_count, :round_confirmed)
+                 :citation_count, :round_confirmed, :status)
             """
         ),
         {
@@ -210,6 +215,7 @@ async def _confirmed(
             "entry_type": entry_type,
             "citation_count": citation_count,
             "round_confirmed": round_confirmed,
+            "status": status,
         },
     )
     await conn.commit()
@@ -221,6 +227,22 @@ async def test_equilibrium_false_before_min_rounds(db: AsyncConnection) -> None:
     eng = TerminationEngine(db, min_rounds=3, k_consecutive=2)
 
     assert not await eng.check_equilibrium(run_id=run_id, current_round=2)
+
+
+async def test_equilibrium_false_when_status_flips_this_round(db: AsyncConnection) -> None:
+    """A contest/re-affirm flip forces at least one more round (contestable
+    consensus) — even a run that would otherwise look converged must not stop."""
+    run_id, _, thread_id = await _seed_run(db)
+    eng = TerminationEngine(db, min_rounds=3, k_consecutive=2, epsilon_entropy=0)
+    # round_confirmed=1 sits outside the checked window (which starts at
+    # round 2) so rounds 2-3 are genuinely quiet, while has_confirmed_findings
+    # is still satisfied — isolating the status_flips gate from window math.
+    await _confirmed(db, run_id=run_id, thread_id=thread_id, content="finding", round_confirmed=1)
+
+    # Quiet rounds 2-3 would normally satisfy equilibrium at round 3...
+    assert await eng.check_equilibrium(run_id=run_id, current_round=3)
+    # ...but a status flip this round overrides it.
+    assert not await eng.check_equilibrium(run_id=run_id, current_round=3, status_flips=1)
 
 
 async def test_equilibrium_requires_quiet_consecutive_finding_rounds(db: AsyncConnection) -> None:
@@ -358,6 +380,46 @@ async def test_select_final_answer_orders_by_citations_then_earliest_round(
     assert answer.content == "earlier tied"
 
 
+async def test_select_final_answer_excludes_contested_and_retracted(
+    db: AsyncConnection,
+) -> None:
+    """A contested/retracted entry must never be featured as the thread answer,
+    even with the highest citation count — status is the gate, not just count."""
+    run_id, _, thread_id = await _seed_run(db)
+    await _confirmed(
+        db,
+        run_id=run_id,
+        thread_id=thread_id,
+        content="highest cited but contested",
+        citation_count=99,
+        round_confirmed=2,
+        status="contested",
+    )
+    await _confirmed(
+        db,
+        run_id=run_id,
+        thread_id=thread_id,
+        content="also high but retracted",
+        citation_count=50,
+        round_confirmed=2,
+        status="retracted",
+    )
+    await _confirmed(
+        db,
+        run_id=run_id,
+        thread_id=thread_id,
+        content="the only live finding",
+        citation_count=1,
+        round_confirmed=3,
+        status="confirmed",
+    )
+
+    answer = await TerminationEngine(db).select_final_answer(run_id=run_id, thread_id=thread_id)
+
+    assert answer is not None
+    assert answer.content == "the only live finding"
+
+
 async def test_format_output_omits_threads_without_findings(db: AsyncConnection) -> None:
     run_id, contract_id, thread_id = await _seed_run(db)
     empty_thread = str(uuid.uuid4())
@@ -393,6 +455,71 @@ async def test_format_output_omits_threads_without_findings(db: AsyncConnection)
     assert set(output.answers) == {thread_id}
     assert output.answers[thread_id].content == "answer"
     assert len(output.confirmed_layer) == 1
+
+
+async def test_format_output_retracts_contested_entries_and_excludes_from_synthesis(
+    db: AsyncConnection,
+) -> None:
+    """Contestable consensus: a still-contested entry at finalize is retracted
+    (row kept, status changed) — visible in confirmed_layer for audit but
+    excluded from what the synthesizer sees and from the thread's answer."""
+    run_id, _, thread_id = await _seed_run(db)
+    await _confirmed(
+        db,
+        run_id=run_id,
+        thread_id=thread_id,
+        content="live finding",
+        citation_count=2,
+        round_confirmed=2,
+        status="confirmed",
+    )
+    await _confirmed(
+        db,
+        run_id=run_id,
+        thread_id=thread_id,
+        content="still contested at run end",
+        citation_count=10,
+        round_confirmed=2,
+        status="contested",
+    )
+
+    captured: dict[str, Any] = {}
+
+    class _CapturingSynthesizer:
+        async def synthesize(
+            self, *, prompt: str, findings: list[Any], objections: list[str] | None = None
+        ) -> str:
+            captured["findings"] = findings
+            return "synthesized answer"
+
+    output = await TerminationEngine(db).format_output(
+        run_id=run_id,
+        termination_round=3,
+        termination_reason="equilibrium",
+        prompt="What should we do?",
+        synthesizer=_CapturingSynthesizer(),
+    )
+
+    # confirmed_layer keeps both rows (audit trail — nothing is ever deleted)...
+    assert len(output.confirmed_layer) == 2
+    statuses = {e.content: e.status for e in output.confirmed_layer}
+    assert statuses["live finding"] == "confirmed"
+    assert statuses["still contested at run end"] == "retracted"  # flipped in-place
+
+    # ...but only the live one reached the synthesizer...
+    assert [f.content for f in captured["findings"]] == ["live finding"]
+    assert output.final_answer == "synthesized answer"
+
+    # ...and the retracted one is not the thread's featured answer either.
+    assert output.answers[thread_id].content == "live finding"
+
+    # The DB row itself was updated, not deleted.
+    row_count = (
+        await db.execute(
+            text("SELECT COUNT(*) FROM confirmed_entries WHERE run_id = :r"), {"r": run_id}
+        )
+    ).scalar_one()
+    assert row_count == 2
 
 
 async def test_complete_run_persists_reason_round_and_token_usage(db: AsyncConnection) -> None:

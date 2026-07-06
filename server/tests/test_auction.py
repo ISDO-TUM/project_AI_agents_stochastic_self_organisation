@@ -107,12 +107,31 @@ async def _seed_agent(
     await conn.commit()
 
 
-async def _seed_trust(conn: AsyncConnection, *, agent_id: str, domain: str, score: float) -> None:
+async def _seed_trust(
+    conn: AsyncConnection,
+    *,
+    agent_id: str,
+    domain: str,
+    score: float,
+    domain_embedding: list[float] | None = None,
+) -> None:
+    """Seed one ledger event landing at exactly ``score`` under score_events'
+    shrinkage formula: solving ``(K_PRIOR*0.5 + w*1.0) / (K_PRIOR + w) = score``
+    for weight (K_PRIOR=4.0, outcome=1.0) gives ``w = 4*(score - 0.5) / (1 - score)``."""
+    weight = 4.0 * (score - 0.5) / (1 - score)
     await conn.execute(
         text(
-            "INSERT INTO agent_trust (agent_id, domain, trust_score) VALUES (:aid, :domain, :score)"
+            "INSERT INTO trust_events "
+            "(id, run_id, agent_id, kind, outcome, weight, domain_label, domain_embedding) "
+            "VALUES (:id, NULL, :aid, 'finding_confirmed', 1.0, :weight, :domain, :emb)"
         ),
-        {"aid": agent_id, "domain": domain, "score": score},
+        {
+            "id": str(uuid.uuid4()),
+            "aid": agent_id,
+            "weight": weight,
+            "domain": domain,
+            "emb": json.dumps(domain_embedding) if domain_embedding is not None else None,
+        },
     )
     await conn.commit()
 

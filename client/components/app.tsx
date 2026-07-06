@@ -48,9 +48,9 @@ import {
   subscribeAppMode,
 } from "@/components/mode-gate";
 import {
-  SwarmConfigModal,
   SwarmRunConfig,
-} from "@/components/swarm-config-modal";
+  DEFAULT_SWARM_CONFIG,
+} from "@/components/swarm-config";
 import { useDummySwarm } from "@/hooks/useDummySwarm";
 import { useSwarmRun } from "@/hooks/useSwarmRun";
 import { FinalAnswerReveal } from "@/components/canvas/final-answer-reveal";
@@ -172,8 +172,9 @@ export function App({ onModeSelected }: AppProps = {}) {
     () => true,
     () => false,
   );
-  const [swarmConfigOpen, setSwarmConfigOpen] = useState(false);
   const [pendingSwarmPrompt, setPendingSwarmPrompt] = useState("");
+  const [swarmConfig, setSwarmConfig] =
+    useState<SwarmRunConfig>(DEFAULT_SWARM_CONFIG);
   const [topbarWidth, setTopbarWidth] = useState<number | null>(null);
   const [topbarHeight, setTopbarHeight] = useState<number | null>(null);
   const [promptBarHeight, setPromptBarHeight] = useState<number | null>(null);
@@ -182,7 +183,7 @@ export function App({ onModeSelected }: AppProps = {}) {
   // (draft → confirmed), like the dummy — no REST re-fetch, no activity log.
   const swarm = useSwarmRun();
   // The completion answer overlay shows once per run; dismissing it sets this so
-  // it stays closed until the next run resets it (see handleSwarmConfigConfirm).
+  // it stays closed until the next run resets it (see handleRun's swarm branch).
   const [answerDismissed, setAnswerDismissed] = useState(false);
   // First-run consent for an "answer ready" browser notification.
   const [notifyConsentOpen, setNotifyConsentOpen] = useState(false);
@@ -191,6 +192,10 @@ export function App({ onModeSelected }: AppProps = {}) {
   const blackboardState = dummy.state.active
     ? dummy.state.blackboard
     : swarm.state.blackboard;
+  // The Market Maker's drafting window: a run is underway but its contract
+  // hasn't streamed in yet. Animates the MM chip in the agent dock.
+  const swarmDrafting =
+    (dummy.state.active || swarm.state.active) && !blackboardState.contract;
 
   // Run configuration — edited in the Settings panel, read at run start.
   const [consensusMode, setConsensusMode] =
@@ -235,7 +240,25 @@ export function App({ onModeSelected }: AppProps = {}) {
     (prompt: string) => {
       if (appMode === "swarm") {
         setPendingSwarmPrompt(prompt);
-        setSwarmConfigOpen(true);
+        if (prompt.trim().toLowerCase() === "test_mohamed") {
+          swarm.reset();
+          const fixture = generateDummyRun(
+            { takers: swarmConfig.takersMax, rounds: swarmConfig.roundsMax },
+            agents,
+          );
+          dummy.start(fixture);
+          setRunId(fixture.runId);
+          return;
+        }
+        dummy.reset();
+        setRunId(null);
+        setAnswerDismissed(false);
+        // First swarm run, notifications available, never asked → request consent.
+        // Non-blocking: the run starts regardless of the user's choice.
+        if (notificationsSupported() && readNotifyPref() === null) {
+          setNotifyConsentOpen(true);
+        }
+        swarm.start(prompt);
         return;
       }
       const active = rules.filter((r) => selectedRules.has(r.id));
@@ -247,6 +270,10 @@ export function App({ onModeSelected }: AppProps = {}) {
     },
     [
       appMode,
+      swarmConfig,
+      agents,
+      dummy,
+      swarm,
       rules,
       selectedRules,
       runSim,
@@ -255,32 +282,6 @@ export function App({ onModeSelected }: AppProps = {}) {
       fanout,
       iterations,
     ],
-  );
-
-  const handleSwarmConfigConfirm = useCallback(
-    (config: SwarmRunConfig) => {
-      setSwarmConfigOpen(false);
-      if (pendingSwarmPrompt.trim().toLowerCase() === "test_mohamed") {
-        swarm.reset();
-        const fixture = generateDummyRun(
-          { takers: config.takersMax, rounds: config.roundsMax },
-          agents,
-        );
-        dummy.start(fixture);
-        setRunId(fixture.runId);
-        return;
-      }
-      dummy.reset();
-      setRunId(null);
-      setAnswerDismissed(false);
-      // First swarm run, notifications available, never asked → request consent.
-      // Non-blocking: the run starts regardless of the user's choice.
-      if (notificationsSupported() && readNotifyPref() === null) {
-        setNotifyConsentOpen(true);
-      }
-      swarm.start(pendingSwarmPrompt);
-    },
-    [pendingSwarmPrompt, agents, dummy, swarm],
   );
 
   const handleNotifyDecision = useCallback(
@@ -474,13 +475,24 @@ export function App({ onModeSelected }: AppProps = {}) {
           ...existingFiles.map((f) => deleteFileApi(f.id).catch(() => {})),
         ]);
 
+        // Defensively delete-by-id before each create: imported files/agents
+        // often carry fixed ids (so a demo's internal edges resolve), and a
+        // stale row with that same id may not be visible in existingAgents/
+        // existingFiles above (e.g. it was scoped to a different session) —
+        // without this the create below 409s on an id it can't see to clean up.
         await Promise.all(
           data.sources.map((s) =>
-            createFile(s.name, s.content, s.id).catch(() => {}),
+            deleteFileApi(s.id)
+              .catch(() => {})
+              .then(() => createFile(s.name, s.content, s.id).catch(() => {})),
           ),
         );
         await Promise.all(
-          data.agents.map((a) => createAgent(a, { preserveId: true })),
+          data.agents.map((a) =>
+            deleteAgentApi(a.id)
+              .catch(() => {})
+              .then(() => createAgent(a, { preserveId: true })),
+          ),
         );
         const fileIds = new Set(data.sources.map((s) => s.id));
         await Promise.all(
@@ -599,12 +611,17 @@ export function App({ onModeSelected }: AppProps = {}) {
     // Clearing empties the canvas only — agents and files stay in the DB (and
     // in the agents list); they can be re-added via the "Existing" tab.
     dispatch({ type: "CLEAR" });
-    // Also wipe both swarm run states and boards so the canvas starts fresh —
-    // blackboardState falls back to `swarm` whenever `dummy` isn't active, so
-    // leaving swarm unreset left its draft/confirmed entries on screen.
+    // Also wipe the swarm run state and boards so the canvas starts fresh.
+    // Both run hooks must be reset: `blackboardState` falls back to
+    // `swarm.state.blackboard` whenever `dummy.state.active` is false, so a
+    // real (non-"test_mohamed") run's draft/confirmed/threads — persisted to
+    // sessionStorage by useSwarmRun — used to survive Clear entirely and kept
+    // showing up in the draft board / bidding board / graph view.
     dummy.reset();
     swarm.reset();
     setRunId(null);
+    setAnswerDismissed(false);
+    setBiddingBoardOpen(false);
     stopSim();
   }, [dispatch, dummy, swarm, stopSim]);
   const onAutoLayout = useCallback(
@@ -746,6 +763,7 @@ export function App({ onModeSelected }: AppProps = {}) {
           onShowFinalAnswer={() => setAnswerDismissed(false)}
           swarmTrustVectors={dummy.state.trustVectors}
           swarmRespondingIds={swarm.state.responding}
+          swarmDrafting={appMode === "swarm" && swarmDrafting}
           phonebook={
             topology === "dynamic"
               ? {
@@ -797,8 +815,8 @@ export function App({ onModeSelected }: AppProps = {}) {
           onResetContext={resetContext}
           onOpenKeys={() => setShowTweaks(true)}
           iterations={iterations}
-          onIterationsChange={setIterations}
-          batchProgress={batchProgress}
+          onIterationsChange={appMode === "swarm" ? undefined : setIterations}
+          batchProgress={appMode === "swarm" ? null : batchProgress}
           onHeightChange={setPromptBarHeight}
         />
       </div>
@@ -833,13 +851,8 @@ export function App({ onModeSelected }: AppProps = {}) {
           simRunning={simMode}
           onClose={() => setShowTweaks(false)}
           appMode={appMode}
-        />
-      )}
-
-      {swarmConfigOpen && (
-        <SwarmConfigModal
-          onCancel={() => setSwarmConfigOpen(false)}
-          onConfirm={handleSwarmConfigConfirm}
+          swarmConfig={swarmConfig}
+          onSwarmConfigChange={setSwarmConfig}
         />
       )}
 
@@ -862,6 +875,7 @@ export function App({ onModeSelected }: AppProps = {}) {
         findings={swarm.state.blackboard.confirmed.filter(
           (e) => e.entry_type === "finding",
         )}
+        ratification={swarm.state.ratification}
         onClose={() => setAnswerDismissed(true)}
       />
 

@@ -8,18 +8,21 @@ blackboard/audit/status views live in ``server.market_hive``.
 
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import logging
 from collections.abc import AsyncGenerator
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
 from fastapi.responses import StreamingResponse
-from sqlalchemy import func, select
+from sqlalchemy import func, select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.db import create_trial, get_db, get_engine, resolve_experiment, update_trial_status
 from server.db.tables import agents
 from server.llm.credentials import RequestCredentials, current_credentials, use_credentials
+from server.market_hive.amendment import LiveAmendmentProcessor
 from server.market_hive.history import SwarmHistoryRecorder
 from server.market_hive.market_maker import MarketMaker
 from server.market_hive.orchestrator import run_swarm
@@ -34,6 +37,75 @@ logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/simulation", tags=["Simulation"])
 
 DBDep = Annotated[AsyncConnection, Depends(get_db)]
+
+# Next's dev rewrite proxy (and some reverse proxies in front of prod) silently
+# kill an SSE connection after ~30s with no bytes on the wire (Next's own
+# default is exactly proxyTimeout=30000 when unset). A discussion round with
+# several concurrent multi-thread turns, each now allowed to run for minutes
+# under the LLM provider's own hang backstop, can easily produce a silent gap
+# longer than that between real ``SimulationStep`` frames — the proxy then
+# tears down the stream mid-run with no error surfaced anywhere. Keep well
+# under that ceiling so a keepalive comment always wins the race.
+_SSE_KEEPALIVE_S = 15.0
+
+
+_PUMP_DONE = object()
+
+
+async def _pump(steps: AsyncGenerator[str, None], queue: asyncio.Queue[Any]) -> None:
+    """Drive ``steps`` to completion in one persistent task, forwarding each
+    frame (or the terminal exception/sentinel) onto ``queue``.
+
+    Must run as a single long-lived task for ``steps``' entire lifetime: the
+    swarm route sets a ``ContextVar`` token once per run and resets it in a
+    ``finally`` when the generator closes — if each pull of ``steps`` ran in a
+    *different* task (e.g. wrapping ``__anext__()`` in a fresh
+    ``ensure_future`` per call), that reset would run in a different context
+    than the matching ``set()`` and raise. Pumping to a queue keeps the whole
+    generator — set and reset alike — inside this one task/context.
+    """
+    try:
+        async for frame in steps:
+            await queue.put(frame)
+    except BaseException as exc:  # forwarded to the consumer below
+        await queue.put(exc)
+    else:
+        await queue.put(_PUMP_DONE)
+
+
+async def _with_keepalive(
+    steps: AsyncGenerator[str, None],
+) -> AsyncGenerator[str, None]:
+    """Interleave SSE comment frames into ``steps`` so no gap between real
+    frames ever exceeds ``_SSE_KEEPALIVE_S`` — defeats proxy idle-connection
+    timeouts. SSE comments (lines starting with ``:``) are ignored by any
+    spec-compliant client parser, so this is invisible to ``useSwarmRun``.
+
+    ``steps`` is pumped by one background task (see ``_pump``); this generator
+    only ever waits on the queue with a timeout, so a keepalive tick never
+    cancels the run in progress — only tearing down this generator itself
+    (a real client disconnect) cancels the pump, which is the one case where
+    cancellation should propagate down into ``run_swarm``.
+    """
+    queue: asyncio.Queue[Any] = asyncio.Queue()
+    pump_task = asyncio.ensure_future(_pump(steps, queue))
+    try:
+        while True:
+            try:
+                item = await asyncio.wait_for(queue.get(), timeout=_SSE_KEEPALIVE_S)
+            except TimeoutError:
+                yield ": keepalive\n\n"
+                continue
+            if item is _PUMP_DONE:
+                return
+            if isinstance(item, BaseException):
+                raise item
+            yield item
+    finally:
+        if not pump_task.done():
+            pump_task.cancel()
+            with contextlib.suppress(BaseException):
+                await pump_task
 
 
 async def _run_batch_background(
@@ -84,7 +156,7 @@ async def _run_batch_background(
 
 
 async def _swarm_event_stream(
-    config: SwarmRunConfig, credentials: RequestCredentials
+    config: SwarmRunConfig, credentials: RequestCredentials, *, parent_run_id: str | None = None
 ) -> AsyncGenerator[str, None]:
     """Stream a swarm run's ``SimulationStep`` events as SSE ``data:`` frames.
 
@@ -102,26 +174,81 @@ async def _swarm_event_stream(
     try:
         async with get_engine().connect() as db:
             # The real Market Maker (one LLM call) produces a typed, scoped
-            # contract so the auction invites the right specialists, and the real
+            # contract — decomposed into threads for multi-step prompts — so the
+            # auction invites the right specialists, and the real
             # AnswerSynthesizer (one LLM call at the end) condenses the confirmed
             # findings into a brief final answer. Both fall back to their no-LLM
             # stand-ins internally on failure, so a run never blocks. Tests drive
             # run_swarm on the no-LLM defaults.
             #
+            # The amendment processor resolves request_expertise proposals at
+            # end-of-round: takers vote with their own LLMs and the same Market
+            # Maker casts its one equal vote (PRD §6.5).
+            #
             # The recorder mirrors the run into the shared history tables so it
             # shows up on the history page and statistics dashboards like any
             # topology trial.
             recorder = SwarmHistoryRecorder(db, config.trial_id) if config.trial_id else None
+            market_maker = MarketMaker()
             async for step in run_swarm(
                 config,
                 db,
-                contract_source=MarketMaker(),
+                contract_source=market_maker,
+                amendment_processor=LiveAmendmentProcessor(
+                    mm_vote=market_maker.cast_amendment_vote, config=config
+                ),
                 synthesizer=AnswerSynthesizer(),
+                parent_run_id=parent_run_id,
                 recorder=recorder,
             ):
                 yield f"data: {step.model_dump_json()}\n\n"
     finally:
         _creds_var.reset(token)
+
+
+async def _swarm_resume_event_stream(
+    run_id: str, credentials: RequestCredentials
+) -> AsyncGenerator[str, None]:
+    """Stream a resumed swarm run's events, same plumbing as a fresh run.
+
+    ``run_swarm`` reconstructs the original ``SwarmRunConfig`` from the
+    persisted ``swarm_runs.config`` column once it validates ``run_id`` is
+    ``interrupted`` — the placeholder passed here is never used for a real run.
+    """
+    from server.llm.credentials import _current as _creds_var
+
+    yield ": stream open\n\n"
+
+    token = _creds_var.set(credentials)
+    try:
+        async with get_engine().connect() as db:
+            async for step in run_swarm(
+                SwarmRunConfig(prompt=""),
+                db,
+                contract_source=MarketMaker(),
+                synthesizer=AnswerSynthesizer(),
+                resume_run_id=run_id,
+            ):
+                yield f"data: {step.model_dump_json()}\n\n"
+    finally:
+        _creds_var.reset(token)
+
+
+@router.post(
+    "/{run_id}/resume",
+    summary="Resume an interrupted swarm run",
+    dependencies=[Depends(use_credentials)],
+)
+async def resume_simulation(run_id: str) -> StreamingResponse:
+    return StreamingResponse(
+        _with_keepalive(_swarm_resume_event_stream(run_id, current_credentials())),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no",
+        },
+    )
 
 
 @router.post(
@@ -151,6 +278,30 @@ async def run_simulation(
 
     # ── Swarm (ECSAS) engine: stream the run's events as SSE ──────────────────
     if body.engine == "swarm":
+        if body.parent_run_id is not None:
+            # Pre-validate before opening the SSE stream — an SSE response can't
+            # 404/409 mid-stream once headers are sent, so fail fast here.
+            parent = (
+                (
+                    await db.execute(
+                        text("SELECT status FROM swarm_runs WHERE id = :id"),
+                        {"id": body.parent_run_id},
+                    )
+                )
+                .mappings()
+                .fetchone()
+            )
+            if parent is None:
+                raise HTTPException(
+                    status_code=status.HTTP_404_NOT_FOUND,
+                    detail=f"parent_run_id {body.parent_run_id!r} not found.",
+                )
+            if parent["status"] == "running":
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"parent_run_id {body.parent_run_id!r} is still running.",
+                )
+
         # Swarm runs join the shared history/statistics world exactly like
         # topology runs: one experiment + one trial per click. The trial id also
         # becomes the Langfuse session id for every LLM call in the run.
@@ -174,7 +325,9 @@ async def run_simulation(
             user_id=user_id,
         )
         return StreamingResponse(
-            _swarm_event_stream(config, current_credentials()),
+            _with_keepalive(
+                _swarm_event_stream(config, current_credentials(), parent_run_id=body.parent_run_id)
+            ),
             media_type="text/event-stream",
             headers={
                 # Stream incrementally: disable client/proxy buffering so each

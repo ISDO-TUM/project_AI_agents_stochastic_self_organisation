@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import uuid
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Iterator
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
@@ -11,6 +12,19 @@ from sqlalchemy.pool import StaticPool
 
 from server.db.tables import metadata
 from server.market_hive.blackboard import Blackboard
+
+
+@pytest.fixture(autouse=True)
+def _offline_embeddings() -> Iterator[None]:
+    """Keep these tests offline + deterministic: never call the embedding API.
+
+    ``Blackboard.post`` embeds every entry's content; with a real API key
+    present that would hit the network on every test. Returning ``None``
+    makes it fall back to the zero-vector path, exactly as it does offline —
+    dedup tests that need real vectors overwrite ``content_embedding`` by hand.
+    """
+    with patch("server.market_hive.blackboard.embed_texts", new=AsyncMock(return_value=None)):
+        yield
 
 
 @pytest.fixture
@@ -189,7 +203,14 @@ async def test_read_respects_thread_filter(db: AsyncConnection) -> None:
     assert len(results_all) == 2
 
 
-async def test_read_does_not_return_invisible_entries(db: AsyncConnection) -> None:
+async def test_read_still_returns_invisible_entries(db: AsyncConnection) -> None:
+    """Soft-deleted (decayed) entries stay in agents' reading/citing context.
+
+    ``is_visible`` only declutters the human-facing board — hard-excluding a
+    decayed entry from ``read`` would mean it can never be cited again (the
+    only way it could ever be promoted or resurface), a one-way trap for any
+    proposal that gained citations slowly.
+    """
     from sqlalchemy import text
 
     run_id = str(uuid.uuid4())
@@ -210,7 +231,8 @@ async def test_read_does_not_return_invisible_entries(db: AsyncConnection) -> No
     await db.commit()
 
     results = await bb.read(run_id=run_id, query="hidden", thread_id=thread_id)
-    assert len(results) == 0
+    assert len(results) == 1
+    assert results[0].id == entry_id
 
 
 async def _seed_two_agents(conn: AsyncConnection, run_id: str, thread_id: str) -> tuple[str, str]:
@@ -412,6 +434,38 @@ async def test_check_promotions_promotes_entry_with_enough_citations(
     assert len(confirmed) == 1
 
 
+async def test_check_promotions_promotes_a_reply_not_just_proposals(
+    db: AsyncConnection,
+) -> None:
+    """Design principle: promotion is decided purely by citation count, not by
+    entry_type — a discussion-round reply that earns enough citations must
+    promote exactly like a round-1 proposal would."""
+    run_id = str(uuid.uuid4())
+    thread_id = str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+
+    bb = Blackboard(db)
+    reply_id = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_a,
+        content="A well-cited reply, not an opening proposal",
+        entry_type="reply",
+        round=2,
+    )
+    await bb.cite(run_id=run_id, citing_agent_id=agent_b, entry_ids=[reply_id], round=3)
+
+    promoted = await bb.check_promotions(
+        run_id=run_id,
+        current_round=3,
+        participants_by_thread={thread_id: 2},
+    )
+
+    assert len(promoted) == 1
+    assert promoted[0].source_draft_id == reply_id
+    assert promoted[0].entry_type == "finding"
+
+
 async def test_check_promotions_does_not_double_promote(db: AsyncConnection) -> None:
     run_id = str(uuid.uuid4())
     thread_id = str(uuid.uuid4())
@@ -442,6 +496,8 @@ async def test_check_promotions_does_not_double_promote(db: AsyncConnection) -> 
 
 
 async def test_soft_delete_stale_entries(db: AsyncConnection) -> None:
+    from sqlalchemy import text
+
     run_id = str(uuid.uuid4())
     thread_id = str(uuid.uuid4())
     agent_a, _ = await _seed_two_agents(db, run_id, thread_id)
@@ -459,8 +515,17 @@ async def test_soft_delete_stale_entries(db: AsyncConnection) -> None:
     deleted = await bb.soft_delete_stale(run_id=run_id, current_round=5, decay_rounds=3)
 
     assert deleted == 1
+    # Marked invisible (declutters the human-facing board)...
+    row = (
+        await db.execute(
+            text("SELECT is_visible FROM draft_entries WHERE run_id = :r"), {"r": run_id}
+        )
+    ).scalar_one()
+    assert not row
+    # ...but still reachable through `read` — decay must not cut an entry out of
+    # agents' own citing context, or it can never be cited (and promoted) again.
     entries = await bb.read(run_id=run_id, query="stale", thread_id=thread_id)
-    assert len(entries) == 0
+    assert len(entries) == 1
 
 
 async def test_soft_delete_exempts_round_1_entries(db: AsyncConnection) -> None:
@@ -849,3 +914,604 @@ async def test_cite_resolves_truncated_entry_id(db: AsyncConnection) -> None:
         round=2,
     )
     assert result["cited"] == 1
+
+
+# ── Contestable consensus: dispute / contest / re-affirm / dedup ─────────────
+
+
+async def _add_agent(conn: AsyncConnection, agent_id: str, name: str) -> None:
+    from sqlalchemy import text
+
+    await conn.execute(
+        text(
+            "INSERT INTO agents (id, name, description, system_prompt, provider, model) "
+            "VALUES (:id, :name, 'd', 's', 'openai', 'gpt-4o')"
+        ),
+        {"id": agent_id, "name": name},
+    )
+    await conn.commit()
+
+
+async def _seed_confirmed(conn: AsyncConnection, run_id: str, thread_id: str, author: str) -> str:
+    """Post a draft entry by ``author`` and directly insert its confirmed row
+    (bypassing the citation threshold) — returns the confirmed_entry id."""
+    from sqlalchemy import text
+
+    bb = Blackboard(conn)
+    draft_id = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=author,
+        content="a confirmed finding",
+        entry_type="proposal",
+        round=1,
+    )
+    confirmed_id = str(uuid.uuid4())
+    await conn.execute(
+        text(
+            """
+            INSERT INTO confirmed_entries
+                (id, run_id, thread_id, source_draft_id, content,
+                 entry_type, citation_count, round_confirmed)
+            VALUES (:id, :run_id, :thread_id, :source_draft_id, :content,
+                    'finding', 1, 1)
+            """
+        ),
+        {
+            "id": confirmed_id,
+            "run_id": run_id,
+            "thread_id": thread_id,
+            "source_draft_id": draft_id,
+            "content": "a confirmed finding",
+        },
+    )
+    await conn.commit()
+    return confirmed_id
+
+
+async def test_dispute_rejects_self(db: AsyncConnection) -> None:
+    from sqlalchemy import text
+
+    run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
+    agent_a, _ = await _seed_two_agents(db, run_id, thread_id)
+    ce_id = await _seed_confirmed(db, run_id, thread_id, agent_a)
+
+    bb = Blackboard(db)
+    result = await bb.dispute(
+        run_id=run_id,
+        disputing_agent_id=agent_a,
+        confirmed_entry_id=ce_id,
+        reason="x",
+        round=2,
+    )
+    assert result["ok"] is False
+    n = (await db.execute(text("SELECT COUNT(*) FROM disputes"))).scalar_one()
+    assert n == 0
+
+
+async def test_dispute_rejects_duplicate(db: AsyncConnection) -> None:
+    from sqlalchemy import text
+
+    run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+    ce_id = await _seed_confirmed(db, run_id, thread_id, agent_a)
+
+    bb = Blackboard(db)
+    first = await bb.dispute(
+        run_id=run_id, disputing_agent_id=agent_b, confirmed_entry_id=ce_id, reason="x", round=2
+    )
+    assert first["ok"] is True
+    second = await bb.dispute(
+        run_id=run_id, disputing_agent_id=agent_b, confirmed_entry_id=ce_id, reason="y", round=3
+    )
+    assert second["ok"] is False
+    n = (await db.execute(text("SELECT COUNT(*) FROM disputes"))).scalar_one()
+    assert n == 1
+
+
+async def test_dispute_rejects_non_confirmed_target(db: AsyncConnection) -> None:
+    run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
+    _agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+
+    bb = Blackboard(db)
+    result = await bb.dispute(
+        run_id=run_id,
+        disputing_agent_id=agent_b,
+        confirmed_entry_id="no-such-entry",
+        reason="x",
+        round=2,
+    )
+    assert result["ok"] is False
+    assert result["why"] == "not disputable"
+
+
+async def test_dispute_below_threshold_keeps_status(db: AsyncConnection) -> None:
+    from sqlalchemy import text
+
+    run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+    ce_id = await _seed_confirmed(db, run_id, thread_id, agent_a)
+
+    bb = Blackboard(db)
+    r = await bb.dispute(
+        run_id=run_id,
+        disputing_agent_id=agent_b,
+        confirmed_entry_id=ce_id,
+        reason="stale data",
+        round=3,
+    )
+    assert r["ok"]
+
+    # M = max(1, 6 // 3 + 1) = 3 — one disputer is not enough.
+    contested = await bb.contest_check(
+        run_id=run_id, current_round=3, participants_by_thread={thread_id: 6}
+    )
+    assert contested == []
+    status = (
+        await db.execute(text("SELECT status FROM confirmed_entries WHERE id=:id"), {"id": ce_id})
+    ).scalar_one()
+    assert status == "confirmed"
+
+
+async def test_m_distinct_disputes_flip_to_contested(db: AsyncConnection) -> None:
+    from sqlalchemy import text
+
+    run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+    agent_c = str(uuid.uuid4())
+    await _add_agent(db, agent_c, "C")
+    ce_id = await _seed_confirmed(db, run_id, thread_id, agent_a)
+
+    bb = Blackboard(db)
+    # M = max(1, 4 // 3 + 1) = 2 — two distinct disputers cross the threshold.
+    for agent in (agent_b, agent_c):
+        r = await bb.dispute(
+            run_id=run_id,
+            disputing_agent_id=agent,
+            confirmed_entry_id=ce_id,
+            reason="contradicted by §7",
+            round=3,
+        )
+        assert r["ok"]
+
+    contested = await bb.contest_check(
+        run_id=run_id, current_round=3, participants_by_thread={thread_id: 4}
+    )
+    assert [c.id for c in contested] == [ce_id]
+    assert contested[0].status == "contested"
+
+    # A system note announcing the contest must be visible on the board.
+    note = (
+        await db.execute(
+            text(
+                "SELECT content FROM draft_entries WHERE entry_type = 'system' "
+                "AND content LIKE '%contested%'"
+            )
+        )
+    ).scalar()
+    assert note is not None
+
+    # Re-running contest_check is idempotent — status is already 'contested',
+    # so the WHERE status='confirmed' filter excludes it from re-processing.
+    again = await bb.contest_check(
+        run_id=run_id, current_round=4, participants_by_thread={thread_id: 4}
+    )
+    assert again == []
+
+
+async def test_reaffirm_check_flips_contested_back_to_confirmed(db: AsyncConnection) -> None:
+    from sqlalchemy import text
+
+    run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+    agent_c = str(uuid.uuid4())
+    await _add_agent(db, agent_c, "C")
+    ce_id = await _seed_confirmed(db, run_id, thread_id, agent_a)
+
+    bb = Blackboard(db)
+    for agent in (agent_b, agent_c):
+        await bb.dispute(
+            run_id=run_id,
+            disputing_agent_id=agent,
+            confirmed_entry_id=ce_id,
+            reason="contradicted",
+            round=3,
+        )
+    contested = await bb.contest_check(
+        run_id=run_id, current_round=3, participants_by_thread={thread_id: 4}
+    )
+    assert len(contested) == 1
+
+    source_draft_id = (
+        await db.execute(
+            text("SELECT source_draft_id FROM confirmed_entries WHERE id=:id"), {"id": ce_id}
+        )
+    ).scalar_one()
+
+    # Fresh citations on the source draft, strictly after the contest round.
+    for agent in (agent_b, agent_c):
+        await bb.cite(run_id=run_id, citing_agent_id=agent, entry_ids=[source_draft_id], round=4)
+
+    reaffirmed = await bb.reaffirm_check(run_id=run_id, participants_by_thread={thread_id: 4})
+    assert [c.id for c in reaffirmed] == [ce_id]
+    assert reaffirmed[0].status == "confirmed"
+
+    status = (
+        await db.execute(text("SELECT status FROM confirmed_entries WHERE id=:id"), {"id": ce_id})
+    ).scalar_one()
+    assert status == "confirmed"
+
+    note = (
+        await db.execute(
+            text(
+                "SELECT content FROM draft_entries WHERE entry_type = 'system' "
+                "AND content LIKE '%re-affirmed%'"
+            )
+        )
+    ).scalar()
+    assert note is not None
+
+
+async def test_check_promotions_dedup_merges_near_duplicate(db: AsyncConnection) -> None:
+    """Two near-identical findings (hand-written embeddings, no API needed) merge
+    into a single confirmed entry instead of both being promoted separately."""
+    import json as json_lib
+
+    from sqlalchemy import text
+
+    run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+    agent_c = str(uuid.uuid4())
+    await _add_agent(db, agent_c, "C")
+
+    bb = Blackboard(db)
+    vec = json_lib.dumps([1.0, 0.0, 0.0])
+    entry1 = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_a,
+        content="First phrasing of the finding",
+        entry_type="proposal",
+        round=1,
+    )
+    entry2 = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_c,
+        content="Second phrasing of the same finding",
+        entry_type="proposal",
+        round=1,
+    )
+    for eid in (entry1, entry2):
+        await db.execute(
+            text("UPDATE draft_entries SET content_embedding = :emb WHERE id = :id"),
+            {"emb": vec, "id": eid},
+        )
+    await db.commit()
+
+    # Promote entry1 first (M=1 with 2 participants).
+    await bb.cite(run_id=run_id, citing_agent_id=agent_b, entry_ids=[entry1], round=2)
+    promoted1 = await bb.check_promotions(
+        run_id=run_id, current_round=2, participants_by_thread={thread_id: 2}
+    )
+    assert len(promoted1) == 1
+    confirmed_id = promoted1[0].id
+
+    # entry2 crosses the threshold too, but its embedding is a near-duplicate —
+    # it must merge into entry1's confirmed row, not create a second one.
+    await bb.cite(run_id=run_id, citing_agent_id=agent_b, entry_ids=[entry2], round=3)
+    promoted2 = await bb.check_promotions(
+        run_id=run_id, current_round=3, participants_by_thread={thread_id: 2}
+    )
+    assert promoted2 == []
+
+    confirmed_rows = await bb.get_confirmed(run_id=run_id, thread_id=thread_id)
+    assert len(confirmed_rows) == 1
+
+    merged_into = (
+        await db.execute(
+            text("SELECT merged_into FROM draft_entries WHERE id = :id"), {"id": entry2}
+        )
+    ).scalar_one()
+    assert merged_into == confirmed_id
+
+    citation_count = (
+        await db.execute(
+            text("SELECT citation_count FROM confirmed_entries WHERE id = :id"),
+            {"id": confirmed_id},
+        )
+    ).scalar_one()
+    assert citation_count == 2  # original + the merged entry's distinct citer
+
+    note = (
+        await db.execute(
+            text(
+                "SELECT content FROM draft_entries WHERE entry_type = 'system' "
+                "AND content LIKE '%merged into an existing confirmed finding%'"
+            )
+        )
+    ).scalar()
+    assert note is not None
+
+
+async def test_check_promotions_pools_citations_across_near_duplicate_cluster(
+    db: AsyncConnection,
+) -> None:
+    """Three specialists independently write near-identical proposals about the
+    same point (same embedding). Two different agents each cite a *different*
+    one of the three — no single proposal individually reaches the M=2
+    threshold for this 5-participant thread, but the cluster's combined,
+    distinct citers (2) do. This is the citation-fragmentation failure mode:
+    real, broad agreement in the room that never registers as promoted
+    because it landed on separate near-duplicate entries instead of one.
+    """
+    import json as json_lib
+
+    from sqlalchemy import text
+
+    run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+    agent_c = str(uuid.uuid4())
+    agent_d = str(uuid.uuid4())
+    agent_e = str(uuid.uuid4())
+    for aid, name in [(agent_c, "C"), (agent_d, "D"), (agent_e, "E")]:
+        await _add_agent(db, aid, name)
+
+    bb = Blackboard(db)
+    vec = json_lib.dumps([1.0, 0.0, 0.0])
+    entry_a = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_a,
+        content="Lawyer's phrasing of the same clause risk",
+        entry_type="proposal",
+        round=1,
+    )
+    entry_b = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_b,
+        content="Financial analyst's phrasing of the same clause risk",
+        entry_type="proposal",
+        round=1,
+    )
+    entry_c = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_c,
+        content="Regulator's phrasing of the same clause risk",
+        entry_type="proposal",
+        round=1,
+    )
+    for eid in (entry_a, entry_b, entry_c):
+        await db.execute(
+            text("UPDATE draft_entries SET content_embedding = :emb WHERE id = :id"),
+            {"emb": vec, "id": eid},
+        )
+    await db.commit()
+
+    # Two different agents, each citing a different one of the three — no
+    # single entry gets more than 1 distinct citer.
+    await bb.cite(run_id=run_id, citing_agent_id=agent_d, entry_ids=[entry_a], round=2)
+    await bb.cite(run_id=run_id, citing_agent_id=agent_e, entry_ids=[entry_b], round=2)
+    # entry_c gets no citation at all.
+
+    promoted = await bb.check_promotions(
+        run_id=run_id,
+        current_round=2,
+        # 5 participants: M = max(1, 5 // 3 + 1) = 2.
+        participants_by_thread={thread_id: 5},
+    )
+
+    assert len(promoted) == 1
+    assert promoted[0].citation_count == 2
+
+    confirmed_rows = await bb.get_confirmed(run_id=run_id, thread_id=thread_id)
+    assert len(confirmed_rows) == 1
+
+    # Only entries with at least one citation are clustering candidates — no
+    # reason to run embedding comparisons against something nobody engaged
+    # with. entry_a/entry_b each had exactly one citer, so whichever wasn't
+    # picked as the representative must be marked merged into it.
+    other_cited_id = {entry_a, entry_b} - {promoted[0].source_draft_id}
+    assert len(other_cited_id) == 1
+    merged_into = (
+        await db.execute(
+            text("SELECT merged_into FROM draft_entries WHERE id = :id"),
+            {"id": next(iter(other_cited_id))},
+        )
+    ).scalar_one()
+    assert merged_into == promoted[0].id
+
+    # entry_c had zero citations — it never entered the candidate pool, so it
+    # legitimately stays untouched rather than being swept in.
+    entry_c_merged = (
+        await db.execute(
+            text("SELECT merged_into FROM draft_entries WHERE id = :id"),
+            {"id": entry_c},
+        )
+    ).scalar_one()
+    assert entry_c_merged is None
+
+
+async def test_check_promotions_dedup_skipped_when_embeddings_zero(db: AsyncConnection) -> None:
+    """Zero/offline embeddings must never block promotion — dedup is a pure gate,
+    never a blocker, when no real vectors are available."""
+    run_id, thread_id = str(uuid.uuid4()), str(uuid.uuid4())
+    agent_a, agent_b = await _seed_two_agents(db, run_id, thread_id)
+    agent_c = str(uuid.uuid4())
+    await _add_agent(db, agent_c, "C")
+
+    bb = Blackboard(db)
+    # _offline_embeddings makes post() fall back to the zero vector for both —
+    # identical zero vectors, yet dedup must NOT treat them as a match.
+    entry1 = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_a,
+        content="First finding",
+        entry_type="proposal",
+        round=1,
+    )
+    entry2 = await bb.post(
+        run_id=run_id,
+        thread_id=thread_id,
+        author_id=agent_c,
+        content="Second finding",
+        entry_type="proposal",
+        round=1,
+    )
+
+    await bb.cite(run_id=run_id, citing_agent_id=agent_b, entry_ids=[entry1], round=2)
+    promoted1 = await bb.check_promotions(
+        run_id=run_id, current_round=2, participants_by_thread={thread_id: 2}
+    )
+    assert len(promoted1) == 1
+
+    await bb.cite(run_id=run_id, citing_agent_id=agent_b, entry_ids=[entry2], round=3)
+    promoted2 = await bb.check_promotions(
+        run_id=run_id, current_round=3, participants_by_thread={thread_id: 2}
+    )
+    assert len(promoted2) == 1  # NOT merged
+
+    confirmed_rows = await bb.get_confirmed(run_id=run_id, thread_id=thread_id)
+    assert len(confirmed_rows) == 2
+
+
+# ── carry_forward_findings (multi-turn contract sessions) ─────────────────────
+
+
+async def _seed_anchor(conn: AsyncConnection, *, run_id: str, thread_id: str, content: str) -> str:
+    """A pre-existing anchor (no source_draft_id) — must never carry forward."""
+    from sqlalchemy import text
+
+    anchor_id = str(uuid.uuid4())
+    await conn.execute(
+        text(
+            "INSERT INTO confirmed_entries "
+            "(id, run_id, thread_id, content, entry_type, round_confirmed) "
+            "VALUES (:id, :run_id, :thread_id, :content, 'anchor', 0)"
+        ),
+        {"id": anchor_id, "run_id": run_id, "thread_id": thread_id, "content": content},
+    )
+    await conn.commit()
+    return anchor_id
+
+
+async def test_carry_forward_brings_findings_as_anchors_with_provenance(
+    db: AsyncConnection,
+) -> None:
+    from sqlalchemy import text
+
+    from server.market_hive.blackboard import carry_forward_findings
+
+    run_id, thread_id, agent_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    await _seed_run(db, run_id, thread_id, agent_id)
+    await _seed_confirmed(db, run_id, thread_id, agent_id)  # one finding
+    await _seed_anchor(db, run_id=run_id, thread_id=thread_id, content="pre-existing anchor")
+
+    child_id = str(uuid.uuid4())
+    await db.execute(
+        text("INSERT INTO swarm_runs (id, status, mode) VALUES (:id, 'running', 'swarm')"),
+        {"id": child_id},
+    )
+    await db.commit()
+
+    carried = await carry_forward_findings(db, parent_run_id=run_id, child_run_id=child_id)
+
+    assert len(carried) == 1
+    assert carried[0].entry_type == "anchor"
+    assert carried[0].origin_run_id == run_id
+    assert carried[0].content.startswith("[carried] ")
+
+    rows = (
+        await db.execute(
+            text("SELECT COUNT(*) FROM confirmed_entries WHERE run_id = :r"), {"r": child_id}
+        )
+    ).scalar_one()
+    assert rows == 1  # the parent's own anchor did NOT transfer
+
+
+async def test_carry_forward_is_not_transitive(db: AsyncConnection) -> None:
+    """r1 → r2 (carried anchor) → r3: r3 gets r2's *own* finding only — r2's
+    carried anchor (entry_type='anchor') does not re-carry."""
+    from sqlalchemy import text
+
+    from server.market_hive.blackboard import carry_forward_findings
+
+    r1, thread_id, agent_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    await _seed_run(db, r1, thread_id, agent_id)
+    await _seed_confirmed(db, r1, thread_id, agent_id)
+
+    r2 = str(uuid.uuid4())
+    await db.execute(
+        text("INSERT INTO swarm_runs (id, status, mode) VALUES (:id, 'running', 'swarm')"),
+        {"id": r2},
+    )
+    await db.commit()
+    await carry_forward_findings(db, parent_run_id=r1, child_run_id=r2)
+    # r2 gains its own genuine finding on top of the carried anchor:
+    await _seed_confirmed(db, r2, thread_id, agent_id)
+
+    r3 = str(uuid.uuid4())
+    await db.execute(
+        text("INSERT INTO swarm_runs (id, status, mode) VALUES (:id, 'running', 'swarm')"),
+        {"id": r3},
+    )
+    await db.commit()
+    carried = await carry_forward_findings(db, parent_run_id=r2, child_run_id=r3)
+
+    assert len(carried) == 1  # only r2's own finding — its carried anchor did not re-carry
+    assert all(c.origin_run_id == r2 for c in carried)
+
+
+async def test_carry_forward_excludes_retracted_findings(db: AsyncConnection) -> None:
+    from sqlalchemy import text
+
+    from server.market_hive.blackboard import carry_forward_findings
+
+    run_id, thread_id, agent_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    await _seed_run(db, run_id, thread_id, agent_id)
+    confirmed_id = await _seed_confirmed(db, run_id, thread_id, agent_id)
+    await db.execute(
+        text("UPDATE confirmed_entries SET status = 'retracted' WHERE id = :id"),
+        {"id": confirmed_id},
+    )
+    await db.commit()
+
+    child_id = str(uuid.uuid4())
+    await db.execute(
+        text("INSERT INTO swarm_runs (id, status, mode) VALUES (:id, 'running', 'swarm')"),
+        {"id": child_id},
+    )
+    await db.commit()
+
+    carried = await carry_forward_findings(db, parent_run_id=run_id, child_run_id=child_id)
+    assert carried == []
+
+
+async def test_carried_anchors_visible_via_get_confirmed_across_threads(
+    db: AsyncConnection,
+) -> None:
+    """Carried anchors reference the parent's thread_id, which does not belong
+    to the child run — get_confirmed(thread_id=None) must still surface them."""
+    from sqlalchemy import text
+
+    from server.market_hive.blackboard import carry_forward_findings
+
+    run_id, thread_id, agent_id = str(uuid.uuid4()), str(uuid.uuid4()), str(uuid.uuid4())
+    await _seed_run(db, run_id, thread_id, agent_id)
+    await _seed_confirmed(db, run_id, thread_id, agent_id)
+
+    child_id = str(uuid.uuid4())
+    await db.execute(
+        text("INSERT INTO swarm_runs (id, status, mode) VALUES (:id, 'running', 'swarm')"),
+        {"id": child_id},
+    )
+    await db.commit()
+    await carry_forward_findings(db, parent_run_id=run_id, child_run_id=child_id)
+
+    bb = Blackboard(db)
+    entries = await bb.get_confirmed(run_id=child_id, thread_id=None)
+    assert len(entries) == 1
+    assert entries[0].content.startswith("[carried] ")
