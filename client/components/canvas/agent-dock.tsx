@@ -6,7 +6,7 @@ import { ReceiptText } from "lucide-react";
 import { Agent, ContractInfo, ThreadInfo } from "@/lib/types";
 import { agentColor } from "@/lib/agent-color";
 import { useTheme } from "@/lib/theme-context";
-import { getTheme, BURG_LT } from "@/lib/theme";
+import { getTheme, BURG_LT, SURFACE_DARK_RGB } from "@/lib/theme";
 import { AgentTrustPanel } from "./blackboard/agent-trust-panel";
 import { ContractReveal } from "./blackboard/contract-reveal";
 
@@ -82,7 +82,7 @@ export function AgentDock({
         zIndex: 20,
         maxWidth: "min(720px, 90vw)",
         borderRadius: 20,
-        background: dark ? "rgba(8,6,16,0.85)" : "rgba(255,253,255,0.9)",
+        background: dark ? `rgba(${SURFACE_DARK_RGB},0.85)` : "rgba(255,253,255,0.9)",
         backdropFilter: "blur(24px)",
         border: `1px solid ${t.borderHi}`,
         boxShadow: dark

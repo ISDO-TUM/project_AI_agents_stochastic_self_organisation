@@ -4,8 +4,8 @@ import { useState } from "react";
 import { createPortal } from "react-dom";
 import { BlackboardState } from "@/lib/types";
 import { useTheme } from "@/lib/theme-context";
-import { getTheme } from "@/lib/theme";
-import { CheckCircle2, Maximize2, Sparkles, X } from "lucide-react";
+import { getTheme, SURFACE_DARK_RGB } from "@/lib/theme";
+import { CheckCircle2, Gavel, Maximize2, X } from "lucide-react";
 import { ConfirmedCard } from "./blackboard/confirmed-card";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { findDraftEntry } from "@/lib/blackboard-utils";
@@ -42,7 +42,7 @@ function FinalAnswer({
           marginBottom: 6,
         }}
       >
-        <Sparkles size={12} strokeWidth={2} color={GOLD} />
+        <Gavel size={12} strokeWidth={2} color={GOLD} />
         <span
           style={{
             fontSize: 10,
@@ -301,7 +301,7 @@ export function ConfirmedBoard({
       {/* ── Body ── */}
       <div
         style={{
-          background: dark ? "rgba(10,8,2,0.88)" : "rgba(255,253,244,0.94)",
+          background: dark ? `rgba(${SURFACE_DARK_RGB},0.92)` : "rgba(255,253,244,0.94)",
           border: `1px solid rgba(181,134,13,0.22)`,
           borderTop: "none",
           borderRadius: "0 0 12px 12px",
@@ -475,7 +475,7 @@ export function ConfirmedBoard({
                 display: "flex",
                 flexDirection: "column",
                 background: dark
-                  ? "rgba(10,8,2,0.97)"
+                  ? `rgba(${SURFACE_DARK_RGB},0.97)`
                   : "rgba(255,253,244,0.99)",
                 border: "1px solid rgba(181,134,13,0.35)",
                 borderRadius: 16,
