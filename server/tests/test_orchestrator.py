@@ -743,7 +743,14 @@ async def test_vote_subround_records_votes_and_confidence(db: AsyncConnection) -
 # ── M3: discussion rounds + end-of-round ──────────────────────────────────────
 
 
-async def test_discussion_runs_to_max_rounds(db: AsyncConnection) -> None:
+async def test_discussion_converges_via_equilibrium_after_one_quiet_round(
+    db: AsyncConnection,
+) -> None:
+    """This scenario promotes both round-1 proposals at round 2, then round 3
+    is genuinely quiet (nothing left to cite/promote) — with
+    k_consecutive=1 (default: one quiet round is real evidence a thread is
+    done, see termination.py), that's enough to converge at round 3 rather
+    than grinding on to max_rounds for no reason."""
     await _insert_agent(db, "a1", "Alpha")
     await _insert_agent(db, "a2", "Beta")
 
@@ -767,7 +774,7 @@ async def test_discussion_runs_to_max_rounds(db: AsyncConnection) -> None:
     )
     assert run is not None
     assert run["status"] == "completed"
-    assert run["termination_reason"] == "max_rounds"
+    assert run["termination_reason"] == "equilibrium"
     assert run["termination_round"] == 3
 
 

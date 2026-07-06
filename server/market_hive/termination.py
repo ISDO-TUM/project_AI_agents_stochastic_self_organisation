@@ -51,7 +51,15 @@ class Synthesizer(Protocol):
 # deliberation has happened. 3 requires at least two real discussion rounds first.
 DEFAULT_MIN_ROUNDS = 3
 DEFAULT_MAX_ROUNDS = 5
-DEFAULT_K_CONSECUTIVE = 2
+# 1, not 2: one genuinely quiet round (zero new confirmations, zero contest/
+# reaffirm flips) is already real evidence a thread is done — requiring a
+# SECOND consecutive quiet round before ending adds a full extra round to
+# every run's floor for no benefit, on top of min_rounds already requiring
+# two real discussion rounds up front. Live runs on ordinary (not "insanely
+# complex") contracts were landing on max_rounds almost every time instead of
+# converging early; this is the actual lever for letting simple tasks end at
+# round 3-4 instead of always paying for all 5.
+DEFAULT_K_CONSECUTIVE = 1
 DEFAULT_EPSILON_ENTROPY = 0
 DEFAULT_TOKEN_BUDGET = 50_000
 DEFAULT_MIN_TURN_BUDGET = 1_000

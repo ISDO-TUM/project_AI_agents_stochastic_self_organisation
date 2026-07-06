@@ -5,7 +5,7 @@ import { createPortal } from "react-dom";
 import { BlackboardState } from "@/lib/types";
 import { useTheme } from "@/lib/theme-context";
 import { getTheme, SURFACE_DARK_RGB } from "@/lib/theme";
-import { CheckCircle2, Maximize2, Sparkles, X } from "lucide-react";
+import { CheckCircle2, Gavel, Maximize2, X } from "lucide-react";
 import { ConfirmedCard } from "./blackboard/confirmed-card";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { findDraftEntry } from "@/lib/blackboard-utils";
@@ -42,7 +42,7 @@ function FinalAnswer({
           marginBottom: 6,
         }}
       >
-        <Sparkles size={12} strokeWidth={2} color={GOLD} />
+        <Gavel size={12} strokeWidth={2} color={GOLD} />
         <span
           style={{
             fontSize: 10,
