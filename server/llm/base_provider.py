@@ -182,7 +182,18 @@ class BaseLLMProvider(ABC):
         kwargs = self._build_kwargs(model, messages, tools)
 
         response: Any = None
-        consecutive_error_iterations = 0
+        # Per-tool-name streak, not per-iteration: a turn that alternates a
+        # failing post_to_blackboard with a harmless read_blackboard every
+        # iteration never has an "all calls in this iteration failed"
+        # iteration, so an iteration-level counter never trips even though
+        # the model is stuck on the exact same rejected action the whole
+        # time — confirmed live: a turn ran the full 20 iterations retrying
+        # `post_to_blackboard` after "you cannot refines your own entry",
+        # because each iteration also made a succeeding call alongside it.
+        # Tracking each tool's own streak (reset only by THAT tool
+        # succeeding) catches this regardless of what else is happening in
+        # the same turn.
+        consecutive_errors_by_tool: dict[str, int] = {}
         for iteration in range(self.max_iterations):
             logger.debug("LLM send iteration %d — model=%s", iteration + 1, model)
             response = await self._send(kwargs)
@@ -192,6 +203,7 @@ class BaseLLMProvider(ABC):
                 return self._extract_text(response), iteration + 1
 
             results: list[tuple[NormalizedToolCall, str]] = []
+            stuck_tool: str | None = None
             for tc in tool_calls:
                 result = await tool_handler(tc.name, tc.arguments) if tool_handler else ""
                 if _is_tool_error(result):
@@ -202,26 +214,27 @@ class BaseLLMProvider(ABC):
                         tc.arguments,
                         result[:300],
                     )
+                    streak = consecutive_errors_by_tool.get(tc.name, 0) + 1
+                    consecutive_errors_by_tool[tc.name] = streak
+                    if streak >= _MAX_CONSECUTIVE_ERROR_ITERATIONS:
+                        stuck_tool = tc.name
                 else:
                     logger.debug("Tool call — model=%s name=%s args=%s", model, tc.name, tc.arguments)
+                    consecutive_errors_by_tool[tc.name] = 0
                 results.append((tc, result))
-
-            if results and all(_is_tool_error(r) for _, r in results):
-                consecutive_error_iterations += 1
-            else:
-                consecutive_error_iterations = 0
 
             self._append_assistant_and_tool_results(messages, response, results)
             kwargs["messages"] = messages
 
-            if consecutive_error_iterations >= _MAX_CONSECUTIVE_ERROR_ITERATIONS:
+            if stuck_tool is not None:
                 logger.warning(
-                    "LLM call ending turn early — model=%s got %d consecutive all-error tool "
-                    "iterations at iteration %d/%d (last: %s) — the model isn't recovering from "
-                    "rejected tool calls, so stopping now instead of exhausting the iteration "
-                    "budget on repeated failures.",
+                    "LLM call ending turn early — model=%s tool=%s got %d consecutive "
+                    "rejections at iteration %d/%d (last: %s) — the model isn't recovering "
+                    "from this rejected tool call, so stopping now instead of exhausting the "
+                    "iteration budget on repeated failures.",
                     model,
-                    consecutive_error_iterations,
+                    stuck_tool,
+                    consecutive_errors_by_tool[stuck_tool],
                     iteration + 1,
                     self.max_iterations,
                     [r for _, r in results],

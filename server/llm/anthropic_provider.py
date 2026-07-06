@@ -74,7 +74,12 @@ class AnthropicProvider(BaseLLMProvider):
         watchdog = create_task(_log_in_flight_progress(model, monotonic()))
         try:
             response: Any = None
-            consecutive_error_iterations = 0
+            # Per-tool-name streak, not per-iteration — see base_provider.py's
+            # _call_inner for why: an iteration that also makes a succeeding
+            # call alongside a repeatedly-rejected one never reads as
+            # "all-error", so tracking each tool's own streak is what
+            # actually catches a model stuck on one bad action.
+            consecutive_errors_by_tool: dict[str, int] = {}
             for iteration in range(self.max_iterations):
                 response = await self._send(kwargs)
                 tool_calls = self._extract_tool_calls(response)
@@ -83,6 +88,7 @@ class AnthropicProvider(BaseLLMProvider):
                     return self._extract_text(response)
 
                 results: list[tuple[NormalizedToolCall, str]] = []
+                stuck_tool: str | None = None
                 for tc in tool_calls:
                     result = await tool_handler(tc.name, tc.arguments) if tool_handler else ""
                     if _is_tool_error(result):
@@ -93,24 +99,26 @@ class AnthropicProvider(BaseLLMProvider):
                             tc.arguments,
                             result[:300],
                         )
+                        streak = consecutive_errors_by_tool.get(tc.name, 0) + 1
+                        consecutive_errors_by_tool[tc.name] = streak
+                        if streak >= _MAX_CONSECUTIVE_ERROR_ITERATIONS:
+                            stuck_tool = tc.name
+                    else:
+                        consecutive_errors_by_tool[tc.name] = 0
                     results.append((tc, result))
-
-                if results and all(_is_tool_error(r) for _, r in results):
-                    consecutive_error_iterations += 1
-                else:
-                    consecutive_error_iterations = 0
 
                 self._append_assistant_and_tool_results(messages, response, results)
                 kwargs["messages"] = messages
 
-                if consecutive_error_iterations >= _MAX_CONSECUTIVE_ERROR_ITERATIONS:
+                if stuck_tool is not None:
                     logger.warning(
-                        "Anthropic call ending turn early — model=%s got %d consecutive "
-                        "all-error tool iterations at iteration %d/%d — not recovering from "
-                        "rejected tool calls, stopping instead of exhausting the iteration "
-                        "budget.",
+                        "Anthropic call ending turn early — model=%s tool=%s got %d "
+                        "consecutive rejections at iteration %d/%d — not recovering from "
+                        "this rejected tool call, stopping instead of exhausting the "
+                        "iteration budget.",
                         model,
-                        consecutive_error_iterations,
+                        stuck_tool,
+                        consecutive_errors_by_tool[stuck_tool],
                         iteration + 1,
                         self.max_iterations,
                     )

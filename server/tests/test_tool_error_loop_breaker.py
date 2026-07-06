@@ -22,10 +22,13 @@ class _FakeProvider(BaseLLMProvider):
     each either a tool call or a final text — enough to drive ``_call_inner``
     without a real API."""
 
-    def __init__(self, scripted_tool_calls: list[str | None]) -> None:
+    def __init__(
+        self, scripted_tool_calls: list[str | None], *, also_call_succeeding_tool: bool = False
+    ) -> None:
         # None means "no more tool calls, return final text" for that turn.
         self._script = list(scripted_tool_calls)
         self._sent = 0
+        self._also_call_succeeding_tool = also_call_succeeding_tool
 
     def _get_client(self) -> Any:
         raise NotImplementedError
@@ -46,7 +49,10 @@ class _FakeProvider(BaseLLMProvider):
     def _extract_tool_calls(self, response: Any) -> list[NormalizedToolCall]:
         if response is None:
             return []
-        return [NormalizedToolCall(id="tc1", name="post_to_blackboard", arguments={})]
+        calls = [NormalizedToolCall(id="tc1", name="post_to_blackboard", arguments={})]
+        if self._also_call_succeeding_tool:
+            calls.append(NormalizedToolCall(id="tc2", name="read_blackboard", arguments={}))
+        return calls
 
     def _extract_text(self, response: Any) -> str:
         return "final text" if response is None else "(mid-turn, no text yet)"
@@ -66,6 +72,15 @@ async def _fake_tool_handler_always_error(name: str, args: dict[str, Any]) -> st
 
 async def _fake_tool_handler_recovers(name: str, args: dict[str, Any]) -> str:
     return '{"entry_id": "abc123"}'
+
+
+async def _fake_tool_handler_one_tool_stuck(name: str, args: dict[str, Any]) -> str:
+    """read_blackboard always succeeds; post_to_blackboard always errors —
+    mirrors the live-run case where a benign call rides alongside a
+    persistently-rejected one every iteration."""
+    if name == "read_blackboard":
+        return "some board digest"
+    return '{"error": "you cannot refines your own entry."}'
 
 
 @pytest.mark.asyncio
@@ -118,3 +133,21 @@ async def test_a_single_recovery_resets_the_error_streak() -> None:
 
     assert text == "final text"
     assert iterations == 5
+
+
+@pytest.mark.asyncio
+async def test_stops_early_when_one_tool_keeps_failing_even_while_others_succeed() -> None:
+    """The exact gap a live run exposed: an iteration-level "all calls this
+    iteration failed" check never trips if a harmless call (read_blackboard)
+    rides alongside the one that's actually stuck (post_to_blackboard) every
+    time — a real turn ran the full 20 iterations this way. Tracking each
+    tool's own streak, reset only by THAT tool succeeding, must catch it."""
+    provider = _FakeProvider(scripted_tool_calls=["call"] * 20, also_call_succeeding_tool=True)
+    provider.max_iterations = 20
+
+    _text, iterations = await provider._call_inner(
+        "prompt", "test-model", tool_handler=_fake_tool_handler_one_tool_stuck
+    )
+
+    assert iterations == _MAX_CONSECUTIVE_ERROR_ITERATIONS
+    assert iterations < 20
