@@ -220,6 +220,13 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS session_id TEXT",
             "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS parent_run_id TEXT",
             "ALTER TABLE confirmed_entries ADD COLUMN IF NOT EXISTS origin_run_id TEXT",
+            # Resilient runs: 'interrupted' was added to the status enum in
+            # tables.py after some databases already had ck_swarm_runs_status
+            # created without it, so reap_stale_runs' UPDATE ... 'interrupted'
+            # violated the stale constraint on those databases.
+            "ALTER TABLE swarm_runs DROP CONSTRAINT IF EXISTS ck_swarm_runs_status",
+            "ALTER TABLE swarm_runs ADD CONSTRAINT ck_swarm_runs_status"
+            " CHECK (status IN ('running','completed','failed','aborted','interrupted'))",
         ):
             await conn.execute(text(stmt))
     elif dialect == "sqlite":
