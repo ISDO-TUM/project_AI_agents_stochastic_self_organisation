@@ -1,11 +1,22 @@
+import contextlib
+import logging
+from asyncio import CancelledError, create_task
+from time import monotonic
 from typing import Any
 
 from anthropic import AsyncAnthropic
 
-from .base_provider import BaseLLMProvider
+from .base_provider import (
+    _MAX_CONSECUTIVE_ERROR_ITERATIONS,
+    BaseLLMProvider,
+    _is_tool_error,
+    _log_in_flight_progress,
+)
 from .credentials import resolve_api_key, resolve_base_url
 from .langfuse_setup import observe, update_current_generation
 from .normalizer import NormalizedToolCall, extract_anthropic_tool_calls
+
+logger = logging.getLogger(__name__)
 
 # max_tokens is required by the Anthropic API (no server-side default).
 # Haiku 4.5 caps at 64k output; Sonnet 4.6 and Opus 4.7 cap at 64k output.
@@ -60,23 +71,56 @@ class AnthropicProvider(BaseLLMProvider):
         if system_prompt:
             kwargs["system"] = system_prompt
 
-        response: Any = None
-        for _ in range(self.max_iterations):
-            response = await self._send(kwargs)
-            tool_calls = self._extract_tool_calls(response)
+        watchdog = create_task(_log_in_flight_progress(model, monotonic()))
+        try:
+            response: Any = None
+            consecutive_error_iterations = 0
+            for iteration in range(self.max_iterations):
+                response = await self._send(kwargs)
+                tool_calls = self._extract_tool_calls(response)
 
-            if not tool_calls:
-                return self._extract_text(response)
+                if not tool_calls:
+                    return self._extract_text(response)
 
-            results: list[tuple[NormalizedToolCall, str]] = []
-            for tc in tool_calls:
-                result = await tool_handler(tc.name, tc.arguments) if tool_handler else ""
-                results.append((tc, result))
+                results: list[tuple[NormalizedToolCall, str]] = []
+                for tc in tool_calls:
+                    result = await tool_handler(tc.name, tc.arguments) if tool_handler else ""
+                    if _is_tool_error(result):
+                        logger.info(
+                            "Tool call rejected — model=%s name=%s args=%s -> %s",
+                            model,
+                            tc.name,
+                            tc.arguments,
+                            result[:300],
+                        )
+                    results.append((tc, result))
 
-            self._append_assistant_and_tool_results(messages, response, results)
-            kwargs["messages"] = messages
+                if results and all(_is_tool_error(r) for _, r in results):
+                    consecutive_error_iterations += 1
+                else:
+                    consecutive_error_iterations = 0
 
-        return self._extract_text(response) if response else ""
+                self._append_assistant_and_tool_results(messages, response, results)
+                kwargs["messages"] = messages
+
+                if consecutive_error_iterations >= _MAX_CONSECUTIVE_ERROR_ITERATIONS:
+                    logger.warning(
+                        "Anthropic call ending turn early — model=%s got %d consecutive "
+                        "all-error tool iterations at iteration %d/%d — not recovering from "
+                        "rejected tool calls, stopping instead of exhausting the iteration "
+                        "budget.",
+                        model,
+                        consecutive_error_iterations,
+                        iteration + 1,
+                        self.max_iterations,
+                    )
+                    return self._extract_text(response)
+
+            return self._extract_text(response) if response else ""
+        finally:
+            watchdog.cancel()
+            with contextlib.suppress(CancelledError):
+                await watchdog
 
     @observe(as_type="generation", name="anthropic")
     async def _send(self, kwargs: dict[str, Any]) -> Any:

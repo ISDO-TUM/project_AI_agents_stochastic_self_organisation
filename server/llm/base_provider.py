@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import os
 from abc import ABC, abstractmethod
@@ -26,6 +27,51 @@ logger = logging.getLogger(__name__)
 # TURN_TIMEOUT_S from this (market_hive/orchestrator.py) so this timeout's
 # more specific error message always fires first instead of racing it.
 _DEFAULT_TIMEOUT_SECONDS = int(os.environ.get("LLM_CALL_TIMEOUT_S", "600"))
+
+# A model that gets a tool call rejected (length cap, reply cap, semantic
+# dedup, whatever) is supposed to read the error and change course — retry
+# differently, or stop. Some models instead just retry the same rejected call
+# near-verbatim, burning iterations without making progress: a live run hit
+# iterations=20 / 156s on a single turn this way, invisible in the logs
+# because tool calls only logged at DEBUG. If every tool call in the last N
+# iterations came back an error, the model isn't recovering — end the turn
+# now with whatever text it has instead of silently exhausting max_iterations
+# (worst case ~30s/iteration * 20 = a turn that looks "just slow" but is
+# actually stuck).
+_MAX_CONSECUTIVE_ERROR_ITERATIONS = 3
+
+
+def _is_tool_error(result: str) -> bool:
+    """True for this codebase's error convention: a tool result that is (or
+    starts with) a JSON object with an "error" key, e.g. '{"error": "..."}'.
+    A heuristic, not a parse — tool results are free-form strings and most
+    aren't JSON at all, so this only needs to catch the convention, not
+    validate it."""
+    return result.strip().startswith('{"error"')
+
+
+# A slow turn and a hung turn look identical in the logs otherwise: nothing
+# is written between "LLM call start" (DEBUG, easy to miss) and "LLM call
+# complete" — which never comes if it's actually stuck. A real run went
+# completely silent for 9+ minutes this way before the whole process died,
+# with no signal in between to tell a merely-slow reasoning model apart from
+# a genuine hang. This logs a heartbeat while a call is still in flight so
+# that distinction is visible in real time, not reconstructed after the fact.
+_PROGRESS_LOG_INTERVAL_S = 30
+
+
+async def _log_in_flight_progress(model: str, started: float) -> None:
+    try:
+        while True:
+            await asyncio.sleep(_PROGRESS_LOG_INTERVAL_S)
+            logger.warning(
+                "LLM call still in progress — model=%s elapsed=%.0fs and counting "
+                "(no completion yet; watch for this repeating without end — that's a hang)",
+                model,
+                monotonic() - started,
+            )
+    except asyncio.CancelledError:
+        pass
 
 
 class BaseLLMProvider(ABC):
@@ -86,6 +132,7 @@ class BaseLLMProvider(ABC):
     ) -> str:
         logger.debug("LLM call start — model=%s tools=%s", model, list(tools or []))
         started = monotonic()
+        watchdog = asyncio.create_task(_log_in_flight_progress(model, started))
         try:
             result, iterations = await asyncio.wait_for(
                 self._call_inner(prompt, model, system_prompt, tools, tool_handler),
@@ -118,6 +165,10 @@ class BaseLLMProvider(ABC):
         except Exception:
             logger.exception("LLM call failed after %.2fs — model=%s", monotonic() - started, model)
             raise
+        finally:
+            watchdog.cancel()
+            with contextlib.suppress(asyncio.CancelledError):
+                await watchdog
 
     async def _call_inner(
         self,
@@ -131,6 +182,7 @@ class BaseLLMProvider(ABC):
         kwargs = self._build_kwargs(model, messages, tools)
 
         response: Any = None
+        consecutive_error_iterations = 0
         for iteration in range(self.max_iterations):
             logger.debug("LLM send iteration %d — model=%s", iteration + 1, model)
             response = await self._send(kwargs)
@@ -141,11 +193,39 @@ class BaseLLMProvider(ABC):
 
             results: list[tuple[NormalizedToolCall, str]] = []
             for tc in tool_calls:
-                logger.debug("Tool call — name=%s args=%s", tc.name, tc.arguments)
                 result = await tool_handler(tc.name, tc.arguments) if tool_handler else ""
+                if _is_tool_error(result):
+                    logger.info(
+                        "Tool call rejected — model=%s name=%s args=%s -> %s",
+                        model,
+                        tc.name,
+                        tc.arguments,
+                        result[:300],
+                    )
+                else:
+                    logger.debug("Tool call — model=%s name=%s args=%s", model, tc.name, tc.arguments)
                 results.append((tc, result))
+
+            if results and all(_is_tool_error(r) for _, r in results):
+                consecutive_error_iterations += 1
+            else:
+                consecutive_error_iterations = 0
 
             self._append_assistant_and_tool_results(messages, response, results)
             kwargs["messages"] = messages
+
+            if consecutive_error_iterations >= _MAX_CONSECUTIVE_ERROR_ITERATIONS:
+                logger.warning(
+                    "LLM call ending turn early — model=%s got %d consecutive all-error tool "
+                    "iterations at iteration %d/%d (last: %s) — the model isn't recovering from "
+                    "rejected tool calls, so stopping now instead of exhausting the iteration "
+                    "budget on repeated failures.",
+                    model,
+                    consecutive_error_iterations,
+                    iteration + 1,
+                    self.max_iterations,
+                    [r for _, r in results],
+                )
+                return self._extract_text(response), iteration + 1
 
         return (self._extract_text(response) if response else ""), self.max_iterations
