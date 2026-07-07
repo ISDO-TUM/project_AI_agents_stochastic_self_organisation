@@ -62,6 +62,14 @@ _BENCH_SYSTEM_PROMPT = (
     "DO NOT ANSWER USING WORLD KNOWLEDGE."
     "ALL INFORMATION YOU CONTRIBUTE MUST BE CITED BY A SOURCE."
 )
+_BENCH_BASELINE_SYSTEM_PROMPT = (
+    "You are a research assistant answering complex questions on your own. "
+    "You have access to a set of Wikipedia articles as your knowledge base. "
+    "Read all your files with the `files` tool before answering. "
+    "Your goal is to provide a well-supported, concise answer to the question. "
+    "DO NOT ANSWER USING WORLD KNOWLEDGE. "
+    "ALL INFORMATION YOU PROVIDE MUST BE CITED INLINE, BY THE NAME OF THE SOURCE FILE."
+)
 _BENCH_PROVIDER = "anthropic"
 _BENCH_MODEL = "claude-sonnet-4-6"
 
@@ -109,13 +117,17 @@ def _resolve_log_path(value: str | None) -> Path | None:
 # ── Agent + file lifecycle ────────────────────────────────────────────────────
 
 
-def _create_bench_agents(client: httpx.Client, count: int) -> list[dict[str, Any]]:
+def _create_bench_agents(
+    client: httpx.Client,
+    count: int,
+    system_prompt: str = _BENCH_SYSTEM_PROMPT,
+) -> list[dict[str, Any]]:
     created: list[dict[str, Any]] = []
     for i in range(1, count + 1):
         body = {
             "name": f"FanOutQA Agent {i}",
             "description": "Temporary agent created by the FanOutQA benchmark runner.",
-            "system_prompt": _BENCH_SYSTEM_PROMPT,
+            "system_prompt": system_prompt,
             "provider": _BENCH_PROVIDER,
             "model": _BENCH_MODEL,
             "tools": ["files"],
@@ -534,6 +546,76 @@ def _run_trial(
     }
 
 
+def _run_baseline_trial(
+    client: httpx.Client,
+    question: Any,
+    pages: list[tuple[str, str]],
+    trial_idx: int,
+    out: _Tee,
+) -> dict[str, Any]:
+    out(f"\n── Question {trial_idx} (baseline) ──────────────────────────────")
+    out(f"Question      : {question.question}")
+    out(f"Expected      : {question.answer}")
+    out(f"Evidence pages: {len(pages)}  →  1 agent (all pages)")
+
+    agents = _create_bench_agents(client, 1, system_prompt=_BENCH_BASELINE_SYSTEM_PROMPT)
+    try:
+        created = _attach_files(client, agents, {"agent_1": pages})
+        try:
+            t0 = time.perf_counter()
+            r = client.post(
+                f"/api/agents/{agents[0]['id']}/run",
+                json={"prompt": question.question},
+                timeout=300.0,
+            )
+            r.raise_for_status()
+            response = r.json()["response"]
+            elapsed = time.perf_counter() - t0
+        finally:
+            _detach_files(client, created)
+    finally:
+        _delete_bench_agents(client, agents)
+
+    scores = _evaluate_answer(question, response)
+    accuracy_loose = scores.get("accuracy_loose", 0.0)
+    accuracy_strict = bool(scores.get("accuracy_strict", 0.0))
+
+    citation_scores = _evaluate_citations(_answer_citation_pairs(question), response)
+
+    out(f"  strict {_ok(accuracy_strict)}  loose={accuracy_loose:.2f}  {elapsed:5.1f}s")
+    out(f"  Generated : {(response or '(none)').strip()}")
+    out(f"  Reference : {question.answer}")
+    if "rouge1" in scores:
+        out(
+            f"  ROUGE-1={scores['rouge1']:.3f}"
+            f"  ROUGE-2={scores.get('rouge2', 0):.3f}"
+            f"  ROUGE-L={scores.get('rougeL', 0):.3f}"
+        )
+    out(
+        f"  Citation ROUGE-1={citation_scores['citation_rouge1']:.3f}"
+        f"  Citation ROUGE-2={citation_scores['citation_rouge2']:.3f}"
+    )
+    out(f"  Cit-ref (R1) : {citation_scores['_ref_rouge1']}")
+    out(f"  Cit-ref (R2) : {citation_scores['_ref_rouge2']}")
+
+    return {
+        "trial": trial_idx,
+        "accuracy_loose": accuracy_loose,
+        "accuracy_strict": accuracy_strict,
+        "n_agents": 1,
+        "n_pages": len(pages),
+        "termination_round": None,
+        "termination_reason": None,
+        "elapsed_s": elapsed,
+        "rouge1": scores.get("rouge1"),
+        "rouge2": scores.get("rouge2"),
+        "rougeL": scores.get("rougeL"),
+        "citation_rouge1": citation_scores["citation_rouge1"],
+        "citation_rouge2": citation_scores["citation_rouge2"],
+        "answer": response,
+    }
+
+
 # ── Summary ───────────────────────────────────────────────────────────────────
 
 
@@ -665,6 +747,15 @@ def main(argv: list[str] | None = None) -> int:
         ),
     )
     parser.add_argument(
+        "--baseline",
+        action="store_true",
+        default=False,
+        help=(
+            "Run in single-agent baseline mode: one agent receives all evidence "
+            "pages and answers in a single call. Mutually exclusive with the swarm."
+        ),
+    )
+    parser.add_argument(
         "--results-file",
         default=None,
         metavar="PATH",
@@ -699,6 +790,7 @@ def main(argv: list[str] | None = None) -> int:
         qa_pairs = _load_questions_and_evidence(q_start, q_end)
         out(
             f"Loaded {len(qa_pairs)} question(s).  "
+            f"mode={'baseline' if args.baseline else 'swarm'}  "
             f"max_pages_per_agent={args.max_pages}  rounds={args.rounds}  "
             f"model={_BENCH_MODEL}"
         )
@@ -707,15 +799,24 @@ def main(argv: list[str] | None = None) -> int:
         with httpx.Client(base_url=args.base_url, timeout=60.0) as client:
             for trial_idx, (question, pages) in enumerate(qa_pairs, start=args.start):
                 try:
-                    row = _run_trial(
-                        client,
-                        question,
-                        pages,
-                        max_pages_per_agent=args.max_pages,
-                        rounds=args.rounds,
-                        trial_idx=trial_idx,
-                        out=out,
-                    )
+                    if args.baseline:
+                        row = _run_baseline_trial(
+                            client,
+                            question,
+                            pages,
+                            trial_idx=trial_idx,
+                            out=out,
+                        )
+                    else:
+                        row = _run_trial(
+                            client,
+                            question,
+                            pages,
+                            max_pages_per_agent=args.max_pages,
+                            rounds=args.rounds,
+                            trial_idx=trial_idx,
+                            out=out,
+                        )
                     all_rows.append(row)
                 except httpx.HTTPError as exc:
                     print(f"Question {trial_idx} failed: {exc}", file=sys.stderr)
