@@ -1,3 +1,5 @@
+export type ReasoningEffort = "low" | "high";
+
 export interface SwarmRunConfig {
   takersMin: number;
   takersMax: number;
@@ -7,6 +9,7 @@ export interface SwarmRunConfig {
   maxAmendments: number;
   inviteFloor: number;
   decayRounds: number;
+  reasoningEffort: ReasoningEffort;
 }
 
 export const DEFAULT_SWARM_CONFIG: SwarmRunConfig = {
@@ -18,4 +21,5 @@ export const DEFAULT_SWARM_CONFIG: SwarmRunConfig = {
   maxAmendments: 2,
   inviteFloor: 0.3,
   decayRounds: 3,
+  reasoningEffort: "high",
 };

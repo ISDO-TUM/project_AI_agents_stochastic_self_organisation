@@ -4,7 +4,7 @@ import { useState, useRef, useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ConsensusMode, Rule, TopologyMode } from "@/lib/types";
 import { AppMode } from "@/components/mode-gate";
-import { SwarmRunConfig } from "@/components/swarm-config";
+import { ReasoningEffort, SwarmRunConfig } from "@/components/swarm-config";
 import { BURG, BURG_DIM, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { LIcon } from "@/lib/icons";
@@ -50,6 +50,20 @@ const CONSENSUS_OPTIONS: SegmentedOption<ConsensusMode>[] = [
     label: "Bidding",
     tooltip:
       "Agents bid on the sub-tasks they can contribute to, then assemble a verified collaboration set from the winning bids.",
+  },
+];
+
+const REASONING_EFFORT_OPTIONS: SegmentedOption<ReasoningEffort>[] = [
+  {
+    value: "low",
+    label: "Low",
+    tooltip:
+      "Fast demo pipeline (~3-5 min): 2-3 rounds, no wave 2, no vote sub-round, no ratification.",
+  },
+  {
+    value: "high",
+    label: "High",
+    tooltip: "Full pipeline (today's default): up to 5 rounds, ratification runs.",
   },
 ];
 
@@ -232,12 +246,14 @@ function NumField({
   value,
   onChange,
   step = 1,
+  disabled = false,
   t,
 }: {
   label: string;
   value: number;
   onChange: (n: number) => void;
   step?: number;
+  disabled?: boolean;
   t: Theme;
 }) {
   return (
@@ -247,6 +263,7 @@ function NumField({
         alignItems: "center",
         justifyContent: "space-between",
         gap: 8,
+        opacity: disabled ? 0.5 : 1,
       }}
     >
       <span style={{ fontSize: 12, color: t.textSub }}>{label}</span>
@@ -254,6 +271,7 @@ function NumField({
         type="number"
         value={value}
         step={step}
+        disabled={disabled}
         onChange={(e) => onChange(Number(e.target.value))}
         style={{
           width: 84,
@@ -266,6 +284,7 @@ function NumField({
           fontWeight: 600,
           textAlign: "right",
           outline: "none",
+          cursor: disabled ? "not-allowed" : "text",
         }}
       />
     </div>
@@ -561,6 +580,27 @@ export function TweaksPanel({
             </p>
 
             <FieldLabel
+              text="Reasoning effort"
+              t={t}
+              tooltip="Low: fast demo pipeline (~3-5 min, 2-3 rounds, no ratification). High: full pipeline (today's default)."
+            />
+            <Segmented
+              options={REASONING_EFFORT_OPTIONS}
+              value={swarmConfig.reasoningEffort}
+              onChange={(level) =>
+                updateSwarmConfig({
+                  reasoningEffort: level,
+                  ...(level === "low"
+                    ? { roundsMin: 2, roundsMax: 3, maxAmendments: 0 }
+                    : {}),
+                })
+              }
+              disabled={simRunning}
+              t={t}
+            />
+
+            <div style={{ height: 14 }} />
+            <FieldLabel
               text="Takers"
               t={t}
               tooltip="How many agents may take a task per round."
@@ -591,12 +631,14 @@ export function TweaksPanel({
                 label="Min"
                 value={swarmConfig.roundsMin}
                 onChange={(n) => updateSwarmConfig({ roundsMin: n })}
+                disabled={swarmConfig.reasoningEffort === "low"}
                 t={t}
               />
               <NumField
                 label="Max"
                 value={swarmConfig.roundsMax}
                 onChange={(n) => updateSwarmConfig({ roundsMax: n })}
+                disabled={swarmConfig.reasoningEffort === "low"}
                 t={t}
               />
             </div>

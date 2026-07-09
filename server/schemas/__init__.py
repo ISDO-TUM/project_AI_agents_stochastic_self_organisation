@@ -920,6 +920,7 @@ class SimulationRunRequest(BaseModel):
     max_amendments: int | None = Field(default=None, ge=0, le=5)
     decay_rounds: int | None = Field(default=None, ge=1, le=10)
     invite_floor: float | None = Field(default=None, ge=0.0, le=1.0)
+    demo_mode: bool | None = Field(default=None)
 
 
 class SimulationStartResponse(BaseModel):

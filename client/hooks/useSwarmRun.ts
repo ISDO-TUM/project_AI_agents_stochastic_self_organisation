@@ -404,6 +404,7 @@ export function useSwarmRun(): {
                     max_amendments: config.maxAmendments,
                     decay_rounds: config.decayRounds,
                     invite_floor: config.inviteFloor,
+                    demo_mode: config.reasoningEffort === "low",
                   }
                 : {}),
             }),

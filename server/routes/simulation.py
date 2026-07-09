@@ -327,6 +327,7 @@ async def run_simulation(
         for field in (
             "min_takers", "max_takers", "min_rounds", "max_rounds",
             "token_budget", "max_amendments", "decay_rounds", "invite_floor",
+            "demo_mode",
         ):
             value = getattr(body, field, None)
             if value is not None:
