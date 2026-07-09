@@ -300,14 +300,17 @@ export function AgentDock({
                   </button>
                 )}
                 <span
+                  title={agent.name}
                   style={{
                     fontSize: 10,
                     fontWeight: 600,
                     color: t.text,
                     whiteSpace: "nowrap",
-                    maxWidth: 64,
+                    maxWidth: 72,
                     overflow: "hidden",
                     textOverflow: "ellipsis",
+                    textAlign: "center",
+                    cursor: "default",
                   }}
                 >
                   {agent.name}

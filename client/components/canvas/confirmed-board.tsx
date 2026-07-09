@@ -12,6 +12,51 @@ import { findDraftEntry } from "@/lib/blackboard-utils";
 
 const GOLD = "#b5860d";
 
+/** Shimmering placeholder card shown while the confirmed board is syncing —
+ *  mirrors the draft board's skeleton, tinted gold to match this board. */
+function SkeletonCard({ dark, delay = 0 }: { dark: boolean; delay?: number }) {
+  const bg = dark
+    ? "linear-gradient(90deg,rgba(181,134,13,0.06) 25%,rgba(181,134,13,0.14) 50%,rgba(181,134,13,0.06) 75%)"
+    : "linear-gradient(90deg,rgba(181,134,13,0.05) 25%,rgba(181,134,13,0.12) 50%,rgba(181,134,13,0.05) 75%)";
+  const sh = (w: number | string, h = 9, r = 4): React.CSSProperties => ({
+    width: w,
+    height: h,
+    borderRadius: r,
+    background: bg,
+    backgroundSize: "400px 100%",
+    animation: `boardShimmer 1.4s ease-in-out ${delay}s infinite`,
+    flexShrink: 0,
+  });
+  return (
+    <div
+      style={{
+        background: dark ? "rgba(181,134,13,0.05)" : "rgba(181,134,13,0.03)",
+        border: "1px solid rgba(181,134,13,0.1)",
+        borderRadius: 10,
+        padding: "11px 14px",
+        marginBottom: 10,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 8,
+          marginBottom: 9,
+        }}
+      >
+        <div style={sh(22, 22, 11)} />
+        <div style={sh(72)} />
+        <div style={{ ...sh(38, 8), marginLeft: "auto" }} />
+      </div>
+      <div style={sh("100%", 9)} />
+      <div style={{ ...sh("85%", 9), marginTop: 5 }} />
+      <div style={{ ...sh("60%", 9), marginTop: 5, marginBottom: 12 }} />
+      <div style={sh(48, 8)} />
+    </div>
+  );
+}
+
 /** The synthesised final answer, shown above the confirmed cards once the run
  *  completes. Combines the confirmed findings into one brief reply to the prompt.
  *  ``onExpand`` (when provided) re-opens the prominent completion overlay. */
@@ -99,6 +144,8 @@ interface ConfirmedBoardProps {
   activeThreadId?: string | null;
   /** True once the run has fully completed — turns the header dot solid green. */
   done?: boolean;
+  /** True while a run is in flight — drives the loading skeleton. */
+  running?: boolean;
   /** Brief answer synthesised from the confirmed findings at run end. */
   finalAnswer?: string | null;
   /** Re-opens the prominent completion overlay from the in-board answer card. */
@@ -117,6 +164,7 @@ export function ConfirmedBoard({
   zoom = 1,
   activeThreadId = null,
   done = false,
+  running = false,
   finalAnswer = null,
   onShowFinalAnswer,
   agents = [],
@@ -296,6 +344,10 @@ export function ConfirmedBoard({
           0%   { left: -50%; }
           100% { left: 120%; }
         }
+        @keyframes boardShimmer {
+          0%   { background-position: -400px 0; }
+          100% { background-position:  400px 0; }
+        }
       `}</style>
 
       {/* ── Body ── */}
@@ -314,22 +366,16 @@ export function ConfirmedBoard({
         }}
         className="pscroll"
       >
-        {state.loading && (
-          <div
-            style={{
-              textAlign: "center",
-              padding: "36px 0",
-              color: t.textDim,
-              fontSize: 12,
-              fontFamily: "'Space Grotesk', system-ui",
-            }}
-          >
-            Loading confirmed board…
-          </div>
+        {running && !hasContent && !state.error && (
+          <>
+            <SkeletonCard dark={dark} delay={0} />
+            <SkeletonCard dark={dark} delay={0.15} />
+            <SkeletonCard dark={dark} delay={0.3} />
+          </>
         )}
 
         {/* Run complete banner */}
-        {done && !state.loading && (
+        {done && (
           <div
             style={{
               display: "flex",
@@ -389,9 +435,9 @@ export function ConfirmedBoard({
           </div>
         )}
 
-        {!state.loading && !state.error && (
+        {!state.error && (
           <>
-            {filteredConfirmed.length === 0 ? (
+            {filteredConfirmed.length === 0 && !running ? (
               <div
                 style={{
                   display: "flex",
@@ -551,20 +597,14 @@ export function ConfirmedBoard({
                 style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}
                 className="pscroll"
               >
-                {state.loading && (
-                  <div
-                    style={{
-                      textAlign: "center",
-                      padding: "60px 0",
-                      color: t.textDim,
-                      fontSize: 13,
-                      fontFamily: "'Space Grotesk', system-ui",
-                    }}
-                  >
-                    Loading confirmed board…
-                  </div>
+                {running && !hasContent && !state.error && (
+                  <>
+                    <SkeletonCard dark={dark} delay={0} />
+                    <SkeletonCard dark={dark} delay={0.15} />
+                    <SkeletonCard dark={dark} delay={0.3} />
+                  </>
                 )}
-                {!state.loading && state.error && (
+                {state.error && (
                   <div
                     style={{
                       textAlign: "center",
@@ -576,12 +616,12 @@ export function ConfirmedBoard({
                     {state.error}
                   </div>
                 )}
-                {!state.loading && !state.error && (
+                {!state.error && (
                   <>
                     {done && finalAnswer && (
                       <FinalAnswer text={finalAnswer} dark={dark} />
                     )}
-                    {filteredConfirmed.length === 0 ? (
+                    {filteredConfirmed.length === 0 && !running ? (
                       <div
                         style={{
                           textAlign: "center",

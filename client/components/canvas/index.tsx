@@ -597,6 +597,7 @@ export function Canvas({
               onThreadSelect={setActiveThreadId}
               agents={agents}
               done={swarmDone}
+              running={Boolean(swarmRunId) && !swarmDone}
               promotedAgentIds={promotedAgentIds}
             />
           )}
@@ -617,6 +618,7 @@ export function Canvas({
             zoom={zoom}
             activeThreadId={activeThreadId}
             done={swarmDone}
+            running={Boolean(swarmRunId) && !swarmDone}
             finalAnswer={swarmFinalAnswer}
             onShowFinalAnswer={onShowFinalAnswer}
             agents={agents}
