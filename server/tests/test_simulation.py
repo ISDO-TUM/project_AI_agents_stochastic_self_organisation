@@ -1828,3 +1828,76 @@ async def test_swarm_run_creates_linked_experiment_and_trial(client: AsyncClient
     assert config.trial_id == trial["id"]
     assert config.experiment_id == experiment["id"]
     assert config.user_id == "user-alice"
+
+
+@pytest.mark.asyncio
+async def test_run_simulation_swarm_threads_config_fields(client: AsyncClient) -> None:
+    """POSTing min_rounds/max_rounds (etc.) on the swarm engine branch must
+    reach the persisted SwarmRunConfig — not silently default."""
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    seen_configs: list[Any] = []
+
+    def fake_run_swarm(config: Any, db: Any, **kwargs: Any) -> AsyncIterator[SimulationStep]:
+        seen_configs.append(config)
+
+        async def stream() -> AsyncIterator[SimulationStep]:
+            yield SimulationStep(type="system", msg="Run started")
+
+        return stream()
+
+    with patch("server.routes.simulation.run_swarm", new=fake_run_swarm):
+        resp = await client.post(
+            "/api/simulation/run",
+            json={"engine": "swarm", "prompt": "test prompt", "min_rounds": 1, "max_rounds": 2},
+        )
+
+    assert resp.status_code == 200
+    assert len(seen_configs) == 1
+    config = seen_configs[0]
+    # Defaults are min_rounds=3, max_rounds=5 — assert the sent values, not those.
+    assert config.min_rounds == 1
+    assert config.max_rounds == 2
+
+
+@pytest.mark.asyncio
+async def test_run_simulation_swarm_omitted_fields_keep_defaults(client: AsyncClient) -> None:
+    """Omitting the new optional fields must leave SwarmRunConfig at its own
+    defaults — zero behaviour change for existing callers."""
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    seen_configs: list[Any] = []
+
+    def fake_run_swarm(config: Any, db: Any, **kwargs: Any) -> AsyncIterator[SimulationStep]:
+        seen_configs.append(config)
+
+        async def stream() -> AsyncIterator[SimulationStep]:
+            yield SimulationStep(type="system", msg="Run started")
+
+        return stream()
+
+    with patch("server.routes.simulation.run_swarm", new=fake_run_swarm):
+        resp = await client.post(
+            "/api/simulation/run",
+            json={"engine": "swarm", "prompt": "test prompt"},
+        )
+
+    assert resp.status_code == 200
+    assert len(seen_configs) == 1
+    config = seen_configs[0]
+    assert config.min_rounds == 3
+    assert config.max_rounds == 5
+    assert config.min_takers == 2
+    assert config.max_takers == 5
+    assert config.token_budget == 50_000
+    assert config.max_amendments == 2
+    assert config.decay_rounds == 3
+    assert config.invite_floor == 0.3

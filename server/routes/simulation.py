@@ -318,12 +318,20 @@ async def run_simulation(
             user_id=user_id,
         )
         trial_id = await create_trial(db, body.prompt, "swarm run", "swarm", experiment_id, user_id)
-        config = SwarmRunConfig(
-            prompt=body.prompt,
-            trial_id=trial_id,
-            experiment_id=experiment_id,
-            user_id=user_id,
-        )
+        config_kwargs: dict[str, Any] = {
+            "prompt": body.prompt,
+            "trial_id": trial_id,
+            "experiment_id": experiment_id,
+            "user_id": user_id,
+        }
+        for field in (
+            "min_takers", "max_takers", "min_rounds", "max_rounds",
+            "token_budget", "max_amendments", "decay_rounds", "invite_floor",
+        ):
+            value = getattr(body, field, None)
+            if value is not None:
+                config_kwargs[field] = value
+        config = SwarmRunConfig(**config_kwargs)
         return StreamingResponse(
             _with_keepalive(
                 _swarm_event_stream(config, current_credentials(), parent_run_id=body.parent_run_id)
