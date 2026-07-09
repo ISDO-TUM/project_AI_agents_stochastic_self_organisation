@@ -9,8 +9,9 @@ import {
   CheckCircle2,
   ChevronRight,
   Copy,
+  Gavel,
   Heart,
-  Sparkles,
+  Table as TableIcon,
   X,
 } from "lucide-react";
 import { useTheme } from "@/lib/theme-context";
@@ -31,6 +32,9 @@ interface FinalAnswerRevealProps {
   findings: ConfirmedEntry[];
   /** The takers' vote on `answer` (ratified synthesis). Null if it didn't run. */
   ratification?: Ratification | null;
+  /** The run's tabular deliverable as a Markdown table, shown under the answer.
+   *  Null when the run produced no table. */
+  resultTable?: string | null;
   onClose: () => void;
 }
 
@@ -47,6 +51,7 @@ export function FinalAnswerReveal({
   answer,
   findings,
   ratification = null,
+  resultTable = null,
   onClose,
 }: FinalAnswerRevealProps) {
   const { dark } = useTheme();
@@ -130,7 +135,7 @@ export function FinalAnswerReveal({
                 flexShrink: 0,
               }}
             >
-              <Sparkles size={15} strokeWidth={2} color={GOLD} />
+              <Gavel size={15} strokeWidth={2} color={GOLD} />
               <span
                 style={{
                   fontSize: 12.5,
@@ -240,6 +245,46 @@ export function FinalAnswerReveal({
               >
                 <MarkdownRenderer content={answer} fontSize={14.5} />
               </div>
+
+              {/* ── Result table (the run's tabular deliverable) ── */}
+              {resultTable && (
+                <div
+                  style={{
+                    marginTop: 14,
+                    padding: "10px 13px",
+                    borderRadius: 10,
+                    background: dark
+                      ? "rgba(181,134,13,0.08)"
+                      : "rgba(181,134,13,0.05)",
+                    border: "1px solid rgba(181,134,13,0.28)",
+                    overflowX: "auto",
+                  }}
+                >
+                  <div
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 6,
+                      marginBottom: 8,
+                    }}
+                  >
+                    <TableIcon size={13} strokeWidth={2} color={GOLD} />
+                    <span
+                      style={{
+                        fontSize: 10,
+                        fontWeight: 800,
+                        color: GOLD,
+                        letterSpacing: "0.09em",
+                        textTransform: "uppercase",
+                        fontFamily: "'Space Grotesk', system-ui, sans-serif",
+                      }}
+                    >
+                      Result table
+                    </span>
+                  </div>
+                  <MarkdownRenderer content={resultTable} fontSize={12.5} />
+                </div>
+              )}
 
               {/* ── Ratification badge (ratified synthesis) ── */}
               {ratification && ratification.approved && (

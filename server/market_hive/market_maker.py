@@ -229,7 +229,9 @@ class MarketMaker:
         self,
         *,
         provider: str = "openai",
-        model: str = "gpt-5",
+        # Fast enough to keep the run's first frame snappy, but capable enough to
+        # draft a coherent contract — the full gpt-5 / gpt-5.4 are noticeably slower.
+        model: str = "gpt-5.4-mini",
         # Falls back to the no-LLM source on timeout, so this bounds how long
         # the run's first frame can stall — but a slow (not hung) provider that
         # trips it silently degrades the contract to the raw one-line prompt,

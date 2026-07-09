@@ -99,7 +99,7 @@ irrelevant agent stays out. The expected outcome is a combined plan —
 airfreight the bonded stock as a bridge, ramp NovaChip Penang for the
 remaining weeks — that no single agent's data was sufficient to produce.
 
-### `order-allocation-swarm.json` (tabular-tools showcase)
+### `order-allocation-swarm.json` (tabular-tools showcase · two prompts)
 
 Sales-order allocation under a supply shortage at a fictional pump maker
 (Falkenberg Pumpen GmbH). Only 5,000 units of material 4711 are available
@@ -109,22 +109,34 @@ about it. Built for the SAP audience: the scenario is classic ATP/backorder
 processing, and it shows agents with read/write access to tabular data
 (`table_query` / `table_mutate`) alongside knowledge files.
 
-Five agents:
+The canvas carries a standby **expedite lever** (an extra casting batch at a
+premium) and a credit block that treasury can partially lift, so the same
+setup drives two runs of very different depth — see the two prompts below.
+
+Six agents:
 
 - **Order Fulfillment Manager** — loads `open_sales_orders.csv`, gathers
-  the specialists' input, writes the final `allocated_qty` column, exports
-  the completed table.
+  the specialists' input, writes the final `allocated_qty` column (and an
+  optional `expedite_qty` column when asked), exports the completed table.
 - **Credit & Receivables Controller** — credit memo shows Helios (C-2002)
   under an active credit block; stamps a `credit_check` column
-  (`OK`/`BLOCKED`) into the shared table.
+  (`OK`/`BLOCKED`) into the shared table. Honours a treasury partial-release
+  when a run supplies one.
 - **Key Account Manager** — frame-contract notes: Bergmann carries a 95%
   service-level clause (€60k penalty), Quantex is a strategic pilot
   account, Nordwind is a spot buyer.
 - **Margin Analyst** — per-unit contribution margins; computes where the
-  cut is cheapest.
+  cut is cheapest and weighs the €4.00 expedite premium against margin/penalty.
+- **Production & Expedite Planner** — owns the standby expedite lever: one
+  batch of up to 800 units for 2026-07-28 at a €4.00/unit premium, reserved
+  by policy for protecting must-serve or penalty orders.
 - **Data Privacy Officer** — deliberately irrelevant; should abstain.
 
-Suggested prompt:
+The scenario ships with **two prompts** — a simple one for a clean, easy-to-
+follow live run, and a harder one that injects a live escalation to force a
+re-optimisation and richer table writes.
+
+#### Simple prompt
 
 > We can only ship 5,000 units of material 4711 in July against 8,000 on
 > order. Decide how to allocate the available stock across the open sales
@@ -139,17 +151,47 @@ Each order maps to one clear reason, so the answer is easy to follow live:
 - **Nordwind → 1,000 of 1,500** — spot buyer, lowest margin, no penalty, so
   the 500-unit shortfall lands here.
 
-→ allocation **3,000 / 0 / 1,000 / 1,000** (sums to the 5,000 available).
-No single agent's data is sufficient: the credit block, the penalty clause,
-and the margin ranking each come from a different specialist.
+→ allocation **3,000 / 0 / 1,000 / 1,000** (sums to the 5,000 available). The
+expedite batch stays on standby (no penalty is at stake), and the privacy
+officer abstains. No single agent's data is sufficient: the credit block, the
+penalty clause, and the margin ranking each come from a different specialist.
 
-**Seeing the write.** The shared table is in-memory for the run — there is
-no table panel in the UI. The Order Fulfillment Manager's final message ends
-with a `FINAL ALLOCATION TABLE:` block (the exported CSV with the filled
-`allocated_qty` column) followed by a `WRITE CONFIRMATION: table version N,
-columns written: ...` line drawn from `table_query` action='history'. That
-history shows two different agents writing to the same table — the credit
-controller's `credit_check` column and the manager's `allocated_qty`.
+#### Complicated prompt (escalation)
+
+> Same July shortage of material 4711 (5,000 available against 8,000 on
+> order), but two updates just landed. Treasury confirms Helios (C-2002) will
+> clear €120k of its overdue by 2026-07-15 — enough for a partial credit
+> release of up to 1,500 units of its order. And plant management has
+> pre-approved the standby expedite batch (up to 800 units, arriving
+> 2026-07-28 at a €4.00/unit premium) if it prevents financial damage.
+> Re-optimise the allocation to minimise total financial damage (contract
+> penalties + lost margin − expedite value), decide whether and how much to
+> expedite and how much of Helios to release, write the final allocation
+> (and any expedite plan) into the shared table, and add a one-line
+> contingency for whatever stays short if the 2026-08-03 batch slips.
+
+This one has no single tidy answer — that is the point. The must-serve orders
+still anchor it (Bergmann 3,000, Quantex 1,000), but freeing Helios flips the
+residual decision: with the credit cap lifted, Helios (€9.20 margin) now
+out-ranks Nordwind (€5.40) for the remaining base capacity, so the allocation
+shifts toward **3,000 / Helios up to ~1,000 / Nordwind cut / 1,000** — the
+mirror image of the simple run. The expedite batch becomes a genuine
+judgement call (no order left carries a penalty, yet expedited Helios units
+still clear their premium), which is exactly the kind of split that surfaces
+a **contested synthesis** in the ratification step. Great for showing the
+swarm reasoning under a moving target rather than reciting a fixed answer.
+
+**Seeing the write.** The shared table is in-memory for the run. The Order
+Fulfillment Manager's final message ends with a `FINAL ALLOCATION TABLE:`
+block — the completed table as a Markdown table (the filled `allocated_qty`
+column, plus `expedite_qty` on the complicated run) — followed by a
+`WRITE CONFIRMATION: table version N, columns written: ...` line drawn from
+`table_query` action='history'. That history shows different agents writing to
+the same table: the credit controller's `credit_check` column and the
+manager's `allocated_qty` (and `expedite_qty`). The Confirmed board lifts that
+table out of the message and renders it as a **Result table** directly beneath
+the synthesised final answer (and in the completion overlay), so you see the
+allocation without scrolling the raw message.
 
 ### `president-majority.json`
 
