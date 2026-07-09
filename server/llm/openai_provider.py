@@ -98,6 +98,7 @@ async def call_openai(
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_handler: Any | None = None,
+    max_iterations: int | None = None,
 ) -> str:
     return await OpenAIProvider().call(
         prompt,
@@ -105,4 +106,5 @@ async def call_openai(
         system_prompt=system_prompt,
         tools=tools,
         tool_handler=tool_handler,
+        max_iterations=max_iterations,
     )

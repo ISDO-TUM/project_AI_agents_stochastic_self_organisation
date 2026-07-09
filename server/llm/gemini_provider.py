@@ -151,7 +151,11 @@ class GeminiProvider(BaseLLMProvider):
         system_prompt: str | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_handler: Any | None = None,
+        max_iterations: int | None = None,
     ) -> str:
+        effective_max_iterations = (
+            max_iterations if max_iterations is not None else self.max_iterations
+        )
         messages = self._build_messages(prompt, system_prompt)
         kwargs = self._build_kwargs(model, messages, tools)
 
@@ -166,7 +170,7 @@ class GeminiProvider(BaseLLMProvider):
             # "all-error", so tracking each tool's own streak is what
             # actually catches a model stuck on one bad action.
             consecutive_errors_by_tool: dict[str, int] = {}
-            for iteration in range(self.max_iterations):
+            for iteration in range(effective_max_iterations):
                 response = await self._send(kwargs)
                 tool_calls = self._extract_tool_calls(response)
 
@@ -205,7 +209,7 @@ class GeminiProvider(BaseLLMProvider):
                         stuck_tool,
                         consecutive_errors_by_tool[stuck_tool],
                         iteration + 1,
-                        self.max_iterations,
+                        effective_max_iterations,
                     )
                     return self._extract_text(response)
 
@@ -241,6 +245,7 @@ async def call_gemini(
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_handler: Any | None = None,
+    max_iterations: int | None = None,
 ) -> str:
     return await GeminiProvider().call(
         prompt,
@@ -248,4 +253,5 @@ async def call_gemini(
         system_prompt=system_prompt,
         tools=tools,
         tool_handler=tool_handler,
+        max_iterations=max_iterations,
     )

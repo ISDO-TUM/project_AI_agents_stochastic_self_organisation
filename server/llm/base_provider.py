@@ -129,13 +129,14 @@ class BaseLLMProvider(ABC):
         system_prompt: str | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_handler: Any | None = None,
+        max_iterations: int | None = None,
     ) -> str:
         logger.debug("LLM call start — model=%s tools=%s", model, list(tools or []))
         started = monotonic()
         watchdog = asyncio.create_task(_log_in_flight_progress(model, started))
         try:
             result, iterations = await asyncio.wait_for(
-                self._call_inner(prompt, model, system_prompt, tools, tool_handler),
+                self._call_inner(prompt, model, system_prompt, tools, tool_handler, max_iterations),
                 timeout=self.timeout_seconds,
             )
             # Speed instrumentation (temporary, pending real numbers from a live run):
@@ -177,7 +178,11 @@ class BaseLLMProvider(ABC):
         system_prompt: str | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_handler: Any | None = None,
+        max_iterations: int | None = None,
     ) -> tuple[str, int]:
+        effective_max_iterations = (
+            max_iterations if max_iterations is not None else self.max_iterations
+        )
         messages = self._build_messages(prompt, system_prompt)
         kwargs = self._build_kwargs(model, messages, tools)
 
@@ -194,7 +199,7 @@ class BaseLLMProvider(ABC):
         # succeeding) catches this regardless of what else is happening in
         # the same turn.
         consecutive_errors_by_tool: dict[str, int] = {}
-        for iteration in range(self.max_iterations):
+        for iteration in range(effective_max_iterations):
             logger.debug("LLM send iteration %d — model=%s", iteration + 1, model)
             response = await self._send(kwargs)
             tool_calls = self._extract_tool_calls(response)
@@ -236,9 +241,9 @@ class BaseLLMProvider(ABC):
                     stuck_tool,
                     consecutive_errors_by_tool[stuck_tool],
                     iteration + 1,
-                    self.max_iterations,
+                    effective_max_iterations,
                     [r for _, r in results],
                 )
                 return self._extract_text(response), iteration + 1
 
-        return (self._extract_text(response) if response else ""), self.max_iterations
+        return (self._extract_text(response) if response else ""), effective_max_iterations

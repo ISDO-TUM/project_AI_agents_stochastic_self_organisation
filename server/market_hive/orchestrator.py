@@ -203,6 +203,7 @@ async def _default_agent_runner(
     poisons the next agent's turn on a shared connection.
     """
     db = tool_context.get("db")
+    max_iterations = tool_context.get("max_iterations")
     try:
         # Load this agent's knowledge files so it can consult them in any phase
         # (auction self-selection through the discussion rounds, PRD §9.1). The
@@ -241,6 +242,7 @@ async def _default_agent_runner(
                 system_prompt=system_prompt,
                 tool_names=effective_tools,
                 tool_context={**tool_context, "files": files},
+                max_iterations=max_iterations,
             )
         logger.info(
             "Agent turn complete — agent=%s phase=%s round=%s elapsed=%.2fs",
@@ -377,6 +379,7 @@ def _auction_turn(
     contract: ContractSchema,
     agent_runner: AgentRunner,
     trial_id: str | None,
+    max_iterations: int | None = None,
 ) -> _Turn:
     """Build one auction self-selection turn (bid vs. abstain).
 
@@ -400,6 +403,7 @@ def _auction_turn(
             "preliminary_score": invitation.preliminary_score,
             "trial_id": trial_id,
             "phase": "auction",
+            "max_iterations": max_iterations,
         }
 
         async def attempt() -> tuple[str, list[ToolCall]]:
@@ -459,6 +463,7 @@ def _board_turn(
     user_prompt: str | None = None,
     prompt_builder: Callable[[AsyncConnection], Awaitable[str]] | None = None,
     max_amendments: int | None = None,
+    max_iterations: int | None = None,
 ) -> _Turn:
     """Build one blackboard turn (round 1 / vote / discussion) for ``agent``.
 
@@ -496,6 +501,7 @@ def _board_turn(
                 "round": round,
                 "phase": phase,
                 "trial_id": trial_id,
+                "max_iterations": max_iterations,
             }
             if max_amendments is not None:
                 tool_context["max_amendments"] = max_amendments
@@ -970,13 +976,14 @@ async def _run_auction(
     agents_by_id: dict[str, dict[str, Any]],
     agent_runner: AgentRunner,
     trial_id: str | None,
+    max_iterations: int | None = None,
 ) -> AsyncIterator[SimulationStep]:
     """Invite agents, drive self-selection, and select takers (PRD §6.2)."""
     invitations = await auction.invite(run_id=run_id, contract_id=contract.id)
     yield _step("system", f"Auction open. {len(invitations)} agent(s) invited.")
 
     turns = [
-        _auction_turn(invitation, agent, run_id, contract, agent_runner, trial_id)
+        _auction_turn(invitation, agent, run_id, contract, agent_runner, trial_id, max_iterations)
         for invitation in invitations
         if (agent := agents_by_id.get(invitation.agent_id)) is not None
     ]
@@ -1095,6 +1102,7 @@ async def _run_round_one(
                         journal=journal,
                         phase="round_1",
                         trial_id=config.trial_id,
+                        max_iterations=(6 if config.demo_mode else None),
                     )
                 )
         return turns
@@ -1326,6 +1334,7 @@ async def _run_discussion_round(
                     phase=phase,
                     trial_id=config.trial_id,
                     max_amendments=config.max_amendments,
+                    max_iterations=(6 if config.demo_mode else None),
                 )
             )
     async for step in _run_turns(db, turns, journal=journal):
@@ -1959,7 +1968,14 @@ async def _run_swarm_steps(
         await journal.phase(db, "auction")
         _enter_phase("auction")
         async for step in _run_auction(
-            db, auction, run_id, contract, agents_by_id, agent_runner, config.trial_id
+            db,
+            auction,
+            run_id,
+            contract,
+            agents_by_id,
+            agent_runner,
+            config.trial_id,
+            max_iterations=(6 if config.demo_mode else None),
         ):
             yield step
 
