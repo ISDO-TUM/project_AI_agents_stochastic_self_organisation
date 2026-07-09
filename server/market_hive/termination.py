@@ -14,6 +14,7 @@ current orchestrator does not yet pass usage events into it.
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass, field
 from time import monotonic
 from typing import Any, Literal, Protocol, cast
@@ -23,7 +24,9 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.market_hive.schemas import ConfirmedEntrySchema, SwarmFinalOutput, SwarmRunConfig
 
-TerminationReason = Literal["equilibrium", "max_rounds", "budget"]
+logger = logging.getLogger(__name__)
+
+TerminationReason = Literal["equilibrium", "max_rounds", "budget", "quiescence"]
 
 
 class Synthesizer(Protocol):
@@ -33,15 +36,30 @@ class Synthesizer(Protocol):
     can stay LLM-free in tests: pass no synthesizer and ``final_answer`` is ``None``.
     """
 
-    async def synthesize(self, *, prompt: str, findings: list[ConfirmedEntrySchema]) -> str: ...
+    async def synthesize(
+        self,
+        *,
+        prompt: str,
+        findings: list[ConfirmedEntrySchema],
+        objections: list[str] | None = None,
+    ) -> str:
+        raise NotImplementedError
 
 
 # 3, not 2: the round loop starts at round 2 (round 1 is proposals + votes), so a
 # minimum of 2 would let equilibrium fire on the very first discussion round, before
 # deliberation has happened. 3 requires at least two real discussion rounds first.
 DEFAULT_MIN_ROUNDS = 3
-DEFAULT_MAX_ROUNDS = 10
-DEFAULT_K_CONSECUTIVE = 2
+DEFAULT_MAX_ROUNDS = 5
+# 1, not 2: one genuinely quiet round (zero new confirmations, zero contest/
+# reaffirm flips) is already real evidence a thread is done — requiring a
+# SECOND consecutive quiet round before ending adds a full extra round to
+# every run's floor for no benefit, on top of min_rounds already requiring
+# two real discussion rounds up front. Live runs on ordinary (not "insanely
+# complex") contracts were landing on max_rounds almost every time instead of
+# converging early; this is the actual lever for letting simple tasks end at
+# round 3-4 instead of always paying for all 5.
+DEFAULT_K_CONSECUTIVE = 1
 DEFAULT_EPSILON_ENTROPY = 0
 DEFAULT_TOKEN_BUDGET = 50_000
 DEFAULT_MIN_TURN_BUDGET = 1_000
@@ -202,27 +220,39 @@ class TerminationEngine:
             enabled=self.enable_token_budget,
         )
 
-    async def count_confirmed_this_round(self, *, run_id: str, round: int) -> int:
-        """Count newly confirmed findings for a round, excluding anchors/system rows."""
+    async def count_confirmed_this_round(
+        self, *, run_id: str, round: int, thread_id: str | None = None
+    ) -> int:
+        """Count newly confirmed findings for a round, excluding anchors/system rows.
+
+        ``thread_id`` scopes the count to one thread — required for per-thread
+        equilibrium (see ``check_equilibrium``); omitted, it counts across the
+        whole run, which is only correct for single-thread contracts.
+        """
+        thread_clause = "AND thread_id = :thread_id" if thread_id is not None else ""
+        params: dict[str, Any] = {"run_id": run_id, "round": round}
+        if thread_id is not None:
+            params["thread_id"] = thread_id
         return int(
             (
                 await self._db.execute(
                     text(
-                        """
+                        f"""
                         SELECT COUNT(*)
                         FROM confirmed_entries
                         WHERE run_id = :run_id
                           AND round_confirmed = :round
                           AND entry_type = 'finding'
+                          {thread_clause}
                         """
                     ),
-                    {"run_id": run_id, "round": round},
+                    params,
                 )
             ).scalar_one()
         )
 
-    async def has_confirmed_findings(self, *, run_id: str) -> bool:
-        """True once the run has promoted at least one finding.
+    async def has_confirmed_findings(self, *, run_id: str, thread_id: str | None = None) -> bool:
+        """True once the run (or, scoped, one thread) has promoted a finding.
 
         Equilibrium (PRD §6.6) is the state where confirmations have *ceased* — it
         presupposes the swarm produced something to converge on. A run that has
@@ -230,22 +260,36 @@ class TerminationEngine:
         an all-quiet cold start (every round trivially at/below ``epsilon_entropy``
         because nothing is ever confirmed) satisfies the K-round window on the very
         first check and ends the run with an empty Confirmed board.
+
+        ``thread_id``: see ``count_confirmed_this_round`` — required for
+        per-thread equilibrium in multi-thread contracts.
         """
+        thread_clause = "AND thread_id = :thread_id" if thread_id is not None else ""
+        params: dict[str, Any] = {"run_id": run_id}
+        if thread_id is not None:
+            params["thread_id"] = thread_id
         count = (
             await self._db.execute(
                 text(
-                    """
+                    f"""
                     SELECT COUNT(*)
                     FROM confirmed_entries
-                    WHERE run_id = :run_id AND entry_type = 'finding'
+                    WHERE run_id = :run_id AND entry_type = 'finding' {thread_clause}
                     """
                 ),
-                {"run_id": run_id},
+                params,
             )
         ).scalar_one()
         return int(count) > 0
 
-    async def check_equilibrium(self, *, run_id: str, current_round: int) -> bool:
+    async def check_equilibrium(
+        self,
+        *,
+        run_id: str,
+        current_round: int,
+        status_flips: int = 0,
+        thread_ids: list[str] | None = None,
+    ) -> bool:
         """Return true when the swarm has converged.
 
         Convergence requires *both* that the run has confirmed at least one finding
@@ -253,26 +297,153 @@ class TerminationEngine:
         ``epsilon_entropy`` new findings. The two guards below keep a cold start —
         an empty board where every round is trivially quiet — from being mistaken
         for convergence and ending the run before any proposal can be promoted.
+
+        ``status_flips`` (contestable consensus): a contest or re-affirmation this
+        round counts as activity too — it forces at least one more round of
+        deliberation rather than letting the run end on a freshly-contested finding.
+
+        ``thread_ids``: a multi-thread contract must reach equilibrium *per
+        thread*, not for the run as a whole — otherwise the first thread to
+        confirm a finding starts the quiet-window clock for every OTHER thread
+        too, and the whole run terminates the moment nothing ELSE confirms for
+        ``k_consecutive`` rounds, stranding threads that are still actively
+        discussing with zero findings ever promoted for them (PRD requires at
+        least one finding per thread). Every thread in ``thread_ids`` must
+        independently satisfy both guards below; the caller's own
+        ``max_rounds`` cap remains the backstop for a thread that never
+        converges at all. Omitted (or empty) falls back to the pre-multi-thread
+        whole-run scoping, for single-thread callers and existing tests.
+        """
+        if current_round < self.min_rounds:
+            logger.info(
+                "check_equilibrium run=%s round=%s: NOT converged — round below min_rounds=%d",
+                run_id,
+                current_round,
+                self.min_rounds,
+            )
+            return False
+
+        if status_flips > 0:
+            logger.info(
+                "check_equilibrium run=%s round=%s: NOT converged — %d contest/reaffirm "
+                "status flip(s) this round force another round",
+                run_id,
+                current_round,
+                status_flips,
+            )
+            return False
+
+        scopes: list[str | None] = list(thread_ids) if thread_ids else [None]
+        for thread_id in scopes:
+            # Nothing confirmed yet for this scope ⇒ it has not started converging,
+            # let alone converged. Skipping this check is the cold-start bug: the
+            # trailing window is quiet only because no citations have accumulated
+            # into a promotion yet.
+            if not await self.has_confirmed_findings(run_id=run_id, thread_id=thread_id):
+                logger.info(
+                    "check_equilibrium run=%s round=%s thread=%s: NOT converged — this thread "
+                    "has confirmed nothing yet",
+                    run_id,
+                    current_round,
+                    thread_id or "(whole run)",
+                )
+                return False
+
+            # Promotions only run from round 2 onward (round 1 is opening proposals
+            # plus the vote sub-round, and votes are not promotion signals), so round
+            # 1 is structurally always quiet. Start the window at round 2 so it spans
+            # only rounds that *could* have promoted; counting round 1 would pad the
+            # window with a guaranteed-quiet round and make the swarm look converged
+            # a round early.
+            start_round = max(2, current_round - self.k_consecutive + 1)
+            for round_number in range(start_round, current_round + 1):
+                new_confirmed = await self.count_confirmed_this_round(
+                    run_id=run_id, round=round_number, thread_id=thread_id
+                )
+                if new_confirmed > self.epsilon_entropy:
+                    logger.info(
+                        "check_equilibrium run=%s round=%s thread=%s: NOT converged — round %d "
+                        "confirmed %d new finding(s) (> epsilon_entropy=%d), window not quiet yet",
+                        run_id,
+                        current_round,
+                        thread_id or "(whole run)",
+                        round_number,
+                        new_confirmed,
+                        self.epsilon_entropy,
+                    )
+                    return False
+        logger.info(
+            "check_equilibrium run=%s round=%s: CONVERGED — every scope (%s) has confirmed "
+            "findings and gone quiet for the last %d round(s)",
+            run_id,
+            current_round,
+            [t or "(whole run)" for t in scopes],
+            self.k_consecutive,
+        )
+        return True
+
+    async def check_quiescence(self, *, run_id: str, current_round: int) -> bool:
+        """True when the swarm has gone silent: the round produced no new posts,
+        citations, or disputes, and we are at or past ``min_rounds``.
+
+        This is the "everyone has stood down or has nothing to add" ending,
+        complementary to equilibrium (which needs confirmed findings first). A
+        quiet round before ``min_rounds`` does not count.
         """
         if current_round < self.min_rounds:
             return False
 
-        # Nothing confirmed yet ⇒ the swarm has not started converging, let alone
-        # converged. Skipping this check is the cold-start bug: the trailing window
-        # is quiet only because no citations have accumulated into a promotion yet.
-        if not await self.has_confirmed_findings(run_id=run_id):
+        new_posts = (
+            await self._db.execute(
+                text("SELECT COUNT(*) FROM draft_entries WHERE run_id = :r AND round = :rd"),
+                {"r": run_id, "rd": current_round},
+            )
+        ).scalar_one()
+        if new_posts:
+            logger.info(
+                "check_quiescence run=%s round=%s: NOT quiescent — %d new post(s)",
+                run_id,
+                current_round,
+                new_posts,
+            )
             return False
 
-        # Promotions only run from round 2 onward (round 1 is opening proposals plus
-        # the vote sub-round, and votes are not promotion signals), so round 1 is
-        # structurally always quiet. Start the window at round 2 so it spans only
-        # rounds that *could* have promoted; counting round 1 would pad the window
-        # with a guaranteed-quiet round and make the swarm look converged a round early.
-        start_round = max(2, current_round - self.k_consecutive + 1)
-        for round_number in range(start_round, current_round + 1):
-            new_confirmed = await self.count_confirmed_this_round(run_id=run_id, round=round_number)
-            if new_confirmed > self.epsilon_entropy:
-                return False
+        new_cites = (
+            await self._db.execute(
+                text("SELECT COUNT(*) FROM citations WHERE run_id = :r AND round = :rd"),
+                {"r": run_id, "rd": current_round},
+            )
+        ).scalar_one()
+        if new_cites:
+            logger.info(
+                "check_quiescence run=%s round=%s: NOT quiescent — %d new citation(s)",
+                run_id,
+                current_round,
+                new_cites,
+            )
+            return False
+
+        new_disputes = (
+            await self._db.execute(
+                text("SELECT COUNT(*) FROM disputes WHERE run_id = :r AND round = :rd"),
+                {"r": run_id, "rd": current_round},
+            )
+        ).scalar_one()
+        if new_disputes:
+            logger.info(
+                "check_quiescence run=%s round=%s: NOT quiescent — %d new dispute(s)",
+                run_id,
+                current_round,
+                new_disputes,
+            )
+            return False
+
+        logger.info(
+            "check_quiescence run=%s round=%s: QUIESCENT — no new posts or citations; "
+            "every taker has stood down or gone silent",
+            run_id,
+            current_round,
+        )
         return True
 
     async def select_final_answer(
@@ -281,18 +452,26 @@ class TerminationEngine:
         run_id: str,
         thread_id: str,
     ) -> ConfirmedEntrySchema | None:
-        """Pick the highest-cited confirmed finding for one thread."""
+        """Pick the highest-cited confirmed finding for one thread.
+
+        Excludes contested/retracted rows (contestable consensus) — a finding
+        that lost its democratic standing should not be featured as *the*
+        thread answer even while the audit-visible ``confirmed_layer`` still
+        carries it for transparency.
+        """
         row = (
             (
                 await self._db.execute(
                     text(
                         """
                         SELECT id, run_id, thread_id, source_draft_id, content,
-                               entry_type, citation_count, round_confirmed, created_at
+                               entry_type, citation_count, round_confirmed, created_at,
+                               status
                         FROM confirmed_entries
                         WHERE run_id = :run_id
                           AND thread_id = :thread_id
                           AND entry_type = 'finding'
+                          AND status = 'confirmed'
                         ORDER BY citation_count DESC, round_confirmed ASC, created_at ASC
                         LIMIT 1
                         """
@@ -322,7 +501,22 @@ class TerminationEngine:
         confirmed findings are also condensed into a single ``final_answer``. Both
         are optional so callers that only need the structured layers (e.g. the
         audit endpoint, which reads the persisted answer instead) skip the LLM call.
+
+        Contestable consensus: any entry still ``contested`` at this point never
+        gathered enough fresh citations to re-affirm, so it is retracted here —
+        the row is never deleted (P-03), only its status changes, and it stays
+        visible in ``confirmed_layer`` for audit even though it excludes itself
+        from ``final_answer`` and from ``answers`` (via ``select_final_answer``).
         """
+        await self._db.execute(
+            text(
+                "UPDATE confirmed_entries SET status = 'retracted' "
+                "WHERE run_id = :run_id AND status = 'contested'"
+            ),
+            {"run_id": run_id},
+        )
+        await self._db.commit()
+
         threads = (
             (
                 await self._db.execute(
@@ -349,7 +543,11 @@ class TerminationEngine:
 
         final_answer: str | None = None
         if synthesizer is not None and prompt is not None:
-            final_answer = await synthesizer.synthesize(prompt=prompt, findings=confirmed_layer)
+            # Only live (status='confirmed') findings feed synthesis — a
+            # contested/just-retracted entry must not shape the answer text,
+            # even though it remains visible in confirmed_layer for audit.
+            live_findings = [f for f in confirmed_layer if f.status == "confirmed"]
+            final_answer = await synthesizer.synthesize(prompt=prompt, findings=live_findings)
 
         return SwarmFinalOutput(
             run_id=run_id,
@@ -394,13 +592,17 @@ class TerminationEngine:
         await self._db.commit()
 
     async def _confirmed_layer(self, *, run_id: str) -> list[ConfirmedEntrySchema]:
+        """Every confirmed row regardless of status (audit trail — P-03: nothing
+        is ever deleted, so contested/retracted findings stay visible here even
+        though they are excluded from synthesis and per-thread ``answers``)."""
         rows = (
             (
                 await self._db.execute(
                     text(
                         """
                         SELECT id, run_id, thread_id, source_draft_id, content,
-                               entry_type, citation_count, round_confirmed, created_at
+                               entry_type, citation_count, round_confirmed, created_at,
+                               status, origin_run_id
                         FROM confirmed_entries
                         WHERE run_id = :run_id
                         ORDER BY round_confirmed ASC, created_at ASC
@@ -475,11 +677,32 @@ class MaxRoundsTerminator:
     """
 
     async def should_terminate(
-        self, *, run_id: str, round: int, config: SwarmRunConfig, db: AsyncConnection
+        self,
+        *,
+        run_id: str,
+        round: int,
+        config: SwarmRunConfig,
+        db: AsyncConnection,
+        status_flips: int = 0,
+        thread_ids: list[str] | None = None,
     ) -> bool:
         return await TerminationEngine.from_config(db, config).check_equilibrium(
             run_id=run_id,
             current_round=round,
+            status_flips=status_flips,
+            thread_ids=thread_ids,
+        )
+
+    async def is_quiescent(
+        self,
+        *,
+        run_id: str,
+        round: int,
+        config: SwarmRunConfig,
+        db: AsyncConnection,
+    ) -> bool:
+        return await TerminationEngine.from_config(db, config).check_quiescence(
+            run_id=run_id, current_round=round
         )
 
     async def format_output(

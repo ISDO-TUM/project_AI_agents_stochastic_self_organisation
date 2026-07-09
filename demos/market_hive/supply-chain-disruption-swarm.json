@@ -1,0 +1,185 @@
+{
+  "agents": [
+    {
+      "id": "a1111111-1111-4111-8111-111111111111",
+      "name": "Supply Chain Lead",
+      "description": "Owns supplier relationships and sourcing decisions — alternates, capacity, source lists, mitigation options.",
+      "systemPrompt": "You are the supply chain lead at an automotive tier-1 manufacturer. A supplier disruption is underway. Identify and compare concrete sourcing options: alternate suppliers, available stock, capacity, and lead times. Ground every claim in the supplier master data and disruption alert, citing the specific supplier numbers and figures. Defer freight and transit questions to the logistics planner, cost trade-offs to finance, and supplier qualification judgements to quality — cite teammates whose findings you build on rather than repeating them.",
+      "provider": "openai",
+      "model": "gpt-5-mini",
+      "tools": ["files"],
+      "connections": [
+        "a2222222-2222-4222-8222-222222222222",
+        "a3333333-3333-4333-8333-333333333333",
+        "a5555555-5555-4555-8555-555555555555"
+      ],
+      "position": { "x": 120, "y": 120 }
+    },
+    {
+      "id": "a2222222-2222-4222-8222-222222222222",
+      "name": "Logistics Planner",
+      "description": "Evaluates freight modes, transit times, customs handling, and per-unit shipping cost for each option.",
+      "systemPrompt": "You are a logistics and transport planner. Evaluate how material can physically be moved within the disruption window: freight modes, door-to-door transit times, capacity constraints, customs and bonded-warehouse release. Quantify per-unit freight cost and arrival dates against the current rate quotes, and rule out options that cannot arrive in time. Cite the specific quotes and figures you rely on, and build on the supply chain lead's option list via citations.",
+      "provider": "openai",
+      "model": "gpt-5-mini",
+      "tools": ["files"],
+      "connections": ["a4444444-4444-4444-8444-444444444444"],
+      "position": { "x": 460, "y": 120 }
+    },
+    {
+      "id": "a3333333-3333-4333-8333-333333333333",
+      "name": "Production Planner",
+      "description": "Translates inventory and supply options into a week-by-week coverage timeline for the production lines.",
+      "systemPrompt": "You are a production planner. Translate on-hand inventory, in-transit stock, and each mitigation option into a week-by-week coverage timeline for the affected production lines: state exactly which week the lines stop under each option and what combination keeps them running through the outage. Quantify weekly consumption against available supply, cite the figures from the disruption alert, and hand the resulting stoppage risk to finance for costing.",
+      "provider": "openai",
+      "model": "gpt-5-mini",
+      "tools": ["files"],
+      "connections": ["a4444444-4444-4444-8444-444444444444"],
+      "position": { "x": 800, "y": 120 }
+    },
+    {
+      "id": "a4444444-4444-4444-8444-444444444444",
+      "name": "Finance Controller",
+      "description": "Costs each mitigation option against penalty and margin exposure; knows the approval thresholds.",
+      "systemPrompt": "You are the plant finance controller. Compare the total cost of each mitigation option against the exposure of doing nothing: line-stop penalties, contribution-margin loss, freight premiums, price deltas, and expedite fees. Recommend the most cost-effective option or combination, state whether the spend fits within the plant-level approval threshold or needs board escalation, and cite the exposure model figures and the coverage timeline from the production planner.",
+      "provider": "openai",
+      "model": "gpt-5-mini",
+      "tools": ["files"],
+      "connections": [],
+      "position": { "x": 290, "y": 420 }
+    },
+    {
+      "id": "a5555555-5555-4555-8555-555555555555",
+      "name": "Quality & Supplier Compliance",
+      "description": "Authoritative on supplier qualification status — IATF/PPAP releases; corrects stale scorecard data.",
+      "systemPrompt": "You are the supplier quality and compliance specialist. Your qualification records from the QM system are the authoritative source on whether a supplier is released for automotive production use — annual procurement scorecards can lag behind them. Verify the qualification status (IATF 16949, PPAP level and approval date) of every supplier proposed as a source, correct any teammate relying on outdated qualification information by citing the current QM record and its date, and flag any option that would ship unqualified safety-critical parts.",
+      "provider": "openai",
+      "model": "gpt-5-mini",
+      "tools": ["files"],
+      "connections": ["a1111111-1111-4111-8111-111111111111"],
+      "position": { "x": 630, "y": 420 }
+    },
+    {
+      "id": "a6666666-6666-4666-8666-666666666666",
+      "name": "Data Privacy Officer",
+      "description": "Assesses personal-data and GDPR implications — abstains on decisions with no personal-data dimension.",
+      "systemPrompt": "You are the data privacy officer. Assess GDPR and personal-data implications of business decisions: transfers of employee or customer data, new data processors, cross-border data flows. If a decision is a pure sourcing, logistics, or production matter with no meaningful personal-data dimension, recognize that your expertise does not apply and abstain rather than contributing low-value commentary.",
+      "provider": "openai",
+      "model": "gpt-5-mini",
+      "tools": ["files"],
+      "connections": [],
+      "position": { "x": 970, "y": 420 }
+    }
+  ],
+  "sources": [
+    {
+      "id": "b1111111-1111-4111-8111-111111111111",
+      "name": "disruption_alert.txt",
+      "type": "text",
+      "content": "SUPPLY DISRUPTION ALERT — issued 2026-07-06 by supply chain control tower.\nCompany: Meridian Drive Systems GmbH (automotive tier-1, ECU production lines L1–L3).\nAffected part: MCU-748 automotive microcontroller (safety-critical, used in every ECU variant).\nEvent: Primary supplier Taicang Electronics Co. (supplier no. 100234) has declared force majeure after flooding closed its Suzhou plant. Estimated outage: 6 weeks. Last outbound shipment leaves 2026-07-11.\nWeekly consumption: 40,000 units of MCU-748 across L1–L3.\nOn-hand inventory incl. safety stock: 120,000 units (≈3 weeks of coverage).\nIn-transit (sea freight, ETA 2026-07-20): 35,000 units.\nCustomer impact: ECU deliveries feed two OEM programs; each contract carries a line-stop penalty of €250,000 per week.\nOptions under discussion: (A) airfreight the finished stock held in Taicang's bonded warehouse, (B) ramp the alternate source NovaChip Penang, (C) draw down safety stock and reschedule production.",
+      "position": { "x": 60, "y": 680 }
+    },
+    {
+      "id": "b2222222-2222-4222-8222-222222222222",
+      "name": "supplier_master_extract.txt",
+      "type": "text",
+      "content": "SUPPLIER MASTER EXTRACT — S/4HANA, pulled 2026-07-06.\nSupplier 100234 Taicang Electronics (Suzhou, CN): primary source for MCU-748. Unit price €3.10. Sea lead time 5 weeks. Bonded warehouse Shanghai holds 60,000 units of finished MCU-748 stock, released for sale and NOT affected by the plant closure.\nSupplier 100871 NovaChip Semiconductor (Penang, MY): listed alternate for MCU-748 — drop-in replacement, same footprint and firmware image. Unit price €3.55. Standard lead time 3 weeks; expedite option 2 weeks. Capacity check 2026-07-05: up to 45,000 units/week available from the week of 2026-07-27.\nPurchasing info records are maintained for both suppliers. The source list currently blocks supplier 100871 pending confirmation of its quality status.",
+      "position": { "x": 360, "y": 680 }
+    },
+    {
+      "id": "b3333333-3333-4333-8333-333333333333",
+      "name": "logistics_rate_quotes.txt",
+      "type": "text",
+      "content": "FREIGHT OPTIONS FOR MCU-748 — quotes valid until 2026-07-14.\nAirfreight Shanghai (PVG) → Munich: 3–4 days door-to-door, ≈€0.85 per unit at current rates. Charter capacity confirmed for up to 60,000 units in calendar week 29.\nSea freight Shanghai → Hamburg: 35 days port-to-port — cannot arrive within the outage window.\nAirfreight Penang (PEN) → Munich: 4–5 days door-to-door, ≈€0.70 per unit.\nBonded-warehouse release Shanghai: customs clearance in 2 working days with priority handling; release requires only a standard commercial invoice since the stock is already sold to Meridian.",
+      "position": { "x": 660, "y": 680 }
+    },
+    {
+      "id": "b4444444-4444-4444-8444-444444444444",
+      "name": "finance_exposure_model.txt",
+      "type": "text",
+      "content": "FINANCE EXPOSURE MODEL — controlling, 2026-07-06 (illustrative).\nLine-stop penalty: €250,000 per week per OEM program; two programs affected → €500,000 per week if L1–L3 stop.\nUnmitigated case: inventory plus in-transit stock covers ≈4 weeks of the 6-week outage → ≈2 weeks of stoppage → ≈€1.0M in penalties plus ≈€1.4M contribution-margin loss.\nOption A — airfreight bonded stock (60,000 units): ≈€51,000 freight premium; buys 1.5 weeks of additional coverage.\nOption B — NovaChip ramp at full volume: price premium €0.45/unit → ≈€108,000 over 6 weeks, plus ≈€35,000 expedite fees.\nOption C — safety-stock drawdown and rescheduling only: no direct material spend, but ≈€120,000 recovery overtime and near-certain penalty exposure in weeks 5–6.\nApproval note: mitigation spend below €500,000 total can be approved by the plant controller without board escalation.",
+      "position": { "x": 960, "y": 680 }
+    },
+    {
+      "id": "b5555555-5555-4555-8555-555555555555",
+      "name": "supplier_qualification_records.txt",
+      "type": "text",
+      "content": "SUPPLIER QUALIFICATION RECORDS — QM system, status 2026-06-30.\nSupplier 100871 NovaChip Semiconductor: IATF 16949 certificate valid until 2028-02. PPAP for MCU-748 re-submitted 2026-02 after the 2025 audit findings (solder-void rate) were closed; approved at level 3 on 2026-03-14. Current status: RELEASED for automotive production use, no open findings.\nNote: annual procurement scorecards are compiled each November and may still show the superseded 2025 'PPAP failed' status for supplier 100871. The qualification record in the QM system is the authoritative source.\nSupplier 100234 Taicang Electronics: RELEASED, no open findings.",
+      "position": { "x": 210, "y": 920 }
+    },
+    {
+      "id": "b6666666-6666-4666-8666-666666666666",
+      "name": "procurement_scorecard_2025.txt",
+      "type": "text",
+      "content": "PROCUREMENT SCORECARD 2025 — annual supplier review, issued 2025-11-30.\nSupplier 100871 NovaChip Semiconductor: overall score C. PPAP for MCU-748 FAILED the 2025-09 audit (solder-void rate above specification). Recommendation: do not source safety-critical MCUs from NovaChip until re-qualification is complete.\nSupplier 100234 Taicang Electronics: overall score A, preferred source for MCU-748.",
+      "position": { "x": 510, "y": 920 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-lead-logistics",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "a2222222-2222-4222-8222-222222222222"
+    },
+    {
+      "id": "e-lead-production",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "a3333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-lead-quality",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "a5555555-5555-4555-8555-555555555555"
+    },
+    {
+      "id": "e-logistics-finance",
+      "from": "a2222222-2222-4222-8222-222222222222",
+      "to": "a4444444-4444-4444-8444-444444444444"
+    },
+    {
+      "id": "e-production-finance",
+      "from": "a3333333-3333-4333-8333-333333333333",
+      "to": "a4444444-4444-4444-8444-444444444444"
+    },
+    {
+      "id": "e-quality-lead",
+      "from": "a5555555-5555-4555-8555-555555555555",
+      "to": "a1111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "e-lead-alert",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "b1111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "e-lead-suppliermaster",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "b2222222-2222-4222-8222-222222222222"
+    },
+    {
+      "id": "e-lead-scorecard",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "b6666666-6666-4666-8666-666666666666"
+    },
+    {
+      "id": "e-logistics-quotes",
+      "from": "a2222222-2222-4222-8222-222222222222",
+      "to": "b3333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-production-alert",
+      "from": "a3333333-3333-4333-8333-333333333333",
+      "to": "b1111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "e-finance-exposure",
+      "from": "a4444444-4444-4444-8444-444444444444",
+      "to": "b4444444-4444-4444-8444-444444444444"
+    },
+    {
+      "id": "e-quality-qualification",
+      "from": "a5555555-5555-4555-8555-555555555555",
+      "to": "b5555555-5555-4555-8555-555555555555"
+    }
+  ]
+}

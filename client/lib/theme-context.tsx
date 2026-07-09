@@ -52,7 +52,7 @@ export function ThemeProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    document.body.style.background = dark ? "#060608" : "#f0eef8";
+    document.body.style.background = dark ? "#0d0c13" : "#f0eef8";
     document.body.style.color = dark ? "#eceaf5" : "#18161f";
     document.documentElement.dataset.theme = dark ? "dark" : "light";
   }, [dark]);

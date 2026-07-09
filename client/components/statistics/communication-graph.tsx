@@ -8,7 +8,9 @@ import type { AgentStat, EdgeStat } from "@/lib/types";
 const SIZE = 420;
 const RADIUS = 148;
 const NODE_R = 17;
-const BOARD_ID = "__bidding_board__";
+// Central shared-board pseudo-nodes: the bidding board and the Market Hive
+// blackboard. The backend synthesises agent→board edges under these ids.
+const BOARD_IDS = new Set(["__bidding_board__", "__market_hive_board__"]);
 const BOARD_R = 25;
 
 interface Node {
@@ -56,10 +58,23 @@ export function CommunicationGraph({
       kind: "agent",
     };
   });
-  if (
-    edges.some((e) => e.toAgentId === BOARD_ID || e.fromAgentId === BOARD_ID)
-  ) {
-    nodes.push({ id: BOARD_ID, name: "Board", x: cx, y: cy, kind: "board" });
+  const boardEdge = edges.find(
+    (e) => BOARD_IDS.has(e.toAgentId) || BOARD_IDS.has(e.fromAgentId),
+  );
+  if (boardEdge) {
+    const boardId = BOARD_IDS.has(boardEdge.toAgentId)
+      ? boardEdge.toAgentId
+      : boardEdge.fromAgentId;
+    const boardName = BOARD_IDS.has(boardEdge.toAgentId)
+      ? boardEdge.toAgentName
+      : boardEdge.fromAgentName;
+    nodes.push({
+      id: boardId,
+      name: boardName || "Board",
+      x: cx,
+      y: cy,
+      kind: "board",
+    });
   }
   const byId = new Map(nodes.map((n) => [n.id, n]));
   const byIdName = new Map(nodes.map((n) => [n.id, n.name]));
@@ -227,7 +242,7 @@ export function CommunicationGraph({
                   fontWeight={700}
                   fill={t.textSub}
                 >
-                  Board
+                  {n.name}
                 </text>
               </g>
             ))}

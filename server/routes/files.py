@@ -13,6 +13,7 @@ from server.db import deserialise_knowledge_file_row, get_db
 from server.db.tables import knowledge_files
 from server.guardrails import PromptInjectionError, sanitize_prompt
 from server.schemas import KnowledgeFileCreate, KnowledgeFileResponse, KnowledgeFileUpdate
+from server.users import UserIdDep, scoped
 
 router = APIRouter(prefix="/api/files", tags=["Knowledge Files"])
 
@@ -30,7 +31,9 @@ _PATCHABLE_COLUMNS: frozenset[str] = (
     summary="Create a new knowledge file",
     description="Persist a new knowledge file and return it with its generated UUID.",
 )
-async def create_knowledge_file(body: KnowledgeFileCreate, db: DBDep) -> KnowledgeFileResponse:
+async def create_knowledge_file(
+    body: KnowledgeFileCreate, db: DBDep, user_id: UserIdDep = None
+) -> KnowledgeFileResponse:
     if not body.skip_injection_check:
         try:
             sanitize_prompt(body.content, field_name="knowledge file content")
@@ -40,7 +43,9 @@ async def create_knowledge_file(body: KnowledgeFileCreate, db: DBDep) -> Knowled
             ) from exc
     file_id = body.id or str(uuid.uuid4())
     await db.execute(
-        insert(knowledge_files).values(id=file_id, name=body.name, content=body.content)
+        insert(knowledge_files).values(
+            id=file_id, name=body.name, content=body.content, user_id=user_id
+        )
     )
     await db.commit()
     result = await db.execute(select(knowledge_files).where(knowledge_files.c.id == file_id))
@@ -55,10 +60,10 @@ async def create_knowledge_file(body: KnowledgeFileCreate, db: DBDep) -> Knowled
 @router.get(
     "",
     response_model=list[KnowledgeFileResponse],
-    summary="List all knowledge files",
+    summary="List the caller's knowledge files",
 )
-async def list_knowledge_files(db: DBDep) -> list[KnowledgeFileResponse]:
-    result = await db.execute(select(knowledge_files))
+async def list_knowledge_files(db: DBDep, user_id: UserIdDep = None) -> list[KnowledgeFileResponse]:
+    result = await db.execute(scoped(select(knowledge_files), knowledge_files.c.user_id, user_id))
     rows = result.mappings().all()
     return [KnowledgeFileResponse(**deserialise_knowledge_file_row(row)) for row in rows]
 

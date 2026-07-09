@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import os
 from collections.abc import AsyncIterator
 from typing import Any
@@ -989,6 +990,39 @@ async def test_call_agent_omits_registry_when_index_absent(
     assert captured["tool_names"] is None  # static: no tools added
 
 
+@pytest.mark.asyncio
+async def test_call_agent_drops_engine_specific_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An agent may carry a market_hive blackboard tool in its saved tools list.
+    # Those read ctx["db"], which the topology engine never populates — offering
+    # one would raise KeyError('db') and surface as an "[error: 'db']" answer, so
+    # _call_agent must filter them out and keep only cross-engine builtins.
+    import server.market_hive.tools  # noqa: F401  (self-registers blackboard tools)
+
+    captured: dict[str, Any] = {}
+
+    async def fake_call_agent(
+        prompt: str,
+        *,
+        provider: str,
+        model: str,
+        system_prompt: str | None,
+        tool_names: list[str] | None,
+        tool_context: dict[str, Any] | None,
+    ) -> tuple[str, list[Any]]:
+        captured["tool_names"] = tool_names
+        return "ok", []
+
+    monkeypatch.setattr(sim, "call_agent", fake_call_agent)
+
+    agent = _bare_agent()
+    agent["tools"] = ["files", "read_blackboard", "post_to_blackboard", "vote"]
+    await sim._call_agent(agent, "hi", files={}, ruleset=None, registry=None)
+
+    assert captured["tool_names"] == ["files"]
+
+
 def test_run_topology_exposes_topology_and_fanout_params() -> None:
     import inspect
 
@@ -1544,11 +1578,12 @@ async def test_swarm_run_with_no_agents_returns_422(client: AsyncClient) -> None
 
 
 @pytest.mark.asyncio
-async def test_delete_agent_clears_swarm_data(client: AsyncClient) -> None:
-    """An agent that joined a swarm run can still be deleted (re-import flow).
+async def test_delete_agent_preserves_swarm_data(client: AsyncClient) -> None:
+    """Deleting an agent that joined a swarm run leaves the run's history intact.
 
-    The swarm tables reference agents without ON DELETE CASCADE, so deletion must
-    clear the run data first rather than failing on the foreign key.
+    The swarm tables carry no foreign keys to agents (their id columns are
+    denormalised snapshots), so the audit trail survives the canvas being
+    cleared — mirroring how topology trial history is preserved.
     """
     from sqlalchemy import text
 
@@ -1572,8 +1607,8 @@ async def test_delete_agent_clears_swarm_data(client: AsyncClient) -> None:
     async with get_engine().connect() as conn:
         bids = (await conn.execute(text("SELECT COUNT(*) FROM bids"))).scalar_one()
         runs = (await conn.execute(text("SELECT COUNT(*) FROM swarm_runs"))).scalar_one()
-    assert bids == 0
-    assert runs == 0
+    assert bids == 1
+    assert runs == 1
 
 
 @pytest.mark.asyncio
@@ -1602,3 +1637,300 @@ async def test_swarm_run_streams_simulation_steps_as_sse(client: AsyncClient) ->
     assert "data: " in body
     assert "Contract created" in body
     assert "convergence" in body
+
+
+@pytest.mark.asyncio
+async def test_with_keepalive_pads_slow_gaps_without_cancelling_them(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A tick during a slow step must interleave a keepalive comment, not
+    abort the step. Regression: wrapping ``it.__anext__()`` directly in
+    ``asyncio.wait_for`` cancels the wrapped coroutine on every timeout tick —
+    that would silently kill a genuinely slow (not hung) swarm turn instead of
+    just padding the gap around it, exactly the bug this wrapper exists to
+    avoid on the *proxy* side."""
+    import server.routes.simulation as sim_routes
+
+    monkeypatch.setattr(sim_routes, "_SSE_KEEPALIVE_S", 0.05)
+
+    async def slow_steps() -> AsyncIterator[str]:
+        await asyncio.sleep(0.2)
+        yield "data: real\n\n"
+
+    frames = [frame async for frame in sim_routes._with_keepalive(slow_steps())]
+
+    assert frames.count(": keepalive\n\n") >= 2
+    assert frames[-1] == "data: real\n\n"
+
+
+@pytest.mark.asyncio
+async def test_with_keepalive_propagates_underlying_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A real failure from the wrapped stream must still surface, not vanish
+    into a keepalive loop."""
+    import server.routes.simulation as sim_routes
+
+    monkeypatch.setattr(sim_routes, "_SSE_KEEPALIVE_S", 0.05)
+
+    async def failing_steps() -> AsyncIterator[str]:
+        yield "data: one\n\n"
+        raise RuntimeError("boom")
+
+    with pytest.raises(RuntimeError, match="boom"):
+        async for _ in sim_routes._with_keepalive(failing_steps()):
+            pass
+
+
+@pytest.mark.asyncio
+async def test_swarm_run_unknown_parent_run_id_returns_404(client: AsyncClient) -> None:
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    resp = await client.post(
+        "/api/simulation/run",
+        json={"engine": "swarm", "prompt": "p", "parent_run_id": "does-not-exist"},
+    )
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_swarm_run_still_running_parent_returns_409(client: AsyncClient) -> None:
+    from sqlalchemy import text
+
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    async with get_engine().connect() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO swarm_runs (id, status, mode) "
+                "VALUES ('still-running', 'running', 'swarm')"
+            )
+        )
+        await conn.commit()
+
+    resp = await client.post(
+        "/api/simulation/run",
+        json={"engine": "swarm", "prompt": "p", "parent_run_id": "still-running"},
+    )
+    assert resp.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_swarm_run_valid_parent_carries_session(client: AsyncClient) -> None:
+    from sqlalchemy import text
+
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    async with get_engine().connect() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO swarm_runs (id, status, mode) "
+                "VALUES ('parent-done', 'completed', 'swarm')"
+            )
+        )
+        await conn.commit()
+
+    captured_kwargs: dict[str, Any] = {}
+
+    async def fake_run_swarm(config: Any, db: Any, **kwargs: Any) -> AsyncIterator[SimulationStep]:
+        captured_kwargs.update(kwargs)
+        yield SimulationStep(type="convergence", msg="Run complete.")
+
+    with patch("server.routes.simulation.run_swarm", new=fake_run_swarm):
+        resp = await client.post(
+            "/api/simulation/run",
+            json={"engine": "swarm", "prompt": "p", "parent_run_id": "parent-done"},
+        )
+
+    assert resp.status_code == 200
+    assert captured_kwargs.get("parent_run_id") == "parent-done"
+
+
+@pytest.mark.asyncio
+async def test_run_metrics_endpoint_404s_before_termination(client: AsyncClient) -> None:
+    from sqlalchemy import text
+
+    async with get_engine().connect() as conn:
+        await conn.execute(
+            text("INSERT INTO swarm_runs (id, status, mode) VALUES ('mid-run', 'running', 'swarm')")
+        )
+        await conn.commit()
+
+    resp = await client.get("/api/simulation/mid-run/metrics")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_run_metrics_endpoint_returns_snapshot_after_termination(client: AsyncClient) -> None:
+    import json
+
+    from sqlalchemy import text
+
+    async with get_engine().connect() as conn:
+        await conn.execute(
+            text(
+                "INSERT INTO swarm_runs (id, status, mode) "
+                "VALUES ('done-run', 'completed', 'swarm')"
+            )
+        )
+        await conn.execute(
+            text("INSERT INTO run_metrics (run_id, metrics) VALUES ('done-run', :m)"),
+            {"m": json.dumps({"duplication": None, "citations": {"total": 0}})},
+        )
+        await conn.commit()
+
+    resp = await client.get("/api/simulation/done-run/metrics")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["citations"]["total"] == 0
+    assert body["duplication"] is None
+
+
+@pytest.mark.asyncio
+async def test_run_metrics_endpoint_404s_for_unknown_run(client: AsyncClient) -> None:
+    resp = await client.get("/api/simulation/does-not-exist/metrics")
+    assert resp.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_swarm_run_creates_linked_experiment_and_trial(client: AsyncClient) -> None:
+    """A swarm run joins the shared history: one experiment + one trial per click,
+    with the ids handed to the orchestrator config for linkage."""
+    from sqlalchemy import text
+
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    seen_configs: list[Any] = []
+
+    def fake_run_swarm(config: Any, db: Any, **kwargs: Any) -> AsyncIterator[SimulationStep]:
+        seen_configs.append(config)
+
+        async def stream() -> AsyncIterator[SimulationStep]:
+            yield SimulationStep(type="system", msg="Run started")
+
+        return stream()
+
+    with patch("server.routes.simulation.run_swarm", new=fake_run_swarm):
+        resp = await client.post(
+            "/api/simulation/run",
+            json={"engine": "swarm", "prompt": "Analyze this contract"},
+            headers={"X-User-Id": "user-alice"},
+        )
+    assert resp.status_code == 200
+
+    async with get_engine().connect() as conn:
+        trial = (
+            (
+                await conn.execute(
+                    text("SELECT id, mode, experiment_id, user_prompt, user_id FROM trials")
+                )
+            )
+            .mappings()
+            .fetchone()
+        )
+        experiment = (
+            (await conn.execute(text("SELECT id, user_id FROM experiments"))).mappings().fetchone()
+        )
+
+    assert trial is not None and experiment is not None
+    assert trial["mode"] == "swarm"
+    assert trial["user_prompt"] == "Analyze this contract"
+    assert trial["experiment_id"] == experiment["id"]
+    assert trial["user_id"] == "user-alice"
+    assert experiment["user_id"] == "user-alice"
+
+    # The orchestrator config carries the linkage + owner for the run row.
+    assert len(seen_configs) == 1
+    config = seen_configs[0]
+    assert config.trial_id == trial["id"]
+    assert config.experiment_id == experiment["id"]
+    assert config.user_id == "user-alice"
+
+
+@pytest.mark.asyncio
+async def test_run_simulation_swarm_threads_config_fields(client: AsyncClient) -> None:
+    """POSTing min_rounds/max_rounds (etc.) on the swarm engine branch must
+    reach the persisted SwarmRunConfig — not silently default."""
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    seen_configs: list[Any] = []
+
+    def fake_run_swarm(config: Any, db: Any, **kwargs: Any) -> AsyncIterator[SimulationStep]:
+        seen_configs.append(config)
+
+        async def stream() -> AsyncIterator[SimulationStep]:
+            yield SimulationStep(type="system", msg="Run started")
+
+        return stream()
+
+    with patch("server.routes.simulation.run_swarm", new=fake_run_swarm):
+        resp = await client.post(
+            "/api/simulation/run",
+            json={"engine": "swarm", "prompt": "test prompt", "min_rounds": 1, "max_rounds": 2},
+        )
+
+    assert resp.status_code == 200
+    assert len(seen_configs) == 1
+    config = seen_configs[0]
+    # Defaults are min_rounds=3, max_rounds=5 — assert the sent values, not those.
+    assert config.min_rounds == 1
+    assert config.max_rounds == 2
+
+
+@pytest.mark.asyncio
+async def test_run_simulation_swarm_omitted_fields_keep_defaults(client: AsyncClient) -> None:
+    """Omitting the new optional fields must leave SwarmRunConfig at its own
+    defaults — zero behaviour change for existing callers."""
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    seen_configs: list[Any] = []
+
+    def fake_run_swarm(config: Any, db: Any, **kwargs: Any) -> AsyncIterator[SimulationStep]:
+        seen_configs.append(config)
+
+        async def stream() -> AsyncIterator[SimulationStep]:
+            yield SimulationStep(type="system", msg="Run started")
+
+        return stream()
+
+    with patch("server.routes.simulation.run_swarm", new=fake_run_swarm):
+        resp = await client.post(
+            "/api/simulation/run",
+            json={"engine": "swarm", "prompt": "test prompt"},
+        )
+
+    assert resp.status_code == 200
+    assert len(seen_configs) == 1
+    config = seen_configs[0]
+    assert config.min_rounds == 3
+    assert config.max_rounds == 5
+    assert config.min_takers == 2
+    assert config.max_takers == 5
+    assert config.token_budget == 50_000
+    assert config.max_amendments == 2
+    assert config.decay_rounds == 3
+    assert config.invite_floor == 0.3

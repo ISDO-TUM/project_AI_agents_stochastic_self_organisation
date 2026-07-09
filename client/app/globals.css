@@ -29,7 +29,7 @@ body {
 }
 
 body {
-  background: #060608;
+  background: #0d0c13;
   color: #eceaf5;
 }
 
@@ -236,6 +236,53 @@ body {
   }
   100% {
     background-position: 600px 0;
+  }
+}
+
+/* ─── History page ─── */
+
+@keyframes histRowIn {
+  from {
+    opacity: 0;
+    transform: translateY(5px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes histSpin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.hist-row {
+  transition: background 0.12s ease;
+}
+.hist-row:hover {
+  background: var(--hist-hover);
+}
+.hist-row[data-active="true"] {
+  background: var(--hist-active);
+}
+.hist-trial {
+  transition: background 0.12s ease;
+}
+.hist-trial:hover {
+  background: var(--hist-hover);
+}
+.hist-focus:focus-visible {
+  outline: 2px solid #c4374f;
+  outline-offset: -2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .hist-anim,
+  .hist-row {
+    animation: none !important;
+    transition: none !important;
   }
 }
 

@@ -31,6 +31,7 @@ async def call_agent(
     system_prompt: str | None = None,
     tool_names: list[str] | None = None,
     tool_context: dict[str, Any] | None = None,
+    max_iterations: int | None = None,
 ) -> tuple[str, list[ToolCall]]:
     """Call an LLM provider with optional system prompt and tools.
 
@@ -50,6 +51,7 @@ async def call_agent(
         system_prompt=system_prompt,
         tools=tools,
         tool_handler=tool_handler,
+        max_iterations=max_iterations,
     )
 
     return response, used_tools

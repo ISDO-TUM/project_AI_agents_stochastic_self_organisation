@@ -98,6 +98,22 @@ export interface CanvasState {
   sources: Source[];
   edges: Edge[];
   selectedRules?: string[];
+  /** Results of the last completed Market Hive run, embedded on export so
+   *  runs can be saved and compared later. Ignored on import. */
+  swarmResults?: SwarmRunExport;
+}
+
+/** Snapshot of a completed Market Hive run for the exported canvas JSON. */
+export interface SwarmRunExport {
+  runId: string;
+  trialId: string | null;
+  experimentId: string | null;
+  prompt: string | null;
+  exportedAt: string;
+  finalAnswer: string | null;
+  threads: ThreadInfo[];
+  confirmed: ConfirmedEntry[];
+  draft: DraftEntry[];
 }
 
 export interface Rule {
@@ -364,6 +380,43 @@ export interface ThreadInfo {
   required_expertise: string[];
   complexity: "low" | "medium" | "high";
   created_at: string;
+  /** Server-computed promotion threshold M for this thread (max(1, n_takers // 3 + 1)),
+   *  fixed once takers are assigned. Absent until the "Thread assignment" step arrives. */
+  promotion_threshold?: number;
+}
+
+/** The Market Maker's drafted contract: the structured scoping of the user's
+ *  prompt into a typed job (task kind, whether it splits into threads, the
+ *  expertise it demands, and how confident the scoping is). Streamed on the
+ *  run's `Contract created` frame (slim — no embedding/threads). */
+export interface ContractInfo {
+  id: string;
+  run_id: string;
+  original_prompt: string;
+  task_type: string;
+  task_nature: "single" | "multi";
+  required_expertise: string[];
+  complexity: "low" | "medium" | "high";
+  /** Market Maker's self-reported confidence in the scoping, 0–1. */
+  confidence: number;
+  created_at: string;
+}
+
+/** The Market Maker's drafted contract: the structured scoping of the user's
+ *  prompt into a typed job (task kind, whether it splits into threads, the
+ *  expertise it demands, and how confident the scoping is). Streamed on the
+ *  run's `Contract created` frame (slim — no embedding/threads). */
+export interface ContractInfo {
+  id: string;
+  run_id: string;
+  original_prompt: string;
+  task_type: string;
+  task_nature: "single" | "multi";
+  required_expertise: string[];
+  complexity: "low" | "medium" | "high";
+  /** Market Maker's self-reported confidence in the scoping, 0–1. */
+  confidence: number;
+  created_at: string;
 }
 
 export interface ConfirmedEntry {
@@ -376,6 +429,24 @@ export interface ConfirmedEntry {
   citation_count: number;
   round_confirmed: number;
   created_at: string;
+  /** Contestable consensus: a confirmed entry may be disputed (contested),
+   *  re-affirmed back to confirmed, or retracted at termination. Optional so
+   *  entries from before the feature (or dummy fixtures) default to confirmed. */
+  status?: "confirmed" | "contested" | "retracted";
+  /** Multi-turn contract sessions: set on a carried-forward anchor to the run
+   *  that originally ratified it. No UI renders this yet (API + mechanics only). */
+  origin_run_id?: string | null;
+}
+
+/** The takers' approve/revise vote on the synthesised final answer
+ *  (ratified synthesis). Null when the run predates the feature or shipped
+ *  with no takers left to ratify. */
+export interface Ratification {
+  approved: boolean;
+  round: 1 | 2;
+  approvals: number;
+  voters: number;
+  objections: string[];
 }
 
 export interface Citer {
@@ -396,14 +467,16 @@ export interface DraftEntry {
   content: string;
   reply_to: string | null;
   mention_agents: string[];
+  /** File names the author consulted (via the files() tool) while producing
+   *  this entry. Populated by the real backend at post time; the dummy
+   *  pipeline sets sample values on a couple of fixture entries. */
+  documents_used?: string[];
   is_visible: boolean;
   deleted_at: string | null;
   last_cited_round: number;
   citation_count: number;
   created_at: string;
   children: DraftEntry[];
-  /** Only populated by the dummy pipeline today — the real backend doesn't
-   *  enrich citer identities yet (see plan Task 13 note). Always optional. */
   citers?: Citer[];
 }
 
@@ -411,8 +484,15 @@ export interface BlackboardState {
   threads: ThreadInfo[];
   confirmed: ConfirmedEntry[];
   draft: DraftEntry[];
+  // Replies streamed in before their parent (concurrent turns complete, and
+  // stream to the client, in completion order rather than DB-write order) —
+  // held here and retried on every new arrival instead of rendered orphaned.
+  pendingReplies: DraftEntry[];
   loading: boolean;
   error: string | null;
+  /** The Market Maker's drafted contract for this run. Absent until the
+   *  `Contract created` frame arrives (and on fixtures predating the feature). */
+  contract?: ContractInfo | null;
 }
 
 export interface AgentTrustEntry {

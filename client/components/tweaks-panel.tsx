@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, type ReactNode } from "react";
 import { createPortal } from "react-dom";
 import { ConsensusMode, Rule, TopologyMode } from "@/lib/types";
 import { AppMode } from "@/components/mode-gate";
+import { ReasoningEffort, SwarmRunConfig } from "@/components/swarm-config";
 import { BURG, BURG_DIM, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { LIcon } from "@/lib/icons";
@@ -49,6 +50,20 @@ const CONSENSUS_OPTIONS: SegmentedOption<ConsensusMode>[] = [
     label: "Bidding",
     tooltip:
       "Agents bid on the sub-tasks they can contribute to, then assemble a verified collaboration set from the winning bids.",
+  },
+];
+
+const REASONING_EFFORT_OPTIONS: SegmentedOption<ReasoningEffort>[] = [
+  {
+    value: "low",
+    label: "Low",
+    tooltip:
+      "Fast demo pipeline (~3-5 min): 2-3 rounds, no wave 2, no vote sub-round, no ratification.",
+  },
+  {
+    value: "high",
+    label: "High",
+    tooltip: "Full pipeline (today's default): up to 5 rounds, ratification runs.",
   },
 ];
 
@@ -153,7 +168,7 @@ function HoverInfo({
               left: pos.left,
               top: pos.top,
               transform: pos.placeAbove ? "translateY(-100%)" : "none",
-              background: dark ? "#110e1a" : "#fffdfd",
+              background: dark ? "#231f31" : "#fffdfd",
               border: `1px solid ${t.borderHi}`,
               borderRadius: 10,
               boxShadow: "0 8px 24px rgba(0,0,0,0.28)",
@@ -222,6 +237,56 @@ function FieldLabel({
           </span>
         </HoverInfo>
       )}
+    </div>
+  );
+}
+
+function NumField({
+  label,
+  value,
+  onChange,
+  step = 1,
+  disabled = false,
+  t,
+}: {
+  label: string;
+  value: number;
+  onChange: (n: number) => void;
+  step?: number;
+  disabled?: boolean;
+  t: Theme;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "space-between",
+        gap: 8,
+        opacity: disabled ? 0.5 : 1,
+      }}
+    >
+      <span style={{ fontSize: 12, color: t.textSub }}>{label}</span>
+      <input
+        type="number"
+        value={value}
+        step={step}
+        disabled={disabled}
+        onChange={(e) => onChange(Number(e.target.value))}
+        style={{
+          width: 84,
+          padding: "6px 8px",
+          borderRadius: 7,
+          border: `1px solid ${t.border}`,
+          background: t.inputBg,
+          color: t.text,
+          fontSize: 12,
+          fontWeight: 600,
+          textAlign: "right",
+          outline: "none",
+          cursor: disabled ? "not-allowed" : "text",
+        }}
+      />
     </div>
   );
 }
@@ -307,6 +372,8 @@ interface TweaksPanelProps {
   simRunning: boolean;
   onClose: () => void;
   appMode: AppMode | null;
+  swarmConfig: SwarmRunConfig;
+  onSwarmConfigChange: (config: SwarmRunConfig) => void;
 }
 
 export function TweaksPanel({
@@ -323,12 +390,17 @@ export function TweaksPanel({
   simRunning,
   onClose,
   appMode,
+  swarmConfig,
+  onSwarmConfigChange,
 }: TweaksPanelProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
-  const [activeTab, setActiveTab] = useState<"sim" | "keys" | "rules">(
-    appMode === "swarm" ? "keys" : "sim",
-  );
+  const [activeTab, setActiveTab] = useState<
+    "sim" | "swarm" | "keys" | "rules"
+  >(appMode === "swarm" ? "swarm" : "sim");
+  const [swarmAdvanced, setSwarmAdvanced] = useState(false);
+  const updateSwarmConfig = (patch: Partial<SwarmRunConfig>) =>
+    onSwarmConfigChange({ ...swarmConfig, ...patch });
 
   const { keys, setKeys, clearKeys } = useApiKeys();
   const [draft, setDraft] = useState<ApiKeys>(keys);
@@ -445,6 +517,7 @@ export function TweaksPanel({
       >
         {(appMode === "swarm"
           ? ([
+              { id: "swarm", label: "Swarm", icon: "SlidersHorizontal" },
               { id: "keys", label: "API Keys", icon: "KeyRound" },
               { id: "rules", label: "Rulesets", icon: "ScrollText" },
             ] as const)
@@ -491,6 +564,165 @@ export function TweaksPanel({
           overflowY: "auto",
         }}
       >
+        {activeTab === "swarm" && (
+          <div>
+            <p
+              style={{
+                fontSize: 11,
+                color: t.textDim,
+                lineHeight: 1.5,
+                margin: "0 0 14px",
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            >
+              Controls the swarm&apos;s size and budget. Applied to the next
+              run.
+            </p>
+
+            <FieldLabel
+              text="Reasoning effort"
+              t={t}
+              tooltip="Low: fast demo pipeline (~3-5 min, 2-3 rounds, no ratification). High: full pipeline (today's default)."
+            />
+            <Segmented
+              options={REASONING_EFFORT_OPTIONS}
+              value={swarmConfig.reasoningEffort}
+              onChange={(level) =>
+                updateSwarmConfig({
+                  reasoningEffort: level,
+                  ...(level === "low"
+                    ? { roundsMin: 2, roundsMax: 3, maxAmendments: 0 }
+                    : {}),
+                })
+              }
+              disabled={simRunning}
+              t={t}
+            />
+
+            <div style={{ height: 14 }} />
+            <FieldLabel
+              text="Takers"
+              t={t}
+              tooltip="How many agents may take a task per round."
+            />
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <NumField
+                label="Min"
+                value={swarmConfig.takersMin}
+                onChange={(n) => updateSwarmConfig({ takersMin: n })}
+                t={t}
+              />
+              <NumField
+                label="Max"
+                value={swarmConfig.takersMax}
+                onChange={(n) => updateSwarmConfig({ takersMax: n })}
+                t={t}
+              />
+            </div>
+
+            <div style={{ height: 14 }} />
+            <FieldLabel
+              text="Rounds"
+              t={t}
+              tooltip="How many rounds the swarm may run before it must conclude."
+            />
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <NumField
+                label="Min"
+                value={swarmConfig.roundsMin}
+                onChange={(n) => updateSwarmConfig({ roundsMin: n })}
+                disabled={swarmConfig.reasoningEffort === "low"}
+                t={t}
+              />
+              <NumField
+                label="Max"
+                value={swarmConfig.roundsMax}
+                onChange={(n) => updateSwarmConfig({ roundsMax: n })}
+                disabled={swarmConfig.reasoningEffort === "low"}
+                t={t}
+              />
+            </div>
+
+            <div style={{ height: 14 }} />
+            <FieldLabel
+              text="Budget"
+              t={t}
+              tooltip="Token budget and amendment cap for the whole run."
+            />
+            <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+              <NumField
+                label="Token budget"
+                value={swarmConfig.tokenBudget}
+                step={1000}
+                onChange={(n) => updateSwarmConfig({ tokenBudget: n })}
+                t={t}
+              />
+              <NumField
+                label="Max amendments"
+                value={swarmConfig.maxAmendments}
+                onChange={(n) => updateSwarmConfig({ maxAmendments: n })}
+                t={t}
+              />
+            </div>
+
+            <button
+              onClick={() => setSwarmAdvanced((a) => !a)}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 5,
+                background: "none",
+                border: "none",
+                cursor: "pointer",
+                padding: "12px 0 4px",
+                fontSize: 11,
+                fontWeight: 700,
+                color: t.textDim,
+              }}
+            >
+              <span
+                style={{
+                  display: "flex",
+                  transform: swarmAdvanced ? "rotate(180deg)" : "none",
+                  transition: "transform 0.15s",
+                }}
+              >
+                <LIcon
+                  name="ChevronDown"
+                  size={11}
+                  color="currentColor"
+                  sw={2.4}
+                />
+              </span>
+              Advanced settings
+            </button>
+            {swarmAdvanced && (
+              <div
+                style={{
+                  display: "flex",
+                  flexDirection: "column",
+                  gap: 8,
+                  paddingTop: 4,
+                }}
+              >
+                <NumField
+                  label="Invite floor"
+                  value={swarmConfig.inviteFloor}
+                  step={0.05}
+                  onChange={(n) => updateSwarmConfig({ inviteFloor: n })}
+                  t={t}
+                />
+                <NumField
+                  label="Decay rounds"
+                  value={swarmConfig.decayRounds}
+                  onChange={(n) => updateSwarmConfig({ decayRounds: n })}
+                  t={t}
+                />
+              </div>
+            )}
+          </div>
+        )}
+
         {activeTab === "sim" && (
           <div>
             <p

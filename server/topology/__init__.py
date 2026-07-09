@@ -60,10 +60,11 @@ from server.guardrails import build_guarded_system_prompt, sanitize_prompt
 from server.guardrails.input_sanitizer import PromptInjectionError
 from server.llm import call_agent
 from server.llm.embeddings import cosine_similarity, embed_texts
-from server.llm.langfuse_setup import langfuse_metadata
+from server.llm.langfuse_setup import agent_trace_metadata, langfuse_metadata
 from server.schemas import ToolCall
 from server.tools.builtin.registry import RegistryIndex
 from server.tools.builtin.table import TableStore
+from server.tools.registry import BUILTIN_TOOL_NAMES
 
 logger = logging.getLogger(__name__)
 
@@ -119,7 +120,13 @@ async def _call_agent(
     except PromptInjectionError as exc:
         return f"[GUARDRAIL BLOCKED] {exc}", []
 
-    tool_names = list(agent["tools"] or [])
+    # The topology engine's tool_context provides only the cross-engine builtins
+    # (files/registry/tables/…). An agent may still carry an engine-specific tool
+    # in its saved ``tools`` list (e.g. the market_hive blackboard tools, which
+    # read ``ctx["db"]``); offering one here would raise ``KeyError('db')`` the
+    # moment the LLM calls it and surface as an ``[error: 'db']`` answer, so drop
+    # any tool this engine cannot service.
+    tool_names = [name for name in (agent["tools"] or []) if name in BUILTIN_TOOL_NAMES]
     if registry is not None and "registry" not in tool_names:
         tool_names.append("registry")
 
@@ -917,6 +924,7 @@ async def run_topology(
     ruleset: str | None = None,
     topology: str = "static",
     fanout: int = 3,
+    user_id: str | None = None,
 ) -> None:
     """Run a topology simulation under the chosen consensus mode.
 
@@ -928,9 +936,15 @@ async def run_topology(
     (default) keeps the UI/seed graph fixed for the whole run, while ``dynamic``
     lets agents rebuild it each round by discovering peers through the registry
     tool and emitting CONNECT lines. ``fanout`` caps how many neighbours an agent
-    may pick per round in dynamic mode.
+    may pick per round in dynamic mode. ``user_id`` restricts the run to that
+    user's agents (plus legacy/shared rows); ``None`` keeps the full pool.
     """
-    result = await db.execute(select(agents_table))
+    agents_stmt = select(agents_table)
+    if user_id is not None:
+        agents_stmt = agents_stmt.where(
+            (agents_table.c.user_id == user_id) | (agents_table.c.user_id.is_(None))
+        )
+    result = await db.execute(agents_stmt)
     agents: list[dict[str, Any]] = [deserialise_agent_row(row) for row in result.mappings().all()]
 
     if not agents:
@@ -982,15 +996,7 @@ async def run_topology(
         prompt: str,
         metadata: dict[str, Any] | None = None,
     ) -> tuple[str, list[ToolCall]]:
-        langfuse_context = {
-            "trial_id": trial_id,
-            "agent_id": str(agent["id"]),
-            "agent_name": str(agent["name"]),
-            "provider": str(agent["provider"]),
-            "model": str(agent["model"]),
-            **(metadata or {}),
-        }
-        with langfuse_metadata(langfuse_context):
+        with langfuse_metadata(agent_trace_metadata(trial_id, agent, **(metadata or {}))):
             return await _call_agent(
                 agent,
                 prompt + _table_change_notes(agent["id"]),

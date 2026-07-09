@@ -1,15 +1,16 @@
 "use client";
 
-import { useState, useRef, useEffect } from "react";
+import { useState, useRef, useEffect, useMemo } from "react";
 import { createPortal } from "react-dom";
 import { BlackboardState } from "@/lib/types";
 import { useTheme } from "@/lib/theme-context";
-import { getTheme, BURG_LT } from "@/lib/theme";
-import { Layers, Maximize2, X } from "lucide-react";
-import { computePromotionThreshold } from "@/lib/blackboard-utils";
-import { ProposalCard } from "./blackboard/proposal-card";
-import { ThreadedEntry } from "./blackboard/reply-thread";
+import { getTheme, BURG_LT, SURFACE_DARK_RGB } from "@/lib/theme";
+import { Layers, Maximize2, Network, Rows3, X } from "lucide-react";
+import { computePromotionThreshold, countEntries } from "@/lib/blackboard-utils";
 import { ThreadFilterDropdown } from "./blackboard/thread-filter-dropdown";
+import { BoardGraphView } from "./blackboard/board-graph-view";
+import { ContractCard } from "./blackboard/contract-card";
+import { DraftEntryStream } from "./blackboard/draft-entry-stream";
 
 interface DraftBoardProps {
   state: BlackboardState;
@@ -30,6 +31,8 @@ interface DraftBoardProps {
   promotedAgentIds?: Set<string>;
   /** True once the dummy / real run has fully completed. */
   done?: boolean;
+  /** True while a run is in flight — drives the loading skeleton. */
+  running?: boolean;
 }
 
 function SkeletonCard({ dark, delay = 0 }: { dark: boolean; delay?: number }) {
@@ -116,6 +119,50 @@ function EmptyState({ runId, dark }: { runId: string | null; dark: boolean }) {
   );
 }
 
+/** Small segmented control used in the expanded modal's topbar to switch
+ *  between the linear list and the graph view. */
+function ViewModeButton({
+  active,
+  onClick,
+  icon: Icon,
+  label,
+  dark,
+}: {
+  active: boolean;
+  onClick: () => void;
+  icon: React.ComponentType<{ size?: number; strokeWidth?: number }>;
+  label: string;
+  dark: boolean;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      title={`${label} view`}
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 5,
+        padding: "4px 9px",
+        borderRadius: 6,
+        border: "none",
+        background: active
+          ? dark
+            ? "rgba(196,55,79,0.22)"
+            : "rgba(139,26,47,0.12)"
+          : "transparent",
+        color: active ? BURG_LT : dark ? "#6a688a" : "#4e4c68",
+        fontSize: 10.5,
+        fontWeight: 700,
+        fontFamily: "'Space Grotesk', system-ui, sans-serif",
+        cursor: "pointer",
+      }}
+    >
+      <Icon size={11} strokeWidth={2.2} />
+      {label}
+    </button>
+  );
+}
+
 export function DraftBoard({
   state,
   runId,
@@ -128,11 +175,13 @@ export function DraftBoard({
   agents = [],
   promotedAgentIds,
   done = false,
+  running = false,
 }: DraftBoardProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
 
   const [expanded, setExpanded] = useState(false);
+  const [viewMode, setViewMode] = useState<"list" | "graph">("list");
   const bodyRef = useRef<HTMLDivElement>(null);
   const [newCount, setNewCount] = useState(0);
   const prevLengthRef = useRef(0);
@@ -144,13 +193,41 @@ export function DraftBoard({
     state.threads.find((th) => th.id === activeThreadId) ??
     state.threads[0] ??
     null;
-  const visibleDraft = filteredDraft.filter((e) => e.is_visible);
-  const hasContent = visibleDraft.length > 0;
-  const threshold = computePromotionThreshold(filteredDraft);
-  const promotedMap = new Map(
-    state.confirmed
-      .filter((c) => c.source_draft_id)
-      .map((c) => [c.source_draft_id as string, c.round_confirmed] as const),
+  // The list view renders every entry, live or decayed — decayed ones are only
+  // dimmed (via each card's own `is_visible` handling), never removed. Only the
+  // Confirmed board is the durable record; the draft board staying legible about
+  // its own history (what was tried and didn't stick) is the point of it.
+  const renderedDraft = filteredDraft;
+  const hasContent = renderedDraft.length > 0;
+  // Replies are nested under their parent's `children`, not appended to the
+  // top-level array — counting `renderedDraft.length` alone misses every new
+  // reply, so the "N new" scroll-nudge badge below only ever fired for new
+  // top-level proposals.
+  const totalEntryCount = countEntries(renderedDraft);
+  // Prefer the server's authoritative, run-fixed per-thread threshold (pushed once
+  // takers are assigned) over the client-side approximation — the approximation
+  // counts distinct authors in whatever's currently in view, which drifts as
+  // entries stream in and made the displayed threshold look like it randomly
+  // changed across rounds. Only available once a single thread is selected: the
+  // combined "all threads" view has no single true M, so it keeps the estimate.
+  const selectedThread = activeThreadId
+    ? state.threads.find((th) => th.id === activeThreadId)
+    : null;
+  const threshold =
+    selectedThread?.promotion_threshold ?? computePromotionThreshold(filteredDraft);
+  // Referentially stable across renders so the graph view's layout memo holds
+  // between streaming ticks (rebuilding this Map every render forced a full
+  // relayout on every SSE event while the graph modal was open).
+  const promotedMap = useMemo(
+    () =>
+      new Map(
+        state.confirmed
+          .filter((c) => c.source_draft_id)
+          .map(
+            (c) => [c.source_draft_id as string, c.round_confirmed] as const,
+          ),
+      ),
+    [state.confirmed],
   );
 
   // Convergence meter: threads that have at least one confirmed entry
@@ -160,16 +237,22 @@ export function DraftBoard({
   ).length;
   const totalThreads = state.threads.length;
 
-  // Track new entries arriving while the user is scrolled up
+  // Track new entries (proposals AND replies) arriving while the user is
+  // scrolled up. Guarded against `activeThreadId` changes: switching the
+  // thread filter changes `totalEntryCount` on its own and must reset the
+  // baseline, not be mistaken for a burst of new entries.
+  const prevThreadIdRef = useRef(activeThreadId);
   useEffect(() => {
-    const diff = visibleDraft.length - prevLengthRef.current;
-    prevLengthRef.current = visibleDraft.length;
-    if (diff <= 0) return;
+    const filterChanged = prevThreadIdRef.current !== activeThreadId;
+    prevThreadIdRef.current = activeThreadId;
+    const diff = totalEntryCount - prevLengthRef.current;
+    prevLengthRef.current = totalEntryCount;
+    if (filterChanged || diff <= 0) return;
     const el = bodyRef.current;
     if (!el) return;
     const atBottom = el.scrollTop + el.clientHeight >= el.scrollHeight - 40;
     if (!atBottom) setNewCount((n) => n + diff);
-  }, [visibleDraft.length]);
+  }, [totalEntryCount, activeThreadId]);
 
   const handleScrollToNew = () => {
     bodyRef.current?.scrollTo({
@@ -183,19 +266,6 @@ export function DraftBoard({
     if (!el) return;
     if (el.scrollTop + el.clientHeight >= el.scrollHeight - 40) setNewCount(0);
   };
-
-  // Group visible entries by round for the timeline dividers
-  const roundGroups = visibleDraft.reduce<
-    { round: number; entries: typeof visibleDraft }[]
-  >((acc, entry) => {
-    const last = acc[acc.length - 1];
-    if (last && last.round === entry.round) {
-      last.entries.push(entry);
-    } else {
-      acc.push({ round: entry.round, entries: [entry] });
-    }
-    return acc;
-  }, []);
 
   const posStyle: React.CSSProperties = pos
     ? { left: pos.x, top: pos.y }
@@ -350,7 +420,7 @@ export function DraftBoard({
                   ? "done"
                   : state.loading
                     ? "syncing…"
-                    : `${visibleDraft.length}D`}
+                    : `${renderedDraft.length}D`}
               </span>
             </>
           )}
@@ -402,7 +472,7 @@ export function DraftBoard({
         ref={bodyRef}
         onScroll={handleBodyScroll}
         style={{
-          background: dark ? "rgba(6,5,12,0.88)" : "rgba(248,246,255,0.94)",
+          background: dark ? `rgba(${SURFACE_DARK_RGB},0.92)` : "rgba(248,246,255,0.94)",
           border: `1px solid rgba(139,26,47,0.22)`,
           borderTop: "none",
           borderRadius: "0 0 12px 12px",
@@ -416,8 +486,16 @@ export function DraftBoard({
         }}
         className="pscroll"
       >
+        {state.contract && (
+          <ContractCard
+            contract={state.contract}
+            threads={state.threads}
+            hasEntries={renderedDraft.length > 0}
+          />
+        )}
+
         {/* Skeleton: run active but no entries yet */}
-        {state.loading && visibleDraft.length === 0 && (
+        {running && renderedDraft.length === 0 && (
           <>
             <SkeletonCard dark={dark} delay={0} />
             <SkeletonCard dark={dark} delay={0.15} />
@@ -440,82 +518,24 @@ export function DraftBoard({
         )}
 
         {/* Styled empty state */}
-        {!state.loading && !state.error && visibleDraft.length === 0 && (
+        {!running && !state.error && renderedDraft.length === 0 && (
           <EmptyState runId={runId} dark={dark} />
         )}
 
-        {/* Round-grouped content */}
-        {visibleDraft.length > 0 && !state.error && (
-          <>
-            {roundGroups.map((group, gi) => (
-              <div key={group.round}>
-                {gi > 0 && (
-                  <div
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 8,
-                      margin: "10px 0 8px",
-                    }}
-                  >
-                    <div
-                      style={{
-                        flex: 1,
-                        height: 1,
-                        background: dark
-                          ? "rgba(139,26,47,0.18)"
-                          : "rgba(139,26,47,0.1)",
-                      }}
-                    />
-                    <span
-                      style={{
-                        fontSize: 9.5,
-                        color: dark
-                          ? "rgba(196,55,79,0.5)"
-                          : "rgba(139,26,47,0.4)",
-                        fontFamily: "'JetBrains Mono', monospace",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      Round {group.round}
-                    </span>
-                    <div
-                      style={{
-                        flex: 1,
-                        height: 1,
-                        background: dark
-                          ? "rgba(139,26,47,0.18)"
-                          : "rgba(139,26,47,0.1)",
-                      }}
-                    />
-                  </div>
-                )}
-                {group.entries.map((entry) =>
-                  entry.entry_type === "proposal" ? (
-                    <ProposalCard
-                      key={entry.id}
-                      entry={entry}
-                      threshold={threshold}
-                      promotedMap={promotedMap}
-                      agents={agents}
-                      promotedAgentIds={promotedAgentIds}
-                    />
-                  ) : (
-                    <ThreadedEntry
-                      key={entry.id}
-                      entry={entry}
-                      parentContent=""
-                      depth={0}
-                      threshold={threshold}
-                      promotedMap={promotedMap}
-                      agents={agents}
-                      promotedAgentIds={promotedAgentIds}
-                    />
-                  ),
-                )}
-              </div>
-            ))}
-          </>
+        {/* Entries — grouped by sub-task in an unfiltered multi-thread run,
+            otherwise a flat round timeline. */}
+        {renderedDraft.length > 0 && !state.error && (
+          <DraftEntryStream
+            entries={renderedDraft}
+            threads={state.threads}
+            activeThreadId={activeThreadId}
+            threshold={threshold}
+            promotedMap={promotedMap}
+            agents={agents}
+            promotedAgentIds={promotedAgentIds}
+            confirmedThreadIds={threadsWithConfirmed}
+            onSelectThread={onThreadSelect}
+          />
         )}
 
         {/* "New entries" scroll nudge */}
@@ -580,17 +600,22 @@ export function DraftBoard({
           >
             <div
               style={{
-                width: "min(860px, 90vw)",
+                width:
+                  viewMode === "graph"
+                    ? "min(1240px, 94vw)"
+                    : "min(860px, 90vw)",
                 maxHeight: "85vh",
+                height: viewMode === "graph" ? "min(760px, 85vh)" : undefined,
                 display: "flex",
                 flexDirection: "column",
                 background: dark
-                  ? "rgba(6,5,12,0.97)"
+                  ? `rgba(${SURFACE_DARK_RGB},0.97)`
                   : "rgba(248,246,255,0.99)",
                 border: "1px solid rgba(139,26,47,0.35)",
                 borderRadius: 16,
                 overflow: "hidden",
                 boxShadow: "0 28px 90px rgba(0,0,0,0.5)",
+                transition: "width 0.25s ease, height 0.25s ease",
               }}
             >
               <div
@@ -650,125 +675,129 @@ export function DraftBoard({
                     {runId.slice(0, 8)}
                   </span>
                 )}
-                <button
-                  onClick={() => setExpanded(false)}
+
+                <div
                   style={{
                     marginLeft: "auto",
-                    background: "none",
-                    border: "none",
-                    cursor: "pointer",
-                    padding: "4px 6px",
                     display: "flex",
                     alignItems: "center",
-                    color: t.textDim,
-                    borderRadius: 6,
+                    gap: 10,
                   }}
-                  title="Close"
                 >
-                  <X size={15} strokeWidth={2} />
-                </button>
-              </div>
-
-              <div
-                style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}
-                className="pscroll"
-              >
-                {state.loading && visibleDraft.length === 0 && (
-                  <>
-                    <SkeletonCard dark={dark} delay={0} />
-                    <SkeletonCard dark={dark} delay={0.15} />
-                    <SkeletonCard dark={dark} delay={0.3} />
-                  </>
-                )}
-                {state.error && (
                   <div
                     style={{
-                      textAlign: "center",
-                      padding: "24px 0",
-                      color: "#c0392b",
-                      fontSize: 13,
+                      display: "flex",
+                      alignItems: "center",
+                      gap: 2,
+                      padding: 2,
+                      borderRadius: 8,
+                      background: dark
+                        ? "rgba(255,255,255,0.05)"
+                        : "rgba(0,0,0,0.04)",
+                      border: `1px solid ${
+                        dark ? "rgba(255,255,255,0.08)" : "rgba(0,0,0,0.07)"
+                      }`,
                     }}
                   >
-                    {state.error}
+                    <ViewModeButton
+                      active={viewMode === "list"}
+                      onClick={() => setViewMode("list")}
+                      icon={Rows3}
+                      label="List"
+                      dark={dark}
+                    />
+                    <ViewModeButton
+                      active={viewMode === "graph"}
+                      onClick={() => setViewMode("graph")}
+                      icon={Network}
+                      label="Graph"
+                      dark={dark}
+                    />
                   </div>
-                )}
-                {!state.loading &&
-                  !state.error &&
-                  visibleDraft.length === 0 && (
-                    <EmptyState runId={runId} dark={dark} />
-                  )}
-                {visibleDraft.length > 0 && !state.error && (
-                  <>
-                    {roundGroups.map((group, gi) => (
-                      <div key={group.round}>
-                        {gi > 0 && (
-                          <div
-                            style={{
-                              display: "flex",
-                              alignItems: "center",
-                              gap: 8,
-                              margin: "10px 0 8px",
-                            }}
-                          >
-                            <div
-                              style={{
-                                flex: 1,
-                                height: 1,
-                                background: dark
-                                  ? "rgba(139,26,47,0.18)"
-                                  : "rgba(139,26,47,0.1)",
-                              }}
-                            />
-                            <span
-                              style={{
-                                fontSize: 9.5,
-                                color: dark
-                                  ? "rgba(196,55,79,0.5)"
-                                  : "rgba(139,26,47,0.4)",
-                                fontFamily: "'JetBrains Mono', monospace",
-                              }}
-                            >
-                              Round {group.round}
-                            </span>
-                            <div
-                              style={{
-                                flex: 1,
-                                height: 1,
-                                background: dark
-                                  ? "rgba(139,26,47,0.18)"
-                                  : "rgba(139,26,47,0.1)",
-                              }}
-                            />
-                          </div>
-                        )}
-                        {group.entries.map((entry) =>
-                          entry.entry_type === "proposal" ? (
-                            <ProposalCard
-                              key={entry.id}
-                              entry={entry}
-                              threshold={threshold}
-                              promotedMap={promotedMap}
-                              agents={agents}
-                              promotedAgentIds={promotedAgentIds}
-                            />
-                          ) : (
-                            <ThreadedEntry
-                              key={entry.id}
-                              entry={entry}
-                              parentContent=""
-                              depth={0}
-                              threshold={threshold}
-                              promotedMap={promotedMap}
-                              agents={agents}
-                              promotedAgentIds={promotedAgentIds}
-                            />
-                          ),
-                        )}
-                      </div>
-                    ))}
-                  </>
-                )}
+                  <button
+                    onClick={() => setExpanded(false)}
+                    style={{
+                      background: "none",
+                      border: "none",
+                      cursor: "pointer",
+                      padding: "4px 6px",
+                      display: "flex",
+                      alignItems: "center",
+                      color: t.textDim,
+                      borderRadius: 6,
+                    }}
+                    title="Close"
+                  >
+                    <X size={15} strokeWidth={2} />
+                  </button>
+                </div>
               </div>
+
+              {viewMode === "graph" ? (
+                <div
+                  style={{ flex: 1, minHeight: 0, padding: "8px 12px 12px" }}
+                >
+                  <BoardGraphView
+                    draft={filteredDraft}
+                    promotedMap={promotedMap}
+                    threshold={threshold}
+                    agents={agents}
+                    promotedAgentIds={promotedAgentIds}
+                    done={done}
+                  />
+                </div>
+              ) : (
+                <div
+                  style={{ flex: 1, overflowY: "auto", padding: "16px 20px" }}
+                  className="pscroll"
+                >
+                  {state.contract && (
+                    <ContractCard
+                      contract={state.contract}
+                      threads={state.threads}
+                      hasEntries={renderedDraft.length > 0}
+                    />
+                  )}
+
+                  {running && renderedDraft.length === 0 && (
+                    <>
+                      <SkeletonCard dark={dark} delay={0} />
+                      <SkeletonCard dark={dark} delay={0.15} />
+                      <SkeletonCard dark={dark} delay={0.3} />
+                    </>
+                  )}
+                  {state.error && (
+                    <div
+                      style={{
+                        textAlign: "center",
+                        padding: "24px 0",
+                        color: "#c0392b",
+                        fontSize: 13,
+                      }}
+                    >
+                      {state.error}
+                    </div>
+                  )}
+                  {!running &&
+                    !state.error &&
+                    renderedDraft.length === 0 && (
+                      <EmptyState runId={runId} dark={dark} />
+                    )}
+                  {renderedDraft.length > 0 && !state.error && (
+                    <DraftEntryStream
+                      entries={renderedDraft}
+                      threads={state.threads}
+                      activeThreadId={activeThreadId}
+                      threshold={threshold}
+                      promotedMap={promotedMap}
+                      agents={agents}
+                      promotedAgentIds={promotedAgentIds}
+                      confirmedThreadIds={threadsWithConfirmed}
+                      onSelectThread={onThreadSelect}
+                    />
+                  )}
+                </div>
+              )}
             </div>
           </div>,
           document.body,
