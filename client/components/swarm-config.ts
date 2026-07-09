@@ -7,7 +7,6 @@ export interface SwarmRunConfig {
   maxAmendments: number;
   inviteFloor: number;
   decayRounds: number;
-  attentionK: number;
 }
 
 export const DEFAULT_SWARM_CONFIG: SwarmRunConfig = {
@@ -19,5 +18,4 @@ export const DEFAULT_SWARM_CONFIG: SwarmRunConfig = {
   maxAmendments: 2,
   inviteFloor: 0.3,
   decayRounds: 3,
-  attentionK: 10,
 };

@@ -676,12 +676,6 @@ export function TweaksPanel({
                   onChange={(n) => updateSwarmConfig({ decayRounds: n })}
                   t={t}
                 />
-                <NumField
-                  label="Attention K"
-                  value={swarmConfig.attentionK}
-                  onChange={(n) => updateSwarmConfig({ attentionK: n })}
-                  t={t}
-                />
               </div>
             )}
           </div>
