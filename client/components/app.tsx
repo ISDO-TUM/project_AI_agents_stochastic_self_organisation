@@ -4,6 +4,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useMemo,
   useRef,
   useSyncExternalStore,
 } from "react";
@@ -54,6 +55,7 @@ import {
 import { useDummySwarm } from "@/hooks/useDummySwarm";
 import { useSwarmRun } from "@/hooks/useSwarmRun";
 import { FinalAnswerReveal } from "@/components/canvas/final-answer-reveal";
+import { extractResultTable } from "@/lib/result-table";
 import { NotifyConsentModal } from "@/components/notify-consent-modal";
 import {
   NotifyScope,
@@ -196,6 +198,14 @@ export function App({ onModeSelected }: AppProps = {}) {
   // hasn't streamed in yet. Animates the MM chip in the agent dock.
   const swarmDrafting =
     (dummy.state.active || swarm.state.active) && !blackboardState.contract;
+  // The run's tabular deliverable (e.g. the allocation table), lifted from the
+  // author's blackboard message so the completion overlay can show it under the
+  // answer. Only meaningful once the run is done.
+  const swarmResultTable = useMemo(
+    () =>
+      swarm.state.done ? extractResultTable(swarm.state.blackboard) : null,
+    [swarm.state.done, swarm.state.blackboard],
+  );
 
   // Run configuration — edited in the Settings panel, read at run start.
   const [consensusMode, setConsensusMode] =
@@ -760,6 +770,9 @@ export function App({ onModeSelected }: AppProps = {}) {
           swarmFinalAnswer={
             appMode === "swarm" ? swarm.state.finalAnswer : null
           }
+          swarmRatification={
+            appMode === "swarm" ? swarm.state.ratification : null
+          }
           onShowFinalAnswer={() => setAnswerDismissed(false)}
           swarmTrustVectors={dummy.state.trustVectors}
           swarmRespondingIds={swarm.state.responding}
@@ -876,6 +889,7 @@ export function App({ onModeSelected }: AppProps = {}) {
           (e) => e.entry_type === "finding",
         )}
         ratification={swarm.state.ratification}
+        resultTable={swarmResultTable}
         onClose={() => setAnswerDismissed(true)}
       />
 

@@ -1,0 +1,196 @@
+{
+  "agents": [
+    {
+      "id": "c1111111-1111-4111-8111-111111111111",
+      "name": "Order Fulfillment Manager",
+      "description": "Owns the allocation decision — loads the open-order table, gathers specialist input, and writes the final allocated quantities back into the shared table.",
+      "systemPrompt": "You are the order fulfillment manager at an industrial pump manufacturer. A supply shortage means the open sales orders cannot all be served, and you own the final allocation. You have the `table_query` (read) and `table_mutate` (write) tools plus the shortage notice.\n\nWork like this, with as few tool calls as possible:\n1. `table_query` action='list' to see what is available; if 'open_sales_orders.csv' is not loaded yet, action='load' it by file_name.\n2. `table_query` action='read' to see every open order, and action='history' to check what teammates have already written to the shared table (e.g. a credit check column).\n3. Weigh the specialists' input: credit blocks (and any treasury-approved partial release) from the credit controller, contractual penalties and strategic accounts from the key account manager, per-unit margins from the finance analyst, and standby expedite capacity from the production & expedite planner. Cite the teammates whose findings you build on rather than repeating them.\n4. Write the final allocation in a SINGLE `table_mutate` action='add_column' call with column='allocated_qty' and column_values as a list of integers, one per row in the same row order. The values must sum to at most the firm available-to-promise from the shortage notice (5,000); any expedited units are tracked separately and are additional.\n5. `table_query` action='export' to retrieve the completed table, and `table_query` action='history' to confirm the write landed.\n6. End your message with a section headed exactly 'FINAL ALLOCATION TABLE:' containing the completed table rendered as a GitHub-flavoured Markdown table (a header row, a '---' separator row, then one row per order) built from the exported CSV, then a line 'WRITE CONFIRMATION: table version <n>, columns written: <list>' taken from the history, and finally a short one-line rationale per order citing the figure and teammate that drove it.\n\nDo not invent extra orders. Only if the task explicitly asks you to plan expedite or extra supply, add one more `table_mutate` action='add_column' with column='expedite_qty' (integers in row order, 0 where none, summing to at most the expedite batch size) after the allocation column; otherwise write no columns beyond 'allocated_qty'.",
+      "provider": "openai",
+      "model": "gpt-5-mini",
+      "tools": ["files", "table_query", "table_mutate"],
+      "connections": [
+        "c2222222-2222-4222-8222-222222222222",
+        "c3333333-3333-4333-8333-333333333333",
+        "c4444444-4444-4444-8444-444444444444",
+        "c6666666-6666-4666-8666-666666666666"
+      ],
+      "position": { "x": 120, "y": 120 }
+    },
+    {
+      "id": "c2222222-2222-4222-8222-222222222222",
+      "name": "Credit & Receivables Controller",
+      "description": "Checks every customer on the order list against the credit records and stamps the result into the shared table.",
+      "systemPrompt": "You are the credit and receivables controller. Company policy FI-CR-04 forbids new deliveries to any customer with an active credit block, regardless of commercial pressure. You have the credit memo plus the `table_query` (read) and `table_mutate` (write) tools.\n\nWork like this:\n1. `table_query` action='list'; if 'open_sales_orders.csv' is not loaded yet, action='load' it by file_name, then action='read' to see the orders.\n2. Check every customer on the order list against the credit memo.\n3. Record your verdict in a SINGLE `table_mutate` action='add_column' call with column='credit_check' and column_values as a list with exactly one value per row in row order, each either 'OK' or 'BLOCKED'.\n4. Tell the team which orders are blocked and why, citing the customer number, the overdue amount, and the policy. Insist that blocked orders receive zero allocation; defer the question of how to redistribute the freed-up quantity to the fulfillment manager and finance.\n\nIf a run states that treasury has settled or partially lifted a block, honour it: set that customer's credit_check to 'OK', treat the released quantity as the hard delivery cap for that customer, and state clearly how many units are now releasable versus how many remain blocked so the fulfillment manager can re-allocate within that cap.",
+      "provider": "openai",
+      "model": "gpt-5-mini",
+      "tools": ["files", "table_query", "table_mutate"],
+      "connections": ["c1111111-1111-4111-8111-111111111111"],
+      "position": { "x": 460, "y": 120 }
+    },
+    {
+      "id": "c3333333-3333-4333-8333-333333333333",
+      "name": "Key Account Manager",
+      "description": "Knows the frame contracts and strategic accounts — service-level penalties, pilot customers, spot buyers.",
+      "systemPrompt": "You are the key account manager. You know the contractual and strategic weight behind each customer: frame contracts with service-level penalties, strategic pilot accounts, and spot buyers with no commitments. Use `table_query` action='read' to see the open orders in the shared table (action='list' first if you are unsure it is loaded). For each order, state the contractual consequence of a short delivery, citing the specific clause, penalty amount, or account status from your notes. Rank which orders can absorb a cut with the least damage and which must be served in full. Quantify penalties so the finance analyst can weigh them against margin, and cite teammates whose findings you build on. Defer credit decisions to the credit controller.",
+      "provider": "openai",
+      "model": "gpt-5-mini",
+      "tools": ["files", "table_query"],
+      "connections": ["c4444444-4444-4444-8444-444444444444"],
+      "position": { "x": 800, "y": 120 }
+    },
+    {
+      "id": "c4444444-4444-4444-8444-444444444444",
+      "name": "Margin Analyst",
+      "description": "Costs each allocation option — per-unit contribution margins, penalty exposure, and the cheapest place to take the cut.",
+      "systemPrompt": "You are the finance margin analyst. Use `table_query` action='read' to inspect the shared order table (and action='history' to audit what the credit controller and fulfillment manager have written). Combine the order quantities and prices with the per-unit contribution margins from your report: compute the margin at stake for each order, compare the cost of cutting each candidate, and weigh margin loss against the contractual penalties quantified by the key account manager. Recommend where the shortfall should land so total financial damage is minimized, showing the arithmetic and citing the figures and teammates you rely on. Do not overrule credit blocks — those orders are out regardless of margin.",
+      "provider": "openai",
+      "model": "gpt-5-mini",
+      "tools": ["files", "table_query"],
+      "connections": [],
+      "position": { "x": 290, "y": 420 }
+    },
+    {
+      "id": "c5555555-5555-4555-8555-555555555555",
+      "name": "Data Privacy Officer",
+      "description": "Assesses personal-data and GDPR implications — abstains on decisions with no personal-data dimension.",
+      "systemPrompt": "You are the data privacy officer. Assess GDPR and personal-data implications of business decisions: transfers of employee or customer personal data, new data processors, cross-border data flows. If a decision is a pure commercial matter — such as allocating stock across business customers — with no meaningful personal-data dimension, recognize that your expertise does not apply and abstain rather than contributing low-value commentary.",
+      "provider": "openai",
+      "model": "gpt-5-mini",
+      "tools": ["files"],
+      "connections": [],
+      "position": { "x": 630, "y": 420 }
+    },
+    {
+      "id": "c6666666-6666-4666-8666-666666666666",
+      "name": "Production & Expedite Planner",
+      "description": "Owns July casting capacity and the one standby expedite batch — how many extra units can be pulled in, by when, at what premium, and when policy allows it.",
+      "systemPrompt": "You are the production and expedite planner at Falkenberg Pumpen GmbH. You own material 4711's July capacity and a single standby expedite lever. Use `table_query` action='read' to see the open orders (action='list' first if unsure they are loaded) together with your capacity note.\n\nState the levers plainly: the firm available-to-promise for July is 5,000 units; on top of that, ONE casting expedite batch of up to 800 units can be pulled forward for 2026-07-28 arrival at a €4.00/unit premium, subject to plant-manager approval. Per policy PP-EX-02, expedite capacity is reserved for protecting a must-serve or penalty-bearing order — it is not to be spent topping up low-margin spot demand where no contractual penalty is at stake, because the premium is not recovered.\n\nApply that judgement: if the firm 5,000 already covers every must-serve and penalty order, say the expedite batch stays on standby and is not required this run. Only when the allocation cannot otherwise avoid a contractual penalty — or when a change lifts a constraint and opens up profitable demand — should you recommend using it; then say exactly how many units and to which order, and hand the €4.00 premium to the finance analyst to weigh against the penalty avoided or the margin gained. Cite teammates whose figures you build on. Do not make credit or final allocation decisions — surface the option and its cost, and let the fulfillment manager decide.",
+      "provider": "openai",
+      "model": "gpt-5-mini",
+      "tools": ["files", "table_query"],
+      "connections": ["c4444444-4444-4444-8444-444444444444"],
+      "position": { "x": 970, "y": 420 }
+    }
+  ],
+  "sources": [
+    {
+      "id": "f1111111-1111-4111-8111-111111111111",
+      "name": "open_sales_orders.csv",
+      "type": "dataset",
+      "content": "order_no,customer,customer_no,qty_ordered,unit_price_eur,requested_date\nSO-10021,Bergmann Automotive,C-2001,3000,42.50,2026-07-20\nSO-10022,Helios Industrietechnik,C-2002,2500,44.00,2026-07-22\nSO-10023,Nordwind Maschinenbau,C-2003,1500,39.90,2026-07-25\nSO-10024,Quantex Anlagenbau,C-2004,1000,46.50,2026-07-24\n",
+      "position": { "x": 60, "y": 680 }
+    },
+    {
+      "id": "f2222222-2222-4222-8222-222222222222",
+      "name": "atp_shortage_notice.txt",
+      "type": "text",
+      "content": "AVAILABILITY SHORTAGE NOTICE — issued 2026-07-08 by production planning.\nCompany: Falkenberg Pumpen GmbH.\nMaterial: 4711 (PX-4711 industrial pump).\nEvent: quality stop at the casting supplier cut July output. Available-to-promise for July: 5,000 units. Open sales order backlog for July: 8,000 units across four orders (see open_sales_orders.csv).\nTask: decide the allocation of the 5,000 available units across the open orders and record it in the shared order table. Partial deliveries are operationally possible on every order; the commercial and financial consequences differ per customer.\nOutlook: the next regular batch of about 6,000 units is scheduled for 2026-08-03. Separately, production planning can pull forward a one-off expedite batch earlier in July on request (see the production & expedite planner). No other regular supply arrives before 2026-08-03.",
+      "position": { "x": 360, "y": 680 }
+    },
+    {
+      "id": "f3333333-3333-4333-8333-333333333333",
+      "name": "credit_memo_2026-07.txt",
+      "type": "text",
+      "content": "CREDIT STATUS MEMO — receivables review, status 2026-07-07.\nC-2001 Bergmann Automotive: credit limit €2.0M, utilization 41%, no overdue items. Status: OK.\nC-2002 Helios Industrietechnik: CREDIT BLOCK active since 2026-06-28 — €180,000 overdue more than 60 days, two broken payment promises. Policy FI-CR-04: no new deliveries while a credit block is active; the block can only be lifted by treasury after full settlement, which is not expected before August.\nC-2003 Nordwind Maschinenbau: credit limit €400k, utilization 22%, no overdue items. Status: OK.\nC-2004 Quantex Anlagenbau: new customer, prepayment agreed for the pilot phase, deposit received 2026-06-15. Status: OK.",
+      "position": { "x": 660, "y": 680 }
+    },
+    {
+      "id": "f4444444-4444-4444-8444-444444444444",
+      "name": "key_account_notes.txt",
+      "type": "text",
+      "content": "KEY ACCOUNT NOTES — sales, status 2026-07-07.\nBergmann Automotive (C-2001): frame contract FC-2025-118 — any short delivery below the confirmed quantity triggers a €60,000 contractual penalty and an OEM escalation review. Our largest account; must be served in full.\nHelios Industrietechnik (C-2002): long-standing customer, standard terms, no service-level penalty. Account owner notes commercial pressure to deliver, but no contractual obligation.\nNordwind Maschinenbau (C-2003): spot buyer, no frame contract, no penalty clauses. Has accepted partial deliveries twice in 2025 without dispute.\nQuantex Anlagenbau (C-2004): pilot customer for the new PX product line with board-level attention; the pilot agreement expects the full 1,000 units in July. A short delivery would jeopardize the rollout contract valued at €2.5M per year.",
+      "position": { "x": 960, "y": 680 }
+    },
+    {
+      "id": "f5555555-5555-4555-8555-555555555555",
+      "name": "contribution_margin_report.txt",
+      "type": "text",
+      "content": "CONTRIBUTION MARGIN REPORT — controlling, material 4711, status 2026-07-01.\nPer-unit contribution margin by customer (net of freight and rebates):\nC-2001 Bergmann Automotive: €8.10 per unit.\nC-2002 Helios Industrietechnik: €9.20 per unit.\nC-2003 Nordwind Maschinenbau: €5.40 per unit.\nC-2004 Quantex Anlagenbau: €11.00 per unit.\nRationing guideline from controlling: absent contractual or credit constraints, cut the lowest-margin volume first; always compare the margin lost by a cut against any contractual penalty it avoids or triggers.\nExpedite economics: an expedited unit carries a €4.00 premium (see the expedite capacity note). Only expedite when the unit's contribution margin comfortably exceeds the €4.00 premium AND doing so protects a must-serve or penalty order; never expedite low-margin spot volume purely to reduce a shortfall.",
+      "position": { "x": 510, "y": 920 }
+    },
+    {
+      "id": "f6666666-6666-4666-8666-666666666666",
+      "name": "expedite_capacity_note.txt",
+      "type": "text",
+      "content": "CAPACITY & EXPEDITE NOTE — production planning, material 4711, status 2026-07-08.\nFirm available-to-promise (July): 5,000 units, matching the shortage notice.\nStandby expedite: the casting supplier can run ONE additional partial batch of up to 800 units of material 4711 for arrival 2026-07-28, at a €4.00 per-unit expedite premium on top of standard cost. Requires plant-manager approval. Lead time is firm and there is no second expedite slot in July.\nPolicy PP-EX-02: expedite capacity is reserved for protecting must-serve or penalty-bearing orders. Do not expedite to top up spot or low-margin orders where no contractual penalty is at stake — the premium is not recovered.\nNext regular batch: about 6,000 units on 2026-08-03.",
+      "position": { "x": 860, "y": 920 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-fulfil-credit",
+      "from": "c1111111-1111-4111-8111-111111111111",
+      "to": "c2222222-2222-4222-8222-222222222222"
+    },
+    {
+      "id": "e-fulfil-kam",
+      "from": "c1111111-1111-4111-8111-111111111111",
+      "to": "c3333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-fulfil-margin",
+      "from": "c1111111-1111-4111-8111-111111111111",
+      "to": "c4444444-4444-4444-8444-444444444444"
+    },
+    {
+      "id": "e-credit-fulfil",
+      "from": "c2222222-2222-4222-8222-222222222222",
+      "to": "c1111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "e-kam-margin",
+      "from": "c3333333-3333-4333-8333-333333333333",
+      "to": "c4444444-4444-4444-8444-444444444444"
+    },
+    {
+      "id": "e-fulfil-orders",
+      "from": "c1111111-1111-4111-8111-111111111111",
+      "to": "f1111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "e-fulfil-notice",
+      "from": "c1111111-1111-4111-8111-111111111111",
+      "to": "f2222222-2222-4222-8222-222222222222"
+    },
+    {
+      "id": "e-credit-orders",
+      "from": "c2222222-2222-4222-8222-222222222222",
+      "to": "f1111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "e-credit-memo",
+      "from": "c2222222-2222-4222-8222-222222222222",
+      "to": "f3333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-kam-notes",
+      "from": "c3333333-3333-4333-8333-333333333333",
+      "to": "f4444444-4444-4444-8444-444444444444"
+    },
+    {
+      "id": "e-margin-report",
+      "from": "c4444444-4444-4444-8444-444444444444",
+      "to": "f5555555-5555-4555-8555-555555555555"
+    },
+    {
+      "id": "e-fulfil-expedite",
+      "from": "c1111111-1111-4111-8111-111111111111",
+      "to": "c6666666-6666-4666-8666-666666666666"
+    },
+    {
+      "id": "e-expedite-margin",
+      "from": "c6666666-6666-4666-8666-666666666666",
+      "to": "c4444444-4444-4444-8444-444444444444"
+    },
+    {
+      "id": "e-expedite-orders",
+      "from": "c6666666-6666-4666-8666-666666666666",
+      "to": "f1111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "e-expedite-note",
+      "from": "c6666666-6666-4666-8666-666666666666",
+      "to": "f6666666-6666-4666-8666-666666666666"
+    }
+  ]
+}

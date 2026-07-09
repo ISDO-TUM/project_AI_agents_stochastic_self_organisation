@@ -9,6 +9,7 @@ import {
   Tweaks,
   BlackboardState,
   SimStep,
+  Ratification,
 } from "@/lib/types";
 import { clamp } from "@/lib/utils";
 import { computePromotedAuthorIds } from "@/lib/blackboard-utils";
@@ -74,6 +75,9 @@ interface CanvasProps {
   /** Brief answer synthesised from the confirmed findings, shown on the
    *  Confirmed board once the run completes. */
   swarmFinalAnswer?: string | null;
+  /** The takers' vote on the synthesised answer — surfaces the ratified /
+   *  contested badge on the Confirmed board. Null if ratification didn't run. */
+  swarmRatification?: Ratification | null;
   /** Re-opens the completion answer overlay from the in-board answer card. */
   onShowFinalAnswer?: () => void;
   /** Trust vectors keyed by agent ID — shown on hover in the AgentDock chips. */
@@ -132,6 +136,7 @@ export function Canvas({
   biddingBoard = null,
   swarmDone = false,
   swarmFinalAnswer = null,
+  swarmRatification = null,
   onShowFinalAnswer,
   swarmTrustVectors = {},
   swarmRespondingIds = [],
@@ -620,6 +625,7 @@ export function Canvas({
             done={swarmDone}
             running={Boolean(swarmRunId) && !swarmDone}
             finalAnswer={swarmFinalAnswer}
+            ratification={swarmRatification}
             onShowFinalAnswer={onShowFinalAnswer}
             agents={agents}
             promotedAgentIds={promotedAgentIds}
