@@ -420,6 +420,15 @@ def _auction_turn(
 
         try:
             _text, tools_used = await attempt()
+        except TimeoutError:
+            logger.warning(
+                "auction turn timed out for %s after %ds — not retrying "
+                "(full budget already spent)",
+                agent.get("id"),
+                TURN_TIMEOUT_S,
+            )
+            await _reset_transaction(conn)
+            return []
         except Exception:
             logger.exception("auction turn failed once for %s — retrying", agent.get("id"))
             await _reset_transaction(conn)
@@ -503,6 +512,17 @@ def _board_turn(
 
         try:
             _text, tools_used = await attempt()
+        except TimeoutError:
+            logger.warning(
+                "turn timed out for %s after %ds — not retrying (full budget already spent)",
+                agent.get("id"),
+                TURN_TIMEOUT_S,
+            )
+            await _reset_transaction(conn)
+            await journal.turn(
+                conn, agent_id=agent["id"], phase=phase, round=round, status="failed"
+            )
+            return []
         except Exception:
             logger.exception("turn failed once for %s — retrying", agent.get("id"))
             await _reset_transaction(conn)
@@ -1557,6 +1577,14 @@ def _ratify_turn(
 
         try:
             await attempt()
+        except TimeoutError:
+            logger.warning(
+                "ratification turn timed out for %s after %ds — not retrying "
+                "(full budget already spent)",
+                agent.get("id"),
+                TURN_TIMEOUT_S,
+            )
+            await _reset_transaction(conn)
         except Exception:
             logger.exception("ratification turn failed once for %s — retrying", agent.get("id"))
             await _reset_transaction(conn)

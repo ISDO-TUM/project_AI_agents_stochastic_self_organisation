@@ -1095,6 +1095,11 @@ async def test_dropout_after_consecutive_failures_shrinks_promotion_denominator(
 
 
 async def test_retry_succeeds_without_dropout(db: AsyncConnection) -> None:
+    """Mirror-image of ``test_board_turn_timeout_does_not_retry`` below: a
+    non-timeout exception (``RuntimeError`` — a transient provider error) must
+    still get its one retry, unchanged by the timeout-specific fix. ``calls["n"]
+    == 2`` proves exactly two attempts were made (the first raised, the retry
+    succeeded), not just that the run didn't fail."""
     await _insert_agent(db, "a1", "Alpha")
     await _insert_agent(db, "a2", "Beta")
     inner = _scripted_runner()
@@ -1108,9 +1113,10 @@ async def test_retry_succeeds_without_dropout(db: AsyncConnection) -> None:
         tool_names: list[str],
         tool_context: dict[str, Any],
     ) -> tuple[str, list[ToolCall]]:
-        if agent["name"] == "Beta" and "cite" in tool_names and calls["n"] == 0:
+        if agent["name"] == "Beta" and "cite" in tool_names:
             calls["n"] += 1
-            raise RuntimeError("transient error")
+            if calls["n"] == 1:
+                raise RuntimeError("transient error")
         turn_result: tuple[str, list[ToolCall]] = await inner(
             agent,
             user_prompt=user_prompt,
@@ -1125,6 +1131,7 @@ async def test_retry_succeeds_without_dropout(db: AsyncConnection) -> None:
         db,
         agent_runner=flaky_once,
     )
+    assert calls["n"] == 2, "a non-timeout exception should still be retried exactly once"
     assert not any("dropped out" in s.msg for s in steps if s.type == "system")
     statuses = (
         (
@@ -1139,6 +1146,58 @@ async def test_retry_succeeds_without_dropout(db: AsyncConnection) -> None:
         .all()
     )
     assert statuses[-1] == "done"
+
+
+async def test_board_turn_timeout_does_not_retry(db: AsyncConnection) -> None:
+    """A ``TimeoutError`` on the first attempt must NOT trigger a second
+    attempt — the model already got its full ``TURN_TIMEOUT_S`` budget and
+    didn't finish, so paying that budget again buys nothing. The turn should
+    journal 'failed' after exactly one call, not two."""
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+    inner = _scripted_runner()
+    calls = {"n": 0}
+
+    async def timing_out_runner(
+        agent: dict[str, Any],
+        *,
+        user_prompt: str,
+        system_suffix: str,
+        tool_names: list[str],
+        tool_context: dict[str, Any],
+    ) -> tuple[str, list[ToolCall]]:
+        if agent["name"] == "Beta" and "cite" in tool_names:
+            calls["n"] += 1
+            raise TimeoutError("simulated hang")
+        turn_result: tuple[str, list[ToolCall]] = await inner(
+            agent,
+            user_prompt=user_prompt,
+            system_suffix=system_suffix,
+            tool_names=tool_names,
+            tool_context=tool_context,
+        )
+        return turn_result
+
+    await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2),
+        db,
+        agent_runner=timing_out_runner,
+    )
+
+    assert calls["n"] == 1, "a TimeoutError must not be retried"
+    statuses = (
+        (
+            await db.execute(
+                text(
+                    "SELECT status FROM turn_log WHERE agent_id = 'a2' AND phase = 'round_2' "
+                    "ORDER BY created_at"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert statuses == ["failed"]
 
 
 async def test_resume_continues_without_duplicating_completed_turns(db: AsyncConnection) -> None:
