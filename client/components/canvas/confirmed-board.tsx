@@ -1,16 +1,25 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { BlackboardState } from "@/lib/types";
+import { BlackboardState, Ratification } from "@/lib/types";
 import { useTheme } from "@/lib/theme-context";
 import { getTheme, SURFACE_DARK_RGB } from "@/lib/theme";
-import { CheckCircle2, Gavel, Maximize2, X } from "lucide-react";
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Gavel,
+  Maximize2,
+  Table as TableIcon,
+  X,
+} from "lucide-react";
 import { ConfirmedCard } from "./blackboard/confirmed-card";
 import { MarkdownRenderer } from "@/components/markdown-renderer";
 import { findDraftEntry } from "@/lib/blackboard-utils";
+import { extractResultTable } from "@/lib/result-table";
 
 const GOLD = "#b5860d";
+const AMBER = "#c55a11";
 
 /** Shimmering placeholder card shown while the confirmed board is syncing —
  *  mirrors the draft board's skeleton, tinted gold to match this board. */
@@ -133,6 +142,139 @@ function FinalAnswer({
   );
 }
 
+/** The takers' vote on the synthesised answer — a ratified badge or a
+ *  contested block listing each objection. Rendered on the board independently
+ *  of the final-answer card so it stays visible even when synthesis returns no
+ *  answer to show. */
+function RatificationSummary({
+  ratification,
+  dark,
+}: {
+  ratification: Ratification;
+  dark: boolean;
+}) {
+  if (ratification.approved) {
+    return (
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 5,
+          marginBottom: 12,
+          fontSize: 10.5,
+          fontWeight: 700,
+          color: GOLD,
+          fontFamily: "'Space Grotesk', system-ui, sans-serif",
+        }}
+      >
+        <CheckCircle2 size={12} strokeWidth={2} />
+        Ratified by {ratification.approvals}/{ratification.voters} takers
+      </div>
+    );
+  }
+  return (
+    <div
+      style={{
+        marginBottom: 12,
+        padding: "8px 11px",
+        background: "rgba(197,90,17,0.09)",
+        border: "1px solid rgba(197,90,17,0.3)",
+        borderRadius: 8,
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 5,
+          fontSize: 10,
+          fontWeight: 800,
+          color: AMBER,
+          letterSpacing: "0.04em",
+          textTransform: "uppercase",
+          fontFamily: "'Space Grotesk', system-ui, sans-serif",
+          marginBottom: ratification.objections.length ? 5 : 0,
+        }}
+      >
+        <AlertTriangle size={11} strokeWidth={2.5} />
+        Contested synthesis ({ratification.approvals}/{ratification.voters}{" "}
+        approved)
+      </div>
+      {ratification.objections.length > 0 && (
+        <ul
+          style={{
+            margin: 0,
+            paddingLeft: 15,
+            fontSize: 11,
+            color: dark ? "rgba(255,250,235,0.82)" : "rgba(35,28,8,0.82)",
+          }}
+        >
+          {ratification.objections.map((o, i) => {
+            // Objections are formatted "AgentName: reason" server-side, so a
+            // contested synthesis stays traceable to who raised each point.
+            const sep = o.indexOf(": ");
+            const name = sep > 0 ? o.slice(0, sep) : null;
+            const reason = sep > 0 ? o.slice(sep + 2) : o;
+            return (
+              <li key={i} style={{ marginBottom: 4 }}>
+                {name && (
+                  <span
+                    style={{ fontWeight: 700, color: AMBER, marginRight: 4 }}
+                  >
+                    {name}:
+                  </span>
+                )}
+                <MarkdownRenderer content={reason} fontSize={11} compact />
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </div>
+  );
+}
+
+/** The run's tabular deliverable (e.g. the order-allocation table), lifted out
+ *  of the author's blackboard message and shown beneath the prose answer. */
+function ResultTable({ markdown, dark }: { markdown: string; dark: boolean }) {
+  return (
+    <div
+      style={{
+        padding: "10px 13px",
+        borderRadius: 10,
+        background: dark ? "rgba(181,134,13,0.08)" : "rgba(181,134,13,0.05)",
+        border: "1px solid rgba(181,134,13,0.28)",
+        marginBottom: 12,
+        overflowX: "auto",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginBottom: 8,
+        }}
+      >
+        <TableIcon size={12} strokeWidth={2} color={GOLD} />
+        <span
+          style={{
+            fontSize: 10,
+            fontWeight: 800,
+            color: GOLD,
+            letterSpacing: "0.09em",
+            textTransform: "uppercase",
+            fontFamily: "'Space Grotesk', system-ui, sans-serif",
+          }}
+        >
+          Result table
+        </span>
+      </div>
+      <MarkdownRenderer content={markdown} fontSize={11.5} compact />
+    </div>
+  );
+}
+
 interface ConfirmedBoardProps {
   state: BlackboardState;
   /** Fixed position/size — boards are never moved or resized. */
@@ -148,6 +290,8 @@ interface ConfirmedBoardProps {
   running?: boolean;
   /** Brief answer synthesised from the confirmed findings at run end. */
   finalAnswer?: string | null;
+  /** Takers' vote on the answer — surfaces the ratified / contested badge. */
+  ratification?: Ratification | null;
   /** Re-opens the prominent completion overlay from the in-board answer card. */
   onShowFinalAnswer?: () => void;
   /** Canvas agents list — used to resolve each card's author avatar color. */
@@ -166,6 +310,7 @@ export function ConfirmedBoard({
   done = false,
   running = false,
   finalAnswer = null,
+  ratification = null,
   onShowFinalAnswer,
   agents = [],
   promotedAgentIds,
@@ -185,6 +330,13 @@ export function ConfirmedBoard({
   const hasContent = filteredConfirmed.length > 0;
   const idleMessage =
     "No confirmed entries yet — entries appear here once cited enough times.";
+  // The run's tabular deliverable (e.g. the allocation table) lives in the
+  // author's blackboard message, not the synthesised prose — surface it once
+  // the run is done so it sits right under the answer.
+  const resultTable = useMemo(
+    () => (done ? extractResultTable(state) : null),
+    [done, state],
+  );
 
   const posStyle: React.CSSProperties = pos
     ? { left: pos.x, top: pos.y }
@@ -414,6 +566,10 @@ export function ConfirmedBoard({
           </div>
         )}
 
+        {done && ratification && (
+          <RatificationSummary ratification={ratification} dark={dark} />
+        )}
+
         {done && !state.loading && finalAnswer && (
           <FinalAnswer
             text={finalAnswer}
@@ -421,6 +577,8 @@ export function ConfirmedBoard({
             onExpand={onShowFinalAnswer}
           />
         )}
+
+        {done && resultTable && <ResultTable markdown={resultTable} dark={dark} />}
 
         {!state.loading && state.error && (
           <div
@@ -618,8 +776,17 @@ export function ConfirmedBoard({
                 )}
                 {!state.error && (
                   <>
+                    {done && ratification && (
+                      <RatificationSummary
+                        ratification={ratification}
+                        dark={dark}
+                      />
+                    )}
                     {done && finalAnswer && (
                       <FinalAnswer text={finalAnswer} dark={dark} />
+                    )}
+                    {done && resultTable && (
+                      <ResultTable markdown={resultTable} dark={dark} />
                     )}
                     {filteredConfirmed.length === 0 && !running ? (
                       <div
