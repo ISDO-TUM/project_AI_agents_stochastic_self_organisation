@@ -2050,6 +2050,128 @@ async def test_double_rejection_ships_flagged_with_objections(db: AsyncConnectio
     assert conv.data["ratification"]["objections"]
 
 
+# ── demo_mode (fast runs: skip wave 2, vote sub-round, ratification, dispute) ─
+
+
+async def test_demo_mode_skips_wave_two(db: AsyncConnection) -> None:
+    for i, name in enumerate(["Alpha", "Beta", "Gamma", "Delta"]):
+        await _insert_agent(db, f"a{i + 1}", name)
+    captured: list[tuple[str, str]] = []
+    steps = await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2, demo_mode=True),
+        db,
+        agent_runner=_prompt_capturing_runner(captured),
+    )
+    wave1 = [p for _, p in captured if "second wave" not in p]
+    wave2 = [p for _, p in captured if "second wave" in p]
+    # All four takers post in wave 1; wave 2 never runs.
+    assert len(wave1) == 4
+    assert len(wave2) == 0
+    assert not any("second wave" in s.msg for s in steps if s.type == "system")
+
+    proposals = (
+        await db.execute(
+            text("SELECT COUNT(*) FROM draft_entries WHERE round = 1 AND entry_type = 'proposal'")
+        )
+    ).scalar_one()
+    assert proposals == 4
+
+
+async def test_demo_mode_skips_vote_subround(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+
+    steps = await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2, demo_mode=True),
+        db,
+        agent_runner=_scripted_runner(),
+    )
+
+    assert not any(s.msg.startswith("Vote sub-round") for s in steps)
+    votes = (await db.execute(text("SELECT COUNT(*) FROM votes"))).scalar_one()
+    assert votes == 0
+    # Cold-start still degrades gracefully to temperature=1.0 with zero votes,
+    # so the run still reaches a normal completed state.
+    run = (await db.execute(text("SELECT status FROM swarm_runs"))).mappings().fetchone()
+    assert run is not None
+    assert run["status"] == "completed"
+
+
+async def test_demo_mode_skips_ratification(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+
+    class _RecordingSynthesizer:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def synthesize(
+            self, *, prompt: str, findings: list[Any], objections: list[str] | None = None
+        ) -> str:
+            self.calls += 1
+            return "the synthesized answer"
+
+    synth = _RecordingSynthesizer()
+    steps = await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2, demo_mode=True),
+        db,
+        agent_runner=_scripted_runner(),
+        synthesizer=synth,
+    )
+
+    # Exactly one synthesis call — the revise-and-reratify pass never runs.
+    assert synth.calls == 1
+    conv = next(s for s in steps if s.type == "convergence")
+    assert conv.data["ratification"] is None
+    assert conv.data["final_answer"] == "the synthesized answer"
+
+    row = (
+        (await db.execute(text("SELECT final_answer, ratification FROM swarm_runs")))
+        .mappings()
+        .fetchone()
+    )
+    assert row is not None
+    assert row["final_answer"] == "the synthesized answer"
+    assert row["ratification"] is None
+
+
+async def test_demo_mode_excludes_dispute_tool(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+    captured_tool_names: list[list[str]] = []
+    inner = _scripted_runner()
+
+    async def runner(
+        agent: dict[str, Any],
+        *,
+        user_prompt: str,
+        system_suffix: str,
+        tool_names: list[str],
+        tool_context: dict[str, Any],
+    ) -> tuple[str, list[ToolCall]]:
+        if "cite" in tool_names:  # discussion-round turns only (round-1/vote don't offer cite)
+            captured_tool_names.append(tool_names)
+        turn_result: tuple[str, list[ToolCall]] = await inner(
+            agent,
+            user_prompt=user_prompt,
+            system_suffix=system_suffix,
+            tool_names=tool_names,
+            tool_context=tool_context,
+        )
+        return turn_result
+
+    await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2, demo_mode=True),
+        db,
+        agent_runner=runner,
+    )
+
+    assert captured_tool_names  # sanity: at least one discussion-round turn happened
+    for names in captured_tool_names:
+        assert "dispute" not in names
+        assert "cite" in names  # still the rounds tool set, just minus dispute
+
+
 # ── History mirroring (swarm run ↔ trials/rounds/messages) ───────────────────
 
 

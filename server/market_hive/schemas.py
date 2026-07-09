@@ -39,6 +39,7 @@ class SwarmRunConfig(BaseModel):
     epsilon_entropy: int = Field(default=0, ge=0)
     t_initial: float = Field(default=0.0)
     delta_t: float = Field(default=0.1)
+    demo_mode: bool = False
 
 
 class ThreadSchema(BaseModel):

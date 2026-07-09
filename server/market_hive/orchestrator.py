@@ -1054,8 +1054,11 @@ async def _run_round_one(
     waves_by_thread: dict[str, tuple[list[str], list[str]]] = {}
     for thread in threads:
         assigned = takers_by_thread.get(thread.id, [])
-        half = (len(assigned) + 1) // 2
-        waves_by_thread[thread.id] = (assigned[:half], assigned[half:])
+        if config.demo_mode:
+            waves_by_thread[thread.id] = (assigned, [])
+        else:
+            half = (len(assigned) + 1) // 2
+            waves_by_thread[thread.id] = (assigned[:half], assigned[half:])
 
     # Resume-safe for free: an agent already recorded done/skipped for this
     # (phase, round) is never re-driven through another LLM call.
@@ -1181,15 +1184,20 @@ async def _cold_start_temperatures(
 # request_expertise lets a taker contest the Market Maker's scoping mid-round;
 # the pending proposal is voted on at end-of-round by the amendment processor.
 # dispute lets a taker contest an already-CONFIRMED finding (contestable consensus).
-_ROUNDS_TOOLS = [
+_ROUNDS_TOOLS_BASE = [
     "read_blackboard",
     "get_confirmed",
     "post_to_blackboard",
     "cite",
-    "dispute",
     "request_expertise",
     "stand_down",
 ]
+
+
+def _rounds_tools(demo_mode: bool) -> list[str]:
+    # demo_mode drops dispute: a contest/reaffirm cycle can force an extra
+    # round, which would blow past the demo's intended time budget.
+    return _ROUNDS_TOOLS_BASE if demo_mode else [*_ROUNDS_TOOLS_BASE, "dispute"]
 
 
 async def _run_discussion_round(
@@ -1311,7 +1319,7 @@ async def _run_discussion_round(
                     agent_runner=agent_runner,
                     prompt_builder=make_builder(taker, thread),
                     system_suffix=rounds_system_suffix(instruction),
-                    tool_names=_ROUNDS_TOOLS,
+                    tool_names=_rounds_tools(config.demo_mode),
                     thread_id=thread.id,
                     round=round,
                     journal=journal,
@@ -2027,17 +2035,18 @@ async def _run_swarm_steps(
             recorder.set_phase(1, "vote")
         await journal.phase(db, "vote", 1)
         _enter_phase("vote")
-        async for step in _run_vote_subround(
-            db,
-            run_id,
-            threads,
-            takers_by_thread,
-            agents_by_id,
-            agent_runner,
-            journal,
-            config.trial_id,
-        ):
-            yield step
+        if not config.demo_mode:
+            async for step in _run_vote_subround(
+                db,
+                run_id,
+                threads,
+                takers_by_thread,
+                agents_by_id,
+                agent_runner,
+                journal,
+                config.trial_id,
+            ):
+                yield step
         for step in await _apply_dropouts(db, run_id, agents_by_id, dropped, announced_dropouts):
             yield step
         takers = [t for t in takers if t not in dropped]
@@ -2202,46 +2211,54 @@ async def _run_swarm_steps(
         with langfuse_metadata(synth_trace):
             candidate = await synthesizer.synthesize(prompt=config.prompt, findings=live_findings)
         await _post_synthesis_candidate(db, run_id, threads[0].id, last_round, candidate)
-        steps, approvals, voters, objections = await _run_ratification(
-            db, run_id, candidate, findings_for_ratify, takers, dropped, agents_by_id, agent_runner
-        )
-        for step in steps:
-            yield step
-        if voters == 0 or approvals > voters / 2:
+        if config.demo_mode:
+            # Skip both ratification rounds: the synthesis candidate becomes the
+            # final answer directly, and ratification stays None — already a
+            # valid value the rest of the pipeline (SwarmFinalOutput et al.)
+            # handles for runs that never had findings to ratify.
             final_answer = candidate
-            ratification = {
-                "approved": True,
-                "round": 1,
-                "approvals": approvals,
-                "voters": voters,
-                "objections": objections,
-            }
+            ratification = None
         else:
-            with langfuse_metadata(synth_trace):
-                revised = await synthesizer.synthesize(
-                    prompt=config.prompt, findings=live_findings, objections=objections
-                )
-            await _post_synthesis_candidate(db, run_id, threads[0].id, last_round, revised)
-            steps2, approvals2, voters2, objections2 = await _run_ratification(
-                db,
-                run_id,
-                revised,
-                findings_for_ratify,
-                takers,
-                dropped,
-                agents_by_id,
-                agent_runner,
+            steps, approvals, voters, objections = await _run_ratification(
+                db, run_id, candidate, findings_for_ratify, takers, dropped, agents_by_id, agent_runner
             )
-            for step in steps2:
+            for step in steps:
                 yield step
-            final_answer = revised
-            ratification = {
-                "approved": approvals2 > voters2 / 2 if voters2 else True,
-                "round": 2,
-                "approvals": approvals2,
-                "voters": voters2,
-                "objections": objections2,
-            }
+            if voters == 0 or approvals > voters / 2:
+                final_answer = candidate
+                ratification = {
+                    "approved": True,
+                    "round": 1,
+                    "approvals": approvals,
+                    "voters": voters,
+                    "objections": objections,
+                }
+            else:
+                with langfuse_metadata(synth_trace):
+                    revised = await synthesizer.synthesize(
+                        prompt=config.prompt, findings=live_findings, objections=objections
+                    )
+                await _post_synthesis_candidate(db, run_id, threads[0].id, last_round, revised)
+                steps2, approvals2, voters2, objections2 = await _run_ratification(
+                    db,
+                    run_id,
+                    revised,
+                    findings_for_ratify,
+                    takers,
+                    dropped,
+                    agents_by_id,
+                    agent_runner,
+                )
+                for step in steps2:
+                    yield step
+                final_answer = revised
+                ratification = {
+                    "approved": approvals2 > voters2 / 2 if voters2 else True,
+                    "round": 2,
+                    "approvals": approvals2,
+                    "voters": voters2,
+                    "objections": objections2,
+                }
     output = output.model_copy(update={"final_answer": final_answer, "ratification": ratification})
 
     observers = await auction.get_observers(run_id=run_id)
