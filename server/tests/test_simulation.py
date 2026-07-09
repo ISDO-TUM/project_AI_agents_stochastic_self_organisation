@@ -990,6 +990,39 @@ async def test_call_agent_omits_registry_when_index_absent(
     assert captured["tool_names"] is None  # static: no tools added
 
 
+@pytest.mark.asyncio
+async def test_call_agent_drops_engine_specific_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An agent may carry a market_hive blackboard tool in its saved tools list.
+    # Those read ctx["db"], which the topology engine never populates — offering
+    # one would raise KeyError('db') and surface as an "[error: 'db']" answer, so
+    # _call_agent must filter them out and keep only cross-engine builtins.
+    import server.market_hive.tools  # noqa: F401  (self-registers blackboard tools)
+
+    captured: dict[str, Any] = {}
+
+    async def fake_call_agent(
+        prompt: str,
+        *,
+        provider: str,
+        model: str,
+        system_prompt: str | None,
+        tool_names: list[str] | None,
+        tool_context: dict[str, Any] | None,
+    ) -> tuple[str, list[Any]]:
+        captured["tool_names"] = tool_names
+        return "ok", []
+
+    monkeypatch.setattr(sim, "call_agent", fake_call_agent)
+
+    agent = _bare_agent()
+    agent["tools"] = ["files", "read_blackboard", "post_to_blackboard", "vote"]
+    await sim._call_agent(agent, "hi", files={}, ruleset=None, registry=None)
+
+    assert captured["tool_names"] == ["files"]
+
+
 def test_run_topology_exposes_topology_and_fanout_params() -> None:
     import inspect
 

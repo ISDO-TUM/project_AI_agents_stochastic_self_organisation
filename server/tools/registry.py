@@ -32,13 +32,25 @@ def get_tool(name: str) -> Tool | None:
 # Cross-engine builtins register here. Engine-specific tools self-register from
 # their own package (e.g. ``server.market_hive.tools``) so this shared registry
 # never imports an engine — the dependency only points engine → shared.
-register(FilesTool())
-register(RegistryTool())
-register(TableQueryTool())
-register(TableMutateTool())
-register(RPTPredictTool())
-register(RPTChatTool())
-register(TablePredictTool())
+_BUILTIN_TOOLS: tuple[Tool, ...] = (
+    FilesTool(),
+    RegistryTool(),
+    TableQueryTool(),
+    TableMutateTool(),
+    RPTPredictTool(),
+    RPTChatTool(),
+    TablePredictTool(),
+)
+for _tool in _BUILTIN_TOOLS:
+    register(_tool)
+
+# The cross-engine builtins are the only tools whose runtime context every engine
+# provides. Engine-specific tools (e.g. the market_hive blackboard tools, which
+# read ``ctx["db"]``/``run_id``) self-register into the same shared registry, so
+# an agent configured with one of them would otherwise be offered it in an engine
+# that never populates that context — raising ``KeyError`` mid-run. Engines that
+# don't own those tools filter an agent's tool list against this set.
+BUILTIN_TOOL_NAMES: frozenset[str] = frozenset(tool.name for tool in _BUILTIN_TOOLS)
 
 # ── provider format builders ───────────────────────────────────────
 
