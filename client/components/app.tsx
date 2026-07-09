@@ -258,7 +258,7 @@ export function App({ onModeSelected }: AppProps = {}) {
         if (notificationsSupported() && readNotifyPref() === null) {
           setNotifyConsentOpen(true);
         }
-        swarm.start(prompt);
+        swarm.start(prompt, undefined, swarmConfig);
         return;
       }
       const active = rules.filter((r) => selectedRules.has(r.id));
