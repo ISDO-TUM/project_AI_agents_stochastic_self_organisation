@@ -31,6 +31,8 @@ interface DraftBoardProps {
   promotedAgentIds?: Set<string>;
   /** True once the dummy / real run has fully completed. */
   done?: boolean;
+  /** True while a run is in flight — drives the loading skeleton. */
+  running?: boolean;
 }
 
 function SkeletonCard({ dark, delay = 0 }: { dark: boolean; delay?: number }) {
@@ -173,6 +175,7 @@ export function DraftBoard({
   agents = [],
   promotedAgentIds,
   done = false,
+  running = false,
 }: DraftBoardProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -492,7 +495,7 @@ export function DraftBoard({
         )}
 
         {/* Skeleton: run active but no entries yet */}
-        {state.loading && renderedDraft.length === 0 && (
+        {running && renderedDraft.length === 0 && (
           <>
             <SkeletonCard dark={dark} delay={0} />
             <SkeletonCard dark={dark} delay={0.15} />
@@ -515,7 +518,7 @@ export function DraftBoard({
         )}
 
         {/* Styled empty state */}
-        {!state.loading && !state.error && renderedDraft.length === 0 && (
+        {!running && !state.error && renderedDraft.length === 0 && (
           <EmptyState runId={runId} dark={dark} />
         )}
 
@@ -756,7 +759,7 @@ export function DraftBoard({
                     />
                   )}
 
-                  {state.loading && renderedDraft.length === 0 && (
+                  {running && renderedDraft.length === 0 && (
                     <>
                       <SkeletonCard dark={dark} delay={0} />
                       <SkeletonCard dark={dark} delay={0.15} />
@@ -775,7 +778,7 @@ export function DraftBoard({
                       {state.error}
                     </div>
                   )}
-                  {!state.loading &&
+                  {!running &&
                     !state.error &&
                     renderedDraft.length === 0 && (
                       <EmptyState runId={runId} dark={dark} />

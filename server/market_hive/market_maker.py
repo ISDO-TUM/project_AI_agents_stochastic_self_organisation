@@ -229,7 +229,7 @@ class MarketMaker:
         self,
         *,
         provider: str = "openai",
-        model: str = "gpt-4o",
+        model: str = "gpt-5",
         # Falls back to the no-LLM source on timeout, so this bounds how long
         # the run's first frame can stall — but a slow (not hung) provider that
         # trips it silently degrades the contract to the raw one-line prompt,
