@@ -14,7 +14,13 @@ def _get_groq_client() -> AsyncGroq:
     When a base URL is set (header or env) the client points to that URL instead
     of Groq's public API — used to route calls through the local proxy.
     """
-    kwargs: dict[str, Any] = {"api_key": resolve_api_key("groq")}
+    # max_retries=1 (SDK default is 2): caps how many slow sub-attempts the
+    # client can silently burn inside a single provider call. A doomed call
+    # should fail and surface to the caller's own timeout/retry logic fast,
+    # not compound 2-3 retries inside the same outer timeout window. Groq's
+    # AsyncGroq client is OpenAI-SDK-derived and uses the same max_retries
+    # parameter name/shape.
+    kwargs: dict[str, Any] = {"api_key": resolve_api_key("groq"), "max_retries": 1}
     base_url = resolve_base_url("groq")
     if base_url:
         kwargs["base_url"] = base_url
