@@ -18,7 +18,7 @@ consistent with how the proxy authenticates all providers.
 
 import contextlib
 import logging
-from asyncio import CancelledError, create_task
+from asyncio import CancelledError, create_task, wait_for
 from time import monotonic
 from typing import Any, cast
 
@@ -158,8 +158,7 @@ class GeminiProvider(BaseLLMProvider):
         if system_prompt:
             kwargs["body"]["systemInstruction"] = {"parts": [{"text": system_prompt}]}
 
-        watchdog = create_task(_log_in_flight_progress(model, monotonic()))
-        try:
+        async def _run() -> str:
             response: dict[str, Any] = {}
             # Per-tool-name streak, not per-iteration — see base_provider.py's
             # _call_inner for why: an iteration that also makes a succeeding
@@ -211,6 +210,25 @@ class GeminiProvider(BaseLLMProvider):
                     return self._extract_text(response)
 
             return self._extract_text(response)
+
+        started = monotonic()
+        watchdog = create_task(_log_in_flight_progress(model, started))
+        try:
+            result = await wait_for(_run(), timeout=self.timeout_seconds)
+            logger.info(
+                "LLM call complete — model=%s elapsed=%.2fs", model, monotonic() - started
+            )
+            return result
+        except TimeoutError as err:
+            logger.error(
+                "LLM call timed out after %ds (elapsed=%.2fs) — model=%s",
+                self.timeout_seconds,
+                monotonic() - started,
+                model,
+            )
+            raise TimeoutError(
+                f"The LLM call exceeded the maximum allowed time ({self.timeout_seconds}s)."
+            ) from err
         finally:
             watchdog.cancel()
             with contextlib.suppress(CancelledError):
