@@ -136,6 +136,40 @@ async def test_a_single_recovery_resets_the_error_streak() -> None:
 
 
 @pytest.mark.asyncio
+async def test_call_agent_default_max_iterations_unchanged() -> None:
+    """No ``max_iterations`` override passed to ``_call_inner`` must behave
+    exactly as before this task: the loop bound stays ``self.max_iterations``
+    (20 by default). A provider that never errors and never stops calling
+    tools on its own runs to exactly that many iterations."""
+    provider = _FakeProvider(scripted_tool_calls=["call"] * 25)
+    provider.max_iterations = 20
+
+    _text, iterations = await provider._call_inner(
+        "prompt", "test-model", tool_handler=_fake_tool_handler_recovers
+    )
+
+    assert iterations == 20
+    assert iterations == provider.max_iterations
+
+
+@pytest.mark.asyncio
+async def test_call_agent_max_iterations_override_respected() -> None:
+    """A per-call ``max_iterations`` override caps the loop below the
+    provider's own default, even for a handler that would otherwise keep the
+    turn going indefinitely (never errors, never returns a final tool-call-free
+    response within the class default's budget)."""
+    provider = _FakeProvider(scripted_tool_calls=["call"] * 25)
+    provider.max_iterations = 20
+
+    _text, iterations = await provider._call_inner(
+        "prompt", "test-model", tool_handler=_fake_tool_handler_recovers, max_iterations=2
+    )
+
+    assert iterations == 2
+    assert iterations < provider.max_iterations
+
+
+@pytest.mark.asyncio
 async def test_stops_early_when_one_tool_keeps_failing_even_while_others_succeed() -> None:
     """The exact gap a live run exposed: an iteration-level "all calls this
     iteration failed" check never trips if a harmless call (read_blackboard)

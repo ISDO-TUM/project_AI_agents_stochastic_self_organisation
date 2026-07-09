@@ -990,6 +990,39 @@ async def test_call_agent_omits_registry_when_index_absent(
     assert captured["tool_names"] is None  # static: no tools added
 
 
+@pytest.mark.asyncio
+async def test_call_agent_drops_engine_specific_tools(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # An agent may carry a market_hive blackboard tool in its saved tools list.
+    # Those read ctx["db"], which the topology engine never populates — offering
+    # one would raise KeyError('db') and surface as an "[error: 'db']" answer, so
+    # _call_agent must filter them out and keep only cross-engine builtins.
+    import server.market_hive.tools  # noqa: F401  (self-registers blackboard tools)
+
+    captured: dict[str, Any] = {}
+
+    async def fake_call_agent(
+        prompt: str,
+        *,
+        provider: str,
+        model: str,
+        system_prompt: str | None,
+        tool_names: list[str] | None,
+        tool_context: dict[str, Any] | None,
+    ) -> tuple[str, list[Any]]:
+        captured["tool_names"] = tool_names
+        return "ok", []
+
+    monkeypatch.setattr(sim, "call_agent", fake_call_agent)
+
+    agent = _bare_agent()
+    agent["tools"] = ["files", "read_blackboard", "post_to_blackboard", "vote"]
+    await sim._call_agent(agent, "hi", files={}, ruleset=None, registry=None)
+
+    assert captured["tool_names"] == ["files"]
+
+
 def test_run_topology_exposes_topology_and_fanout_params() -> None:
     import inspect
 
@@ -1828,3 +1861,76 @@ async def test_swarm_run_creates_linked_experiment_and_trial(client: AsyncClient
     assert config.trial_id == trial["id"]
     assert config.experiment_id == experiment["id"]
     assert config.user_id == "user-alice"
+
+
+@pytest.mark.asyncio
+async def test_run_simulation_swarm_threads_config_fields(client: AsyncClient) -> None:
+    """POSTing min_rounds/max_rounds (etc.) on the swarm engine branch must
+    reach the persisted SwarmRunConfig — not silently default."""
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    seen_configs: list[Any] = []
+
+    def fake_run_swarm(config: Any, db: Any, **kwargs: Any) -> AsyncIterator[SimulationStep]:
+        seen_configs.append(config)
+
+        async def stream() -> AsyncIterator[SimulationStep]:
+            yield SimulationStep(type="system", msg="Run started")
+
+        return stream()
+
+    with patch("server.routes.simulation.run_swarm", new=fake_run_swarm):
+        resp = await client.post(
+            "/api/simulation/run",
+            json={"engine": "swarm", "prompt": "test prompt", "min_rounds": 1, "max_rounds": 2},
+        )
+
+    assert resp.status_code == 200
+    assert len(seen_configs) == 1
+    config = seen_configs[0]
+    # Defaults are min_rounds=3, max_rounds=5 — assert the sent values, not those.
+    assert config.min_rounds == 1
+    assert config.max_rounds == 2
+
+
+@pytest.mark.asyncio
+async def test_run_simulation_swarm_omitted_fields_keep_defaults(client: AsyncClient) -> None:
+    """Omitting the new optional fields must leave SwarmRunConfig at its own
+    defaults — zero behaviour change for existing callers."""
+    with patch(
+        "server.routes.agents.compute_capability_embedding",
+        new=AsyncMock(return_value=None),
+    ):
+        await _create_agent(client)
+
+    seen_configs: list[Any] = []
+
+    def fake_run_swarm(config: Any, db: Any, **kwargs: Any) -> AsyncIterator[SimulationStep]:
+        seen_configs.append(config)
+
+        async def stream() -> AsyncIterator[SimulationStep]:
+            yield SimulationStep(type="system", msg="Run started")
+
+        return stream()
+
+    with patch("server.routes.simulation.run_swarm", new=fake_run_swarm):
+        resp = await client.post(
+            "/api/simulation/run",
+            json={"engine": "swarm", "prompt": "test prompt"},
+        )
+
+    assert resp.status_code == 200
+    assert len(seen_configs) == 1
+    config = seen_configs[0]
+    assert config.min_rounds == 3
+    assert config.max_rounds == 5
+    assert config.min_takers == 2
+    assert config.max_takers == 5
+    assert config.token_budget == 50_000
+    assert config.max_amendments == 2
+    assert config.decay_rounds == 3
+    assert config.invite_floor == 0.3

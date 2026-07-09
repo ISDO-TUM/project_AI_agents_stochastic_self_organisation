@@ -203,6 +203,7 @@ async def _default_agent_runner(
     poisons the next agent's turn on a shared connection.
     """
     db = tool_context.get("db")
+    max_iterations = tool_context.get("max_iterations")
     try:
         # Load this agent's knowledge files so it can consult them in any phase
         # (auction self-selection through the discussion rounds, PRD §9.1). The
@@ -241,6 +242,7 @@ async def _default_agent_runner(
                 system_prompt=system_prompt,
                 tool_names=effective_tools,
                 tool_context={**tool_context, "files": files},
+                max_iterations=max_iterations,
             )
         logger.info(
             "Agent turn complete — agent=%s phase=%s round=%s elapsed=%.2fs",
@@ -377,6 +379,7 @@ def _auction_turn(
     contract: ContractSchema,
     agent_runner: AgentRunner,
     trial_id: str | None,
+    max_iterations: int | None = None,
 ) -> _Turn:
     """Build one auction self-selection turn (bid vs. abstain).
 
@@ -400,6 +403,7 @@ def _auction_turn(
             "preliminary_score": invitation.preliminary_score,
             "trial_id": trial_id,
             "phase": "auction",
+            "max_iterations": max_iterations,
         }
 
         async def attempt() -> tuple[str, list[ToolCall]]:
@@ -420,6 +424,15 @@ def _auction_turn(
 
         try:
             _text, tools_used = await attempt()
+        except TimeoutError:
+            logger.warning(
+                "auction turn timed out for %s after %ds — not retrying "
+                "(full budget already spent)",
+                agent.get("id"),
+                TURN_TIMEOUT_S,
+            )
+            await _reset_transaction(conn)
+            return []
         except Exception:
             logger.exception("auction turn failed once for %s — retrying", agent.get("id"))
             await _reset_transaction(conn)
@@ -450,6 +463,7 @@ def _board_turn(
     user_prompt: str | None = None,
     prompt_builder: Callable[[AsyncConnection], Awaitable[str]] | None = None,
     max_amendments: int | None = None,
+    max_iterations: int | None = None,
 ) -> _Turn:
     """Build one blackboard turn (round 1 / vote / discussion) for ``agent``.
 
@@ -487,6 +501,7 @@ def _board_turn(
                 "round": round,
                 "phase": phase,
                 "trial_id": trial_id,
+                "max_iterations": max_iterations,
             }
             if max_amendments is not None:
                 tool_context["max_amendments"] = max_amendments
@@ -503,6 +518,17 @@ def _board_turn(
 
         try:
             _text, tools_used = await attempt()
+        except TimeoutError:
+            logger.warning(
+                "turn timed out for %s after %ds — not retrying (full budget already spent)",
+                agent.get("id"),
+                TURN_TIMEOUT_S,
+            )
+            await _reset_transaction(conn)
+            await journal.turn(
+                conn, agent_id=agent["id"], phase=phase, round=round, status="failed"
+            )
+            return []
         except Exception:
             logger.exception("turn failed once for %s — retrying", agent.get("id"))
             await _reset_transaction(conn)
@@ -950,13 +976,14 @@ async def _run_auction(
     agents_by_id: dict[str, dict[str, Any]],
     agent_runner: AgentRunner,
     trial_id: str | None,
+    max_iterations: int | None = None,
 ) -> AsyncIterator[SimulationStep]:
     """Invite agents, drive self-selection, and select takers (PRD §6.2)."""
     invitations = await auction.invite(run_id=run_id, contract_id=contract.id)
     yield _step("system", f"Auction open. {len(invitations)} agent(s) invited.")
 
     turns = [
-        _auction_turn(invitation, agent, run_id, contract, agent_runner, trial_id)
+        _auction_turn(invitation, agent, run_id, contract, agent_runner, trial_id, max_iterations)
         for invitation in invitations
         if (agent := agents_by_id.get(invitation.agent_id)) is not None
     ]
@@ -1034,8 +1061,11 @@ async def _run_round_one(
     waves_by_thread: dict[str, tuple[list[str], list[str]]] = {}
     for thread in threads:
         assigned = takers_by_thread.get(thread.id, [])
-        half = (len(assigned) + 1) // 2
-        waves_by_thread[thread.id] = (assigned[:half], assigned[half:])
+        if config.demo_mode:
+            waves_by_thread[thread.id] = (assigned, [])
+        else:
+            half = (len(assigned) + 1) // 2
+            waves_by_thread[thread.id] = (assigned[:half], assigned[half:])
 
     # Resume-safe for free: an agent already recorded done/skipped for this
     # (phase, round) is never re-driven through another LLM call.
@@ -1072,6 +1102,7 @@ async def _run_round_one(
                         journal=journal,
                         phase="round_1",
                         trial_id=config.trial_id,
+                        max_iterations=(6 if config.demo_mode else None),
                     )
                 )
         return turns
@@ -1161,15 +1192,20 @@ async def _cold_start_temperatures(
 # request_expertise lets a taker contest the Market Maker's scoping mid-round;
 # the pending proposal is voted on at end-of-round by the amendment processor.
 # dispute lets a taker contest an already-CONFIRMED finding (contestable consensus).
-_ROUNDS_TOOLS = [
+_ROUNDS_TOOLS_BASE = [
     "read_blackboard",
     "get_confirmed",
     "post_to_blackboard",
     "cite",
-    "dispute",
     "request_expertise",
     "stand_down",
 ]
+
+
+def _rounds_tools(demo_mode: bool) -> list[str]:
+    # demo_mode drops dispute: a contest/reaffirm cycle can force an extra
+    # round, which would blow past the demo's intended time budget.
+    return _ROUNDS_TOOLS_BASE if demo_mode else [*_ROUNDS_TOOLS_BASE, "dispute"]
 
 
 async def _run_discussion_round(
@@ -1291,13 +1327,14 @@ async def _run_discussion_round(
                     agent_runner=agent_runner,
                     prompt_builder=make_builder(taker, thread),
                     system_suffix=rounds_system_suffix(instruction),
-                    tool_names=_ROUNDS_TOOLS,
+                    tool_names=_rounds_tools(config.demo_mode),
                     thread_id=thread.id,
                     round=round,
                     journal=journal,
                     phase=phase,
                     trial_id=config.trial_id,
                     max_amendments=config.max_amendments,
+                    max_iterations=(6 if config.demo_mode else None),
                 )
             )
     async for step in _run_turns(db, turns, journal=journal):
@@ -1557,6 +1594,14 @@ def _ratify_turn(
 
         try:
             await attempt()
+        except TimeoutError:
+            logger.warning(
+                "ratification turn timed out for %s after %ds — not retrying "
+                "(full budget already spent)",
+                agent.get("id"),
+                TURN_TIMEOUT_S,
+            )
+            await _reset_transaction(conn)
         except Exception:
             logger.exception("ratification turn failed once for %s — retrying", agent.get("id"))
             await _reset_transaction(conn)
@@ -1923,7 +1968,14 @@ async def _run_swarm_steps(
         await journal.phase(db, "auction")
         _enter_phase("auction")
         async for step in _run_auction(
-            db, auction, run_id, contract, agents_by_id, agent_runner, config.trial_id
+            db,
+            auction,
+            run_id,
+            contract,
+            agents_by_id,
+            agent_runner,
+            config.trial_id,
+            max_iterations=(6 if config.demo_mode else None),
         ):
             yield step
 
@@ -1999,17 +2051,18 @@ async def _run_swarm_steps(
             recorder.set_phase(1, "vote")
         await journal.phase(db, "vote", 1)
         _enter_phase("vote")
-        async for step in _run_vote_subround(
-            db,
-            run_id,
-            threads,
-            takers_by_thread,
-            agents_by_id,
-            agent_runner,
-            journal,
-            config.trial_id,
-        ):
-            yield step
+        if not config.demo_mode:
+            async for step in _run_vote_subround(
+                db,
+                run_id,
+                threads,
+                takers_by_thread,
+                agents_by_id,
+                agent_runner,
+                journal,
+                config.trial_id,
+            ):
+                yield step
         for step in await _apply_dropouts(db, run_id, agents_by_id, dropped, announced_dropouts):
             yield step
         takers = [t for t in takers if t not in dropped]
@@ -2174,46 +2227,54 @@ async def _run_swarm_steps(
         with langfuse_metadata(synth_trace):
             candidate = await synthesizer.synthesize(prompt=config.prompt, findings=live_findings)
         await _post_synthesis_candidate(db, run_id, threads[0].id, last_round, candidate)
-        steps, approvals, voters, objections = await _run_ratification(
-            db, run_id, candidate, findings_for_ratify, takers, dropped, agents_by_id, agent_runner
-        )
-        for step in steps:
-            yield step
-        if voters == 0 or approvals > voters / 2:
+        if config.demo_mode:
+            # Skip both ratification rounds: the synthesis candidate becomes the
+            # final answer directly, and ratification stays None — already a
+            # valid value the rest of the pipeline (SwarmFinalOutput et al.)
+            # handles for runs that never had findings to ratify.
             final_answer = candidate
-            ratification = {
-                "approved": True,
-                "round": 1,
-                "approvals": approvals,
-                "voters": voters,
-                "objections": objections,
-            }
+            ratification = None
         else:
-            with langfuse_metadata(synth_trace):
-                revised = await synthesizer.synthesize(
-                    prompt=config.prompt, findings=live_findings, objections=objections
-                )
-            await _post_synthesis_candidate(db, run_id, threads[0].id, last_round, revised)
-            steps2, approvals2, voters2, objections2 = await _run_ratification(
-                db,
-                run_id,
-                revised,
-                findings_for_ratify,
-                takers,
-                dropped,
-                agents_by_id,
-                agent_runner,
+            steps, approvals, voters, objections = await _run_ratification(
+                db, run_id, candidate, findings_for_ratify, takers, dropped, agents_by_id, agent_runner
             )
-            for step in steps2:
+            for step in steps:
                 yield step
-            final_answer = revised
-            ratification = {
-                "approved": approvals2 > voters2 / 2 if voters2 else True,
-                "round": 2,
-                "approvals": approvals2,
-                "voters": voters2,
-                "objections": objections2,
-            }
+            if voters == 0 or approvals > voters / 2:
+                final_answer = candidate
+                ratification = {
+                    "approved": True,
+                    "round": 1,
+                    "approvals": approvals,
+                    "voters": voters,
+                    "objections": objections,
+                }
+            else:
+                with langfuse_metadata(synth_trace):
+                    revised = await synthesizer.synthesize(
+                        prompt=config.prompt, findings=live_findings, objections=objections
+                    )
+                await _post_synthesis_candidate(db, run_id, threads[0].id, last_round, revised)
+                steps2, approvals2, voters2, objections2 = await _run_ratification(
+                    db,
+                    run_id,
+                    revised,
+                    findings_for_ratify,
+                    takers,
+                    dropped,
+                    agents_by_id,
+                    agent_runner,
+                )
+                for step in steps2:
+                    yield step
+                final_answer = revised
+                ratification = {
+                    "approved": approvals2 > voters2 / 2 if voters2 else True,
+                    "round": 2,
+                    "approvals": approvals2,
+                    "voters": voters2,
+                    "objections": objections2,
+                }
     output = output.model_copy(update={"final_answer": final_answer, "ratification": ratification})
 
     observers = await auction.get_observers(run_id=run_id)

@@ -236,7 +236,10 @@ class MarketMaker:
         # the run's first frame can stall — but a slow (not hung) provider that
         # trips it silently degrades the contract to the raw one-line prompt,
         # which cascades (mis-ranked invites, abstains). Generous beats degraded.
-        timeout: float = 120.0,
+        # 300s matches the reasoning-model latency budget used elsewhere in the
+        # codebase (gpt-5 family can spend minutes on a single completion); it
+        # does not retry on timeout, it just falls back.
+        timeout: float = 300.0,
         fallback: FallbackContractSource | None = None,
     ) -> None:
         self._provider = provider

@@ -31,7 +31,6 @@ class SwarmRunConfig(BaseModel):
     alpha: float = Field(default=0.5)
     beta: float = Field(default=0.4)
     gamma: float = Field(default=0.1)
-    k_attention: int = Field(default=10, ge=3, le=30)
     # 1, not 2: one genuinely quiet round is already real evidence a thread is
     # done (see DEFAULT_K_CONSECUTIVE in termination.py) — requiring two in a
     # row was pushing ordinary runs to max_rounds almost every time instead of
@@ -40,6 +39,7 @@ class SwarmRunConfig(BaseModel):
     epsilon_entropy: int = Field(default=0, ge=0)
     t_initial: float = Field(default=0.0)
     delta_t: float = Field(default=0.1)
+    demo_mode: bool = False
 
 
 class ThreadSchema(BaseModel):

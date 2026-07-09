@@ -12,6 +12,7 @@ import {
 import { useApiKeys, apiKeyHeaders } from "@/lib/api-keys-context";
 import { loadSession, saveSession } from "@/lib/session-persist";
 import { userIdHeaders } from "@/lib/user-id";
+import type { SwarmRunConfig } from "../components/swarm-config";
 
 // SSE goes through the Next rewrite proxy by default (relative ""). If that proxy
 // buffers the stream, set NEXT_PUBLIC_API_URL (e.g. http://localhost:8000) to hit
@@ -338,7 +339,7 @@ function reducer(state: SwarmRunState, action: Action): SwarmRunState {
  */
 export function useSwarmRun(): {
   state: SwarmRunState;
-  start: (prompt: string, parentRunId?: string) => void;
+  start: (prompt: string, parentRunId?: string, config?: SwarmRunConfig) => void;
   reset: () => void;
 } {
   const [state, dispatch] = useReducer(reducer, undefined, loadPersisted);
@@ -366,7 +367,7 @@ export function useSwarmRun(): {
   const { keys } = useApiKeys();
 
   const start = useCallback(
-    (prompt: string, parentRunId?: string) => {
+    (prompt: string, parentRunId?: string, config?: SwarmRunConfig) => {
       // Cancel any run still in flight — its SSE connection closing is what
       // lets the backend's own cleanup (task cancellation, connection
       // release) actually run, instead of leaving it to finish unattended.
@@ -393,6 +394,19 @@ export function useSwarmRun(): {
               // Multi-turn contract sessions: no UI consumes this yet (API +
               // mechanics only) — present so a future session picker can pass it.
               ...(parentRunId ? { parent_run_id: parentRunId } : {}),
+              ...(config
+                ? {
+                    min_takers: config.takersMin,
+                    max_takers: config.takersMax,
+                    min_rounds: config.roundsMin,
+                    max_rounds: config.roundsMax,
+                    token_budget: config.tokenBudget,
+                    max_amendments: config.maxAmendments,
+                    decay_rounds: config.decayRounds,
+                    invite_floor: config.inviteFloor,
+                    demo_mode: config.reasoningEffort === "low",
+                  }
+                : {}),
             }),
             signal: controller.signal,
           });

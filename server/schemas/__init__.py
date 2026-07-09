@@ -909,6 +909,18 @@ class SimulationRunRequest(BaseModel):
             "run — validated before the SSE stream opens."
         ),
     )
+    # swarm engine only: optional overrides for SwarmRunConfig. Each defaults to
+    # None, meaning "omit -> today's SwarmRunConfig default applies" (bounds
+    # copied verbatim from market_hive.schemas.SwarmRunConfig).
+    min_takers: int | None = Field(default=None, ge=1, le=10)
+    max_takers: int | None = Field(default=None, ge=1, le=20)
+    min_rounds: int | None = Field(default=None, ge=1, le=5)
+    max_rounds: int | None = Field(default=None, ge=2, le=20)
+    token_budget: int | None = Field(default=None, ge=5_000, le=500_000)
+    max_amendments: int | None = Field(default=None, ge=0, le=5)
+    decay_rounds: int | None = Field(default=None, ge=1, le=10)
+    invite_floor: float | None = Field(default=None, ge=0.0, le=1.0)
+    demo_mode: bool | None = Field(default=None)
 
 
 class SimulationStartResponse(BaseModel):

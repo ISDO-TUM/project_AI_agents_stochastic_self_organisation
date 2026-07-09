@@ -1095,6 +1095,11 @@ async def test_dropout_after_consecutive_failures_shrinks_promotion_denominator(
 
 
 async def test_retry_succeeds_without_dropout(db: AsyncConnection) -> None:
+    """Mirror-image of ``test_board_turn_timeout_does_not_retry`` below: a
+    non-timeout exception (``RuntimeError`` — a transient provider error) must
+    still get its one retry, unchanged by the timeout-specific fix. ``calls["n"]
+    == 2`` proves exactly two attempts were made (the first raised, the retry
+    succeeded), not just that the run didn't fail."""
     await _insert_agent(db, "a1", "Alpha")
     await _insert_agent(db, "a2", "Beta")
     inner = _scripted_runner()
@@ -1108,9 +1113,10 @@ async def test_retry_succeeds_without_dropout(db: AsyncConnection) -> None:
         tool_names: list[str],
         tool_context: dict[str, Any],
     ) -> tuple[str, list[ToolCall]]:
-        if agent["name"] == "Beta" and "cite" in tool_names and calls["n"] == 0:
+        if agent["name"] == "Beta" and "cite" in tool_names:
             calls["n"] += 1
-            raise RuntimeError("transient error")
+            if calls["n"] == 1:
+                raise RuntimeError("transient error")
         turn_result: tuple[str, list[ToolCall]] = await inner(
             agent,
             user_prompt=user_prompt,
@@ -1125,6 +1131,7 @@ async def test_retry_succeeds_without_dropout(db: AsyncConnection) -> None:
         db,
         agent_runner=flaky_once,
     )
+    assert calls["n"] == 2, "a non-timeout exception should still be retried exactly once"
     assert not any("dropped out" in s.msg for s in steps if s.type == "system")
     statuses = (
         (
@@ -1139,6 +1146,58 @@ async def test_retry_succeeds_without_dropout(db: AsyncConnection) -> None:
         .all()
     )
     assert statuses[-1] == "done"
+
+
+async def test_board_turn_timeout_does_not_retry(db: AsyncConnection) -> None:
+    """A ``TimeoutError`` on the first attempt must NOT trigger a second
+    attempt — the model already got its full ``TURN_TIMEOUT_S`` budget and
+    didn't finish, so paying that budget again buys nothing. The turn should
+    journal 'failed' after exactly one call, not two."""
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+    inner = _scripted_runner()
+    calls = {"n": 0}
+
+    async def timing_out_runner(
+        agent: dict[str, Any],
+        *,
+        user_prompt: str,
+        system_suffix: str,
+        tool_names: list[str],
+        tool_context: dict[str, Any],
+    ) -> tuple[str, list[ToolCall]]:
+        if agent["name"] == "Beta" and "cite" in tool_names:
+            calls["n"] += 1
+            raise TimeoutError("simulated hang")
+        turn_result: tuple[str, list[ToolCall]] = await inner(
+            agent,
+            user_prompt=user_prompt,
+            system_suffix=system_suffix,
+            tool_names=tool_names,
+            tool_context=tool_context,
+        )
+        return turn_result
+
+    await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2),
+        db,
+        agent_runner=timing_out_runner,
+    )
+
+    assert calls["n"] == 1, "a TimeoutError must not be retried"
+    statuses = (
+        (
+            await db.execute(
+                text(
+                    "SELECT status FROM turn_log WHERE agent_id = 'a2' AND phase = 'round_2' "
+                    "ORDER BY created_at"
+                )
+            )
+        )
+        .scalars()
+        .all()
+    )
+    assert statuses == ["failed"]
 
 
 async def test_resume_continues_without_duplicating_completed_turns(db: AsyncConnection) -> None:
@@ -1989,6 +2048,128 @@ async def test_double_rejection_ships_flagged_with_objections(db: AsyncConnectio
     assert conv.data["ratification"]["approved"] is False
     assert conv.data["ratification"]["round"] == 2
     assert conv.data["ratification"]["objections"]
+
+
+# ── demo_mode (fast runs: skip wave 2, vote sub-round, ratification, dispute) ─
+
+
+async def test_demo_mode_skips_wave_two(db: AsyncConnection) -> None:
+    for i, name in enumerate(["Alpha", "Beta", "Gamma", "Delta"]):
+        await _insert_agent(db, f"a{i + 1}", name)
+    captured: list[tuple[str, str]] = []
+    steps = await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2, demo_mode=True),
+        db,
+        agent_runner=_prompt_capturing_runner(captured),
+    )
+    wave1 = [p for _, p in captured if "second wave" not in p]
+    wave2 = [p for _, p in captured if "second wave" in p]
+    # All four takers post in wave 1; wave 2 never runs.
+    assert len(wave1) == 4
+    assert len(wave2) == 0
+    assert not any("second wave" in s.msg for s in steps if s.type == "system")
+
+    proposals = (
+        await db.execute(
+            text("SELECT COUNT(*) FROM draft_entries WHERE round = 1 AND entry_type = 'proposal'")
+        )
+    ).scalar_one()
+    assert proposals == 4
+
+
+async def test_demo_mode_skips_vote_subround(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+
+    steps = await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2, demo_mode=True),
+        db,
+        agent_runner=_scripted_runner(),
+    )
+
+    assert not any(s.msg.startswith("Vote sub-round") for s in steps)
+    votes = (await db.execute(text("SELECT COUNT(*) FROM votes"))).scalar_one()
+    assert votes == 0
+    # Cold-start still degrades gracefully to temperature=1.0 with zero votes,
+    # so the run still reaches a normal completed state.
+    run = (await db.execute(text("SELECT status FROM swarm_runs"))).mappings().fetchone()
+    assert run is not None
+    assert run["status"] == "completed"
+
+
+async def test_demo_mode_skips_ratification(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+
+    class _RecordingSynthesizer:
+        def __init__(self) -> None:
+            self.calls = 0
+
+        async def synthesize(
+            self, *, prompt: str, findings: list[Any], objections: list[str] | None = None
+        ) -> str:
+            self.calls += 1
+            return "the synthesized answer"
+
+    synth = _RecordingSynthesizer()
+    steps = await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2, demo_mode=True),
+        db,
+        agent_runner=_scripted_runner(),
+        synthesizer=synth,
+    )
+
+    # Exactly one synthesis call — the revise-and-reratify pass never runs.
+    assert synth.calls == 1
+    conv = next(s for s in steps if s.type == "convergence")
+    assert conv.data["ratification"] is None
+    assert conv.data["final_answer"] == "the synthesized answer"
+
+    row = (
+        (await db.execute(text("SELECT final_answer, ratification FROM swarm_runs")))
+        .mappings()
+        .fetchone()
+    )
+    assert row is not None
+    assert row["final_answer"] == "the synthesized answer"
+    assert row["ratification"] is None
+
+
+async def test_demo_mode_excludes_dispute_tool(db: AsyncConnection) -> None:
+    await _insert_agent(db, "a1", "Alpha")
+    await _insert_agent(db, "a2", "Beta")
+    captured_tool_names: list[list[str]] = []
+    inner = _scripted_runner()
+
+    async def runner(
+        agent: dict[str, Any],
+        *,
+        user_prompt: str,
+        system_suffix: str,
+        tool_names: list[str],
+        tool_context: dict[str, Any],
+    ) -> tuple[str, list[ToolCall]]:
+        if "cite" in tool_names:  # discussion-round turns only (round-1/vote don't offer cite)
+            captured_tool_names.append(tool_names)
+        turn_result: tuple[str, list[ToolCall]] = await inner(
+            agent,
+            user_prompt=user_prompt,
+            system_suffix=system_suffix,
+            tool_names=tool_names,
+            tool_context=tool_context,
+        )
+        return turn_result
+
+    await _drain(
+        SwarmRunConfig(prompt="Analyze this contract", max_rounds=2, demo_mode=True),
+        db,
+        agent_runner=runner,
+    )
+
+    assert captured_tool_names  # sanity: at least one discussion-round turn happened
+    for names in captured_tool_names:
+        assert "dispute" not in names
+        assert "cite" in names  # still the rounds tool set, just minus dispute
 
 
 # ── History mirroring (swarm run ↔ trials/rounds/messages) ───────────────────

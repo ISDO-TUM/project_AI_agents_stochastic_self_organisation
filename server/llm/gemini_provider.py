@@ -18,7 +18,7 @@ consistent with how the proxy authenticates all providers.
 
 import contextlib
 import logging
-from asyncio import CancelledError, create_task
+from asyncio import CancelledError, create_task, wait_for
 from time import monotonic
 from typing import Any, cast
 
@@ -151,15 +151,18 @@ class GeminiProvider(BaseLLMProvider):
         system_prompt: str | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_handler: Any | None = None,
+        max_iterations: int | None = None,
     ) -> str:
+        effective_max_iterations = (
+            max_iterations if max_iterations is not None else self.max_iterations
+        )
         messages = self._build_messages(prompt, system_prompt)
         kwargs = self._build_kwargs(model, messages, tools)
 
         if system_prompt:
             kwargs["body"]["systemInstruction"] = {"parts": [{"text": system_prompt}]}
 
-        watchdog = create_task(_log_in_flight_progress(model, monotonic()))
-        try:
+        async def _run() -> str:
             response: dict[str, Any] = {}
             # Per-tool-name streak, not per-iteration — see base_provider.py's
             # _call_inner for why: an iteration that also makes a succeeding
@@ -167,7 +170,7 @@ class GeminiProvider(BaseLLMProvider):
             # "all-error", so tracking each tool's own streak is what
             # actually catches a model stuck on one bad action.
             consecutive_errors_by_tool: dict[str, int] = {}
-            for iteration in range(self.max_iterations):
+            for iteration in range(effective_max_iterations):
                 response = await self._send(kwargs)
                 tool_calls = self._extract_tool_calls(response)
 
@@ -206,11 +209,30 @@ class GeminiProvider(BaseLLMProvider):
                         stuck_tool,
                         consecutive_errors_by_tool[stuck_tool],
                         iteration + 1,
-                        self.max_iterations,
+                        effective_max_iterations,
                     )
                     return self._extract_text(response)
 
             return self._extract_text(response)
+
+        started = monotonic()
+        watchdog = create_task(_log_in_flight_progress(model, started))
+        try:
+            result = await wait_for(_run(), timeout=self.timeout_seconds)
+            logger.info(
+                "LLM call complete — model=%s elapsed=%.2fs", model, monotonic() - started
+            )
+            return result
+        except TimeoutError as err:
+            logger.error(
+                "LLM call timed out after %ds (elapsed=%.2fs) — model=%s",
+                self.timeout_seconds,
+                monotonic() - started,
+                model,
+            )
+            raise TimeoutError(
+                f"The LLM call exceeded the maximum allowed time ({self.timeout_seconds}s)."
+            ) from err
         finally:
             watchdog.cancel()
             with contextlib.suppress(CancelledError):
@@ -223,6 +245,7 @@ async def call_gemini(
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_handler: Any | None = None,
+    max_iterations: int | None = None,
 ) -> str:
     return await GeminiProvider().call(
         prompt,
@@ -230,4 +253,5 @@ async def call_gemini(
         system_prompt=system_prompt,
         tools=tools,
         tool_handler=tool_handler,
+        max_iterations=max_iterations,
     )

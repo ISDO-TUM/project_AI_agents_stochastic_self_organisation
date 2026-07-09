@@ -115,8 +115,11 @@ class AnswerSynthesizer:
         model: str = "gpt-4o",
         # On timeout the deterministic joiner takes over — the run still ends,
         # but the final answer degrades to concatenated findings. Keep generous
-        # so a slow provider doesn't silently swallow the synthesis step.
-        timeout: float = 120.0,
+        # so a slow provider doesn't silently swallow the synthesis step. 300s
+        # matches the reasoning-model latency budget used elsewhere in the
+        # codebase (gpt-5 family can spend minutes on a single completion); it
+        # does not retry on timeout, it just falls back to the deterministic join.
+        timeout: float = 300.0,
     ) -> None:
         self._provider = provider
         self._model = model
