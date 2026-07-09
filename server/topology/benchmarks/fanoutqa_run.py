@@ -39,14 +39,17 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import re
 import statistics
 import sys
 import time
+from collections import Counter
 from datetime import datetime
 from pathlib import Path
 from typing import Any, TextIO
 
 import httpx
+from nltk.stem.porter import PorterStemmer as _PorterStemmer
 from rouge_score.rouge_scorer import RougeScorer as _RougeScorer
 
 DEFAULT_BASE_URL = "http://localhost:8000"
@@ -479,6 +482,31 @@ def _load_questions_and_evidence(
 # ── Evaluation ────────────────────────────────────────────────────────────────
 
 _ROUGE = _RougeScorer(["rouge1", "rouge2", "rougeL"], use_stemmer=True)
+_STEMMER = _PorterStemmer()
+
+
+def _tokenize(text: str) -> list[str]:
+    text = text.lower()
+    text = re.sub(r"[^\w\s]", " ", text)
+    return [_STEMMER.stem(t) for t in text.split()]
+
+
+def _skip_bigrams(tokens: list[str]) -> Counter[tuple[str, str]]:
+    counts: Counter[tuple[str, str]] = Counter()
+    for i in range(len(tokens)):
+        for j in range(i + 1, len(tokens)):
+            counts[(tokens[i], tokens[j])] += 1
+    return counts
+
+
+def _rouge_s_recall(reference: str, generated: str) -> float:
+    ref_bg = _skip_bigrams(_tokenize(reference))
+    gen_bg = _skip_bigrams(_tokenize(generated))
+    total = sum(ref_bg.values())
+    if total == 0:
+        return 0.0
+    overlap = sum(min(ref_bg[k], gen_bg[k]) for k in ref_bg)
+    return overlap / total
 
 
 def _str_answer(ans: Any) -> str:
@@ -671,6 +699,10 @@ def _run_trial(
     out(f"  Cit-ref (R1) : {citation_scores['_ref_rouge1']}")
     out(f"  Cit-ref (R2) : {citation_scores['_ref_rouge2']}")
 
+    _ans = sim["final_answer"]
+    _ref = _str_answer(question.answer)
+    _cit_r1 = citation_scores["_ref_rouge1"]
+    _cit_r2 = citation_scores["_ref_rouge2"]
     return {
         "trial": trial_idx,
         "accuracy_loose": accuracy_loose,
@@ -685,7 +717,13 @@ def _run_trial(
         "rougeL": scores.get("rougeL"),
         "citation_rouge1": citation_scores["citation_rouge1"],
         "citation_rouge2": citation_scores["citation_rouge2"],
-        "answer": sim["final_answer"],
+        "answer": _ans,
+        "reference_answer": _ref,
+        "citation_reference": {"rouge1": _cit_r1, "rouge2": _cit_r2},
+        "rougeS_recall": _rouge_s_recall(_ref, _ans),
+        "rougeS_citation_recall": _rouge_s_recall(_cit_r2, _ans),
+        "rouge1_recall": _ROUGE.score(_ref, _ans)["rouge1"].recall,
+        "rouge1_citation_recall": _ROUGE.score(_cit_r1, _ans)["rouge1"].recall,
     }
 
 
@@ -741,6 +779,9 @@ def _run_baseline_trial(
     out(f"  Cit-ref (R1) : {citation_scores['_ref_rouge1']}")
     out(f"  Cit-ref (R2) : {citation_scores['_ref_rouge2']}")
 
+    _ref = _str_answer(question.answer)
+    _cit_r1 = citation_scores["_ref_rouge1"]
+    _cit_r2 = citation_scores["_ref_rouge2"]
     return {
         "trial": trial_idx,
         "accuracy_loose": accuracy_loose,
@@ -756,6 +797,12 @@ def _run_baseline_trial(
         "citation_rouge1": citation_scores["citation_rouge1"],
         "citation_rouge2": citation_scores["citation_rouge2"],
         "answer": response,
+        "reference_answer": _ref,
+        "citation_reference": {"rouge1": _cit_r1, "rouge2": _cit_r2},
+        "rougeS_recall": _rouge_s_recall(_ref, response),
+        "rougeS_citation_recall": _rouge_s_recall(_cit_r2, response),
+        "rouge1_recall": _ROUGE.score(_ref, response)["rouge1"].recall,
+        "rouge1_citation_recall": _ROUGE.score(_cit_r1, response)["rouge1"].recall,
     }
 
 
@@ -810,6 +857,10 @@ def _run_bidding_trial(
     out(f"  Cit-ref (R1) : {citation_scores['_ref_rouge1']}")
     out(f"  Cit-ref (R2) : {citation_scores['_ref_rouge2']}")
 
+    _ans = sim["final_answer"]
+    _ref = _str_answer(question.answer)
+    _cit_r1 = citation_scores["_ref_rouge1"]
+    _cit_r2 = citation_scores["_ref_rouge2"]
     return {
         "trial": trial_idx,
         "accuracy_loose": accuracy_loose,
@@ -824,7 +875,13 @@ def _run_bidding_trial(
         "rougeL": scores.get("rougeL"),
         "citation_rouge1": citation_scores["citation_rouge1"],
         "citation_rouge2": citation_scores["citation_rouge2"],
-        "answer": sim["final_answer"],
+        "answer": _ans,
+        "reference_answer": _ref,
+        "citation_reference": {"rouge1": _cit_r1, "rouge2": _cit_r2},
+        "rougeS_recall": _rouge_s_recall(_ref, _ans),
+        "rougeS_citation_recall": _rouge_s_recall(_cit_r2, _ans),
+        "rouge1_recall": _ROUGE.score(_ref, _ans)["rouge1"].recall,
+        "rouge1_citation_recall": _ROUGE.score(_cit_r1, _ans)["rouge1"].recall,
     }
 
 
@@ -839,6 +896,14 @@ def _compute_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
     rougel_vals = [r["rougeL"] for r in rows if r.get("rougeL") is not None]
     cit1_vals = [r["citation_rouge1"] for r in rows if r.get("citation_rouge1") is not None]
     cit2_vals = [r["citation_rouge2"] for r in rows if r.get("citation_rouge2") is not None]
+    rs_vals = [r["rougeS_recall"] for r in rows if r.get("rougeS_recall") is not None]
+    rsc_vals = [
+        r["rougeS_citation_recall"] for r in rows if r.get("rougeS_citation_recall") is not None
+    ]
+    r1r_vals = [r["rouge1_recall"] for r in rows if r.get("rouge1_recall") is not None]
+    r1rc_vals = [
+        r["rouge1_citation_recall"] for r in rows if r.get("rouge1_citation_recall") is not None
+    ]
     return {
         "n_questions": len(rows),
         "accuracy_loose": statistics.mean(r["accuracy_loose"] for r in rows),
@@ -852,6 +917,10 @@ def _compute_summary(rows: list[dict[str, Any]]) -> dict[str, Any]:
         "rougeL": statistics.mean(rougel_vals) if rougel_vals else None,
         "citation_rouge1": statistics.mean(cit1_vals) if cit1_vals else None,
         "citation_rouge2": statistics.mean(cit2_vals) if cit2_vals else None,
+        "rougeS_recall": statistics.mean(rs_vals) if rs_vals else None,
+        "rougeS_citation_recall": statistics.mean(rsc_vals) if rsc_vals else None,
+        "rouge1_recall": statistics.mean(r1r_vals) if r1r_vals else None,
+        "rouge1_citation_recall": statistics.mean(r1rc_vals) if r1rc_vals else None,
     }
 
 
@@ -877,6 +946,14 @@ def _summarise(rows: list[dict[str, Any]], out: _Tee) -> None:
         out(f"{'Citation ROUGE-1':22s}  {s['citation_rouge1']:>10.3f}")
     if s.get("citation_rouge2") is not None:
         out(f"{'Citation ROUGE-2':22s}  {s['citation_rouge2']:>10.3f}")
+    if s.get("rougeS_recall") is not None:
+        out(f"{'ROUGE-S recall':22s}  {s['rougeS_recall']:>10.3f}")
+    if s.get("rougeS_citation_recall") is not None:
+        out(f"{'ROUGE-S cit recall':22s}  {s['rougeS_citation_recall']:>10.3f}")
+    if s.get("rouge1_recall") is not None:
+        out(f"{'ROUGE-1 recall':22s}  {s['rouge1_recall']:>10.3f}")
+    if s.get("rouge1_citation_recall") is not None:
+        out(f"{'ROUGE-1 cit recall':22s}  {s['rouge1_citation_recall']:>10.3f}")
 
 
 # ── Results file ──────────────────────────────────────────────────────────────
