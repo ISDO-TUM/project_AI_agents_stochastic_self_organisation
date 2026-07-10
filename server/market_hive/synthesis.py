@@ -41,6 +41,8 @@ _SYSTEM_PROMPT = (
     "no bullet lists unless the answer is inherently a short list.\n"
     "- Do not introduce facts, caveats, or recommendations the findings do not support.\n"
     "- Write plain prose addressed to the end user."
+    "- ANY CITATIONS MADE BY THE AGENTS SHOULD BE INCLUDED AS INLINE CITATIONS IN THE SUMMARY."
+    "- IF CITATIONS ARE IN THE FORM OF FILE NAMES THEN THOSE SHOULD BE USED."
 )
 
 
@@ -106,24 +108,22 @@ class FallbackAnswerSynthesizer:
 
 
 class AnswerSynthesizer:
-    """LLM-backed synthesizer: confirmed findings → a couple of sentences."""
+    """LLM-backed synthesizer: confirmed findings → a couple of sentences.
 
-    def __init__(
-        self,
-        *,
-        provider: str = "openai",
-        model: str = "gpt-4o",
-        # On timeout the deterministic joiner takes over — the run still ends,
-        # but the final answer degrades to concatenated findings. Keep generous
-        # so a slow provider doesn't silently swallow the synthesis step. 300s
-        # matches the reasoning-model latency budget used elsewhere in the
-        # codebase (gpt-5 family can spend minutes on a single completion); it
-        # does not retry on timeout, it just falls back to the deterministic join.
-        timeout: float = 300.0,
-    ) -> None:
+    ``provider`` and ``model`` are intentionally left unset at construction time
+    so the orchestrator can configure them from the takers' actual provider and
+    model after the auction (call ``configure()`` before ``synthesize()``).
+    """
+
+    def __init__(self, *, timeout: float = 300.0) -> None:
+        self._provider: str | None = None
+        self._model: str | None = None
+        self._timeout = timeout
+
+    def configure(self, *, provider: str, model: str) -> None:
+        """Set the provider and model derived from the run's taker agents."""
         self._provider = provider
         self._model = model
-        self._timeout = timeout
 
     async def synthesize(
         self,
@@ -141,6 +141,9 @@ class AnswerSynthesizer:
         findings = _findings_only(findings)
         if not findings:
             return NO_ANSWER
+        if self._provider is None or self._model is None:
+            logger.warning("AnswerSynthesizer.configure() was never called; using fallback.")
+            return fallback_answer(findings)
         try:
             response, _ = await asyncio.wait_for(
                 call_agent(

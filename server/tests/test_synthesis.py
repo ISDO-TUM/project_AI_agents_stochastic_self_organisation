@@ -68,6 +68,7 @@ async def test_llm_synthesizer_short_circuits_empty_findings_without_calling() -
 
 async def test_llm_synthesizer_returns_model_text() -> None:
     synth = AnswerSynthesizer()
+    synth.configure(provider="anthropic", model="claude-haiku-4-5-20251001")
 
     async def fake_call_agent(prompt: str, **kwargs: object) -> tuple[str, list[Any]]:
         return "  A concise synthesised answer.  ", []
@@ -80,6 +81,7 @@ async def test_llm_synthesizer_returns_model_text() -> None:
 
 async def test_llm_synthesizer_falls_back_on_error() -> None:
     synth = AnswerSynthesizer()
+    synth.configure(provider="anthropic", model="claude-haiku-4-5-20251001")
 
     async def boom(prompt: str, **kwargs: object) -> tuple[str, list[Any]]:
         raise RuntimeError("provider down")

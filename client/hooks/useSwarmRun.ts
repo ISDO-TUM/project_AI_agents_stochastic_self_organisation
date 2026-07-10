@@ -339,7 +339,11 @@ function reducer(state: SwarmRunState, action: Action): SwarmRunState {
  */
 export function useSwarmRun(): {
   state: SwarmRunState;
-  start: (prompt: string, parentRunId?: string, config?: SwarmRunConfig) => void;
+  start: (
+    prompt: string,
+    parentRunId?: string,
+    config?: SwarmRunConfig,
+  ) => void;
   reset: () => void;
 } {
   const [state, dispatch] = useReducer(reducer, undefined, loadPersisted);

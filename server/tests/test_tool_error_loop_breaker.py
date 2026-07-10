@@ -17,7 +17,7 @@ from server.llm.base_provider import _MAX_CONSECUTIVE_ERROR_ITERATIONS, BaseLLMP
 from server.llm.normalizer import NormalizedToolCall
 
 
-class _FakeProvider(BaseLLMProvider):
+class _FakeProvider(BaseLLMProvider):  # type: ignore[misc]
     """Minimal provider whose ``_send`` replays a scripted list of responses,
     each either a tool call or a final text — enough to drive ``_call_inner``
     without a real API."""
