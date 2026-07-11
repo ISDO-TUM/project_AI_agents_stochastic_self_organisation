@@ -2,8 +2,13 @@
 
 import { useEffect, useMemo, useState } from "react";
 import Link from "next/link";
-import { fetchAgents, fetchAgentFiles, deleteAgentApi } from "@/lib/api";
-import { Agent, KnowledgeFile } from "@/lib/types";
+import {
+  fetchAgents,
+  fetchAgentFiles,
+  fetchAgentTrust,
+  deleteAgentApi,
+} from "@/lib/api";
+import { Agent, KnowledgeFile, AgentTrustEntry } from "@/lib/types";
 import { BURG, BURG_DIM, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { agentColor } from "@/lib/agent-color";
@@ -118,6 +123,9 @@ export function AgentsPage() {
   const [files, setFiles] = useState<KnowledgeFile[]>([]);
   const [filesLoading, setFilesLoading] = useState(false);
   const [filesError, setFilesError] = useState<string | null>(null);
+  const [trust, setTrust] = useState<AgentTrustEntry[]>([]);
+  const [trustLoading, setTrustLoading] = useState(false);
+  const [trustError, setTrustError] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -159,6 +167,28 @@ export function AgentsPage() {
           err instanceof Error ? err.message : "Failed to load files",
         );
         setFilesLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [selected]);
+
+  // Same fetch-on-select pattern as the files effect above.
+  useEffect(() => {
+    if (!selected) return;
+    let cancelled = false;
+    fetchAgentTrust(selected.id)
+      .then((rows) => {
+        if (cancelled) return;
+        setTrust(rows);
+        setTrustLoading(false);
+      })
+      .catch((err: unknown) => {
+        if (cancelled) return;
+        setTrustError(
+          err instanceof Error ? err.message : "Failed to load trust registry",
+        );
+        setTrustLoading(false);
       });
     return () => {
       cancelled = true;
@@ -439,6 +469,9 @@ export function AgentsPage() {
                     setFiles([]);
                     setFilesLoading(true);
                     setFilesError(null);
+                    setTrust([]);
+                    setTrustLoading(true);
+                    setTrustError(null);
                     setDeleteConfirm(false);
                     setDeleteError(null);
                   }}
@@ -674,6 +707,89 @@ export function AgentsPage() {
                       {truncateContent(file.content)}
                     </span>
                   )}
+                </div>
+              </div>
+            ))}
+          </div>
+
+          <FLabel>Trust Registry</FLabel>
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+              padding: "2px 0 4px",
+            }}
+          >
+            {trustError && (
+              <span
+                style={{
+                  fontSize: 11.5,
+                  color: "#e05555",
+                  padding: "4px 4px 2px",
+                }}
+              >
+                {trustError}
+              </span>
+            )}
+            {trustLoading && (
+              <span
+                style={{
+                  fontSize: 11.5,
+                  color: t.textDim,
+                  padding: "4px 4px 2px",
+                }}
+              >
+                Loading…
+              </span>
+            )}
+            {!trustLoading && !trustError && trust.length === 0 && (
+              <span
+                style={{
+                  fontSize: 11.5,
+                  color: t.textDim,
+                  padding: "4px 4px 2px",
+                }}
+              >
+                No cross-run trust history yet.
+              </span>
+            )}
+            {trust.map((entry) => (
+              <div key={entry.domain}>
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    fontSize: 11.5,
+                    color: t.textSub,
+                    marginBottom: 4,
+                  }}
+                >
+                  <span style={{ fontWeight: 600, color: t.text }}>
+                    {entry.domain}
+                  </span>
+                  <span style={{ fontFamily: MONO }}>
+                    {entry.trust_score.toFixed(2)} · {entry.runs_participated}{" "}
+                    run{entry.runs_participated === 1 ? "" : "s"}
+                  </span>
+                </div>
+                <div
+                  style={{
+                    height: 5,
+                    borderRadius: 100,
+                    background: t.inputBg,
+                    border: `1px solid ${t.border}`,
+                    overflow: "hidden",
+                  }}
+                >
+                  <div
+                    style={{
+                      height: "100%",
+                      width: `${Math.round(entry.trust_score * 100)}%`,
+                      background: "#3dba8c",
+                      borderRadius: 100,
+                    }}
+                  />
                 </div>
               </div>
             ))}

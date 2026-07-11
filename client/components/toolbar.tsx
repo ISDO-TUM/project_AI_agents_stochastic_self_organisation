@@ -107,43 +107,126 @@ function ToolsMenuItem({
   icon,
   label,
   onClick,
+  href,
   t,
 }: {
   icon: string;
   label: string;
   onClick: () => void;
+  href?: string;
   t: ReturnType<typeof getTheme>;
 }) {
+  const itemStyle: React.CSSProperties = {
+    display: "flex",
+    alignItems: "center",
+    gap: 9,
+    width: "100%",
+    background: "none",
+    border: "none",
+    color: t.textSub,
+    fontSize: 12,
+    fontWeight: 600,
+    padding: "8px 14px",
+    cursor: "pointer",
+    textAlign: "left",
+    transition: "all 0.12s",
+    textDecoration: "none",
+  };
+  const handlers = {
+    onMouseEnter: (e: React.MouseEvent<HTMLElement>) => {
+      (e.currentTarget as HTMLElement).style.background = t.hover;
+      (e.currentTarget as HTMLElement).style.color = t.text;
+    },
+    onMouseLeave: (e: React.MouseEvent<HTMLElement>) => {
+      (e.currentTarget as HTMLElement).style.background = "none";
+      (e.currentTarget as HTMLElement).style.color = t.textSub;
+    },
+  };
+
+  if (href) {
+    return (
+      <Link href={href} onClick={onClick} style={itemStyle} {...handlers}>
+        <LIcon name={icon} size={13} color="currentColor" />
+        {label}
+      </Link>
+    );
+  }
+
   return (
-    <button
-      onClick={onClick}
-      style={{
-        display: "flex",
-        alignItems: "center",
-        gap: 9,
-        width: "100%",
-        background: "none",
-        border: "none",
-        color: t.textSub,
-        fontSize: 12,
-        fontWeight: 600,
-        padding: "8px 14px",
-        cursor: "pointer",
-        textAlign: "left",
-        transition: "all 0.12s",
-      }}
-      onMouseEnter={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background = t.hover;
-        (e.currentTarget as HTMLButtonElement).style.color = t.text;
-      }}
-      onMouseLeave={(e) => {
-        (e.currentTarget as HTMLButtonElement).style.background = "none";
-        (e.currentTarget as HTMLButtonElement).style.color = t.textSub;
-      }}
-    >
+    <button onClick={onClick} style={itemStyle} {...handlers}>
       <LIcon name={icon} size={13} color="currentColor" />
       {label}
     </button>
+  );
+}
+
+function AgentsDropdown({
+  onAddAgent,
+  t,
+}: {
+  onAddAgent: () => void;
+  t: ReturnType<typeof getTheme>;
+}) {
+  const [open, setOpen] = useState(false);
+  const { dark } = useTheme();
+
+  return (
+    <div style={{ position: "relative" }}>
+      <TBtn
+        onClick={() => setOpen((x) => !x)}
+        icon="Plus"
+        title="Agents"
+        active={open}
+        t={t}
+      >
+        Agent
+      </TBtn>
+      {open && (
+        <>
+          <div
+            style={{ position: "fixed", inset: 0, zIndex: 98 }}
+            onClick={() => setOpen(false)}
+          />
+          <div
+            style={{
+              position: "absolute",
+              top: "calc(100% + 6px)",
+              left: "50%",
+              transform: "translateX(-50%)",
+              background: dark
+                ? "rgba(12,10,22,0.97)"
+                : "rgba(255,254,255,0.98)",
+              border: `1px solid ${t.borderHi}`,
+              borderRadius: 10,
+              padding: "5px 0",
+              minWidth: 150,
+              zIndex: 99,
+              boxShadow: dark
+                ? "0 8px 32px rgba(0,0,0,0.55)"
+                : "0 8px 24px rgba(0,0,0,0.12)",
+              animation: "fadeIn 0.15s ease-out",
+            }}
+          >
+            <ToolsMenuItem
+              icon="Plus"
+              label="Create Agent"
+              onClick={() => {
+                setOpen(false);
+                onAddAgent();
+              }}
+              t={t}
+            />
+            <ToolsMenuItem
+              icon="Bot"
+              label="View Agents"
+              href="/agents"
+              onClick={() => setOpen(false)}
+              t={t}
+            />
+          </div>
+        </>
+      )}
+    </div>
   );
 }
 
@@ -836,23 +919,23 @@ export function Toolbar({
 
         {!simMode && (
           <>
-            <TBtn onClick={onAddAgent} icon="Plus" title="Add Agent" t={t}>
-              Agent
-            </TBtn>
+            <AgentsDropdown onAddAgent={onAddAgent} t={t} />
             <ToolsDropdown
               onAddFile={onAddFile}
               onAddDataset={onAddDataset}
               t={t}
             />
             <Sep t={t} />
-            <TBtn
-              onClick={onAutoLayout}
-              icon="Shuffle"
-              title="Auto-layout"
-              t={t}
-            >
-              Layout
-            </TBtn>
+            {appMode !== "swarm" && (
+              <TBtn
+                onClick={onAutoLayout}
+                icon="Shuffle"
+                title="Auto-layout"
+                t={t}
+              >
+                Layout
+              </TBtn>
+            )}
             <TBtn onClick={onExport} icon="Download" title="Export JSON" t={t}>
               Export
             </TBtn>
