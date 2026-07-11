@@ -226,8 +226,7 @@ class AuctionEngine:
         ).fetchone()
         if row is None:
             logger.warning(
-                "auction: thread_id %r not found for contract %s — treating as "
-                "contract-level bid",
+                "auction: thread_id %r not found for contract %s — treating as contract-level bid",
                 thread_id,
                 contract_id,
             )

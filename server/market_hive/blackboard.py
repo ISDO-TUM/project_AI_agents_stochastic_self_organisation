@@ -1027,7 +1027,7 @@ class Blackboard:
 
     async def refresh_confirmed_citation_counts(self, *, run_id: str) -> list[ConfirmedEntrySchema]:
         """Sync an already-promoted finding's ``citation_count`` to its source
-        draft's current distinct-endorser count (citations ∪ votes).
+        draft's current distinct-endorser count (citations U votes).
 
         ``citation_count`` on ``confirmed_entries`` was previously written once,
         at promotion time, and never touched again (only the dedup-merge path

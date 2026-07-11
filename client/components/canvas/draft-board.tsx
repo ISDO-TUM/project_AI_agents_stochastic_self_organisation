@@ -6,7 +6,10 @@ import { BlackboardState } from "@/lib/types";
 import { useTheme } from "@/lib/theme-context";
 import { getTheme, BURG_LT, SURFACE_DARK_RGB } from "@/lib/theme";
 import { Layers, Maximize2, Network, Rows3, X } from "lucide-react";
-import { computePromotionThreshold, countEntries } from "@/lib/blackboard-utils";
+import {
+  computePromotionThreshold,
+  countEntries,
+} from "@/lib/blackboard-utils";
 import { ThreadFilterDropdown } from "./blackboard/thread-filter-dropdown";
 import { BoardGraphView } from "./blackboard/board-graph-view";
 import { ContractCard } from "./blackboard/contract-card";
@@ -214,7 +217,8 @@ export function DraftBoard({
     ? state.threads.find((th) => th.id === activeThreadId)
     : null;
   const threshold =
-    selectedThread?.promotion_threshold ?? computePromotionThreshold(filteredDraft);
+    selectedThread?.promotion_threshold ??
+    computePromotionThreshold(filteredDraft);
   // Referentially stable across renders so the graph view's layout memo holds
   // between streaming ticks (rebuilding this Map every render forced a full
   // relayout on every SSE event while the graph modal was open).
@@ -472,7 +476,9 @@ export function DraftBoard({
         ref={bodyRef}
         onScroll={handleBodyScroll}
         style={{
-          background: dark ? `rgba(${SURFACE_DARK_RGB},0.92)` : "rgba(248,246,255,0.94)",
+          background: dark
+            ? `rgba(${SURFACE_DARK_RGB},0.92)`
+            : "rgba(248,246,255,0.94)",
           border: `1px solid rgba(139,26,47,0.22)`,
           borderTop: "none",
           borderRadius: "0 0 12px 12px",
@@ -778,11 +784,9 @@ export function DraftBoard({
                       {state.error}
                     </div>
                   )}
-                  {!running &&
-                    !state.error &&
-                    renderedDraft.length === 0 && (
-                      <EmptyState runId={runId} dark={dark} />
-                    )}
+                  {!running && !state.error && renderedDraft.length === 0 && (
+                    <EmptyState runId={runId} dark={dark} />
+                  )}
                   {renderedDraft.length > 0 && !state.error && (
                     <DraftEntryStream
                       entries={renderedDraft}
