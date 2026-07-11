@@ -73,7 +73,10 @@ function extractCsvTable(text: string): string | null {
 
   const rows: string[][] = [];
   for (const raw of after.split("\n")) {
-    const line = raw.replace(/^```(?:csv)?/i, "").replace(/```$/, "").trim();
+    const line = raw
+      .replace(/^```(?:csv)?/i, "")
+      .replace(/```$/, "")
+      .trim();
     if (!line) {
       if (rows.length) break; // blank line ends the block once we have rows
       continue;

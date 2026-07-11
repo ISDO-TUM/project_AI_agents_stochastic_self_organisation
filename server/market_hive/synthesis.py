@@ -35,14 +35,20 @@ _SYSTEM_PROMPT = (
     "specialist agents has deliberated on a shared blackboard and ratified a set of "
     "confirmed findings. Combine those findings into a single, direct answer to the "
     "user's original request.\n\n"
-    "Rules:\n"
+    "Grounding:\n"
     "- Answer the request directly, grounded ONLY in the confirmed findings.\n"
-    "- Be brief: at most a few sentences. No preamble, no restating the question, "
-    "no bullet lists unless the answer is inherently a short list.\n"
     "- Do not introduce facts, caveats, or recommendations the findings do not support.\n"
-    "- Write plain prose addressed to the end user."
-    "- ANY CITATIONS MADE BY THE AGENTS SHOULD BE INCLUDED AS INLINE CITATIONS IN THE SUMMARY."
-    "- IF CITATIONS ARE IN THE FORM OF FILE NAMES THEN THOSE SHOULD BE USED."
+    "- Preserve any citations the agents made as inline citations; if a citation is a "
+    "file name, use the file name.\n\n"
+    "Formatting — your entire reply MUST be valid GitHub-flavoured Markdown:\n"
+    "- Open with one short sentence that directly answers the request.\n"
+    "- When the request calls for multiple items (e.g. clauses, risks, options, "
+    "recommendations), present them as a Markdown bullet or numbered list — one item "
+    "per finding — leading each item with the key term or reference in **bold**, then "
+    "its concrete risk or detail.\n"
+    "- Use short prose instead when the answer is a single point.\n"
+    "- Do NOT use Markdown tables or headings; keep it to a lead sentence plus a list.\n"
+    "- No preamble, no restating the question, no padding. Keep each point tight."
 )
 
 
@@ -66,7 +72,9 @@ def fallback_answer(findings: list[ConfirmedEntrySchema]) -> str:
     ranked = _ranked(_findings_only(findings))
     if not ranked:
         return NO_ANSWER
-    return " ".join(f.content.strip() for f in ranked[:3] if f.content.strip()) or NO_ANSWER
+    # Paragraph breaks (not spaces) so the degraded path is still readable, valid
+    # Markdown rather than a run-on wall of concatenated findings.
+    return "\n\n".join(f.content.strip() for f in ranked[:3] if f.content.strip()) or NO_ANSWER
 
 
 def _user_prompt(
@@ -88,7 +96,8 @@ def _user_prompt(
         f"User request:\n{prompt}\n\n"
         f"Confirmed findings (most-endorsed first):\n{block}"
         f"{objection_block}\n\n"
-        "Write the brief final answer to the user's request."
+        "Write the final answer to the user's request as valid Markdown, "
+        "following the formatting rules."
     )
 
 

@@ -46,9 +46,7 @@ async def load_stood_down(db: AsyncConnection, run_id: str) -> dict[str, set[str
     """Return ``{thread_id: {agent_id, ...}}`` of everyone stood down in this run."""
     rows = (
         await db.execute(
-            text(
-                "SELECT thread_id, agent_id FROM swarm_stand_downs WHERE run_id = :run_id"
-            ),
+            text("SELECT thread_id, agent_id FROM swarm_stand_downs WHERE run_id = :run_id"),
             {"run_id": run_id},
         )
     ).fetchall()

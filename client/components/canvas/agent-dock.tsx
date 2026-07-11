@@ -82,7 +82,9 @@ export function AgentDock({
         zIndex: 20,
         maxWidth: "min(720px, 90vw)",
         borderRadius: 20,
-        background: dark ? `rgba(${SURFACE_DARK_RGB},0.85)` : "rgba(255,253,255,0.9)",
+        background: dark
+          ? `rgba(${SURFACE_DARK_RGB},0.85)`
+          : "rgba(255,253,255,0.9)",
         backdropFilter: "blur(24px)",
         border: `1px solid ${t.borderHi}`,
         boxShadow: dark

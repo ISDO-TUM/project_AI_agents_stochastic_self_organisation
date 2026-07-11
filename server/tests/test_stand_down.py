@@ -41,15 +41,11 @@ async def db(engine: AsyncEngine) -> AsyncGenerator[AsyncConnection, None]:
 async def test_record_and_load_stand_down(db: AsyncConnection) -> None:
     from server.market_hive.stand_down import load_stood_down, record_stand_down
 
-    await record_stand_down(
-        db, run_id="r1", agent_id="a1", thread_id="t1", round=3, reason="done"
-    )
+    await record_stand_down(db, run_id="r1", agent_id="a1", thread_id="t1", round=3, reason="done")
     await record_stand_down(
         db, run_id="r1", agent_id="a2", thread_id="t1", round=3, reason="nothing to add"
     )
-    await record_stand_down(
-        db, run_id="r1", agent_id="a1", thread_id="t2", round=3, reason="done"
-    )
+    await record_stand_down(db, run_id="r1", agent_id="a1", thread_id="t2", round=3, reason="done")
 
     loaded = await load_stood_down(db, "r1")
     assert loaded["t1"] == {"a1", "a2"}
