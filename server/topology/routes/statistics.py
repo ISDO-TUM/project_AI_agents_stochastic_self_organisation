@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections import Counter, defaultdict
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -284,8 +285,79 @@ def _latency_ms(row: Any) -> float:
     return float(_num(row, "latency") * 1000)
 
 
-async def _fetch_langfuse_observations(trial_id: str) -> tuple[list[Any], str | None]:
-    """Fetch all Langfuse observations for traces whose session_id is trial_id."""
+# Pad the observation-fetch time window so events whose start time falls slightly
+# outside a trial's [created_at, completed_at] bounds (clock skew, flush lag) are
+# still captured.
+_LANGFUSE_WINDOW_BUFFER = timedelta(minutes=5)
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    """Parse a stored ISO timestamp into an aware UTC datetime, tolerantly."""
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _observation_window(
+    created_ats: Sequence[Any], completed_ats: Sequence[Any]
+) -> tuple[datetime, datetime]:
+    """Padded [from, to] bounds spanning the given trials' lifetimes.
+
+    Any trial without a ``completed_at`` (still running, or missing) extends the
+    upper bound to *now* so its in-flight generations are included.
+    """
+    now = datetime.now(UTC)
+    starts = [ts for ts in (_parse_iso(v) for v in created_ats) if ts]
+    ends = [ts for ts in (_parse_iso(v) for v in completed_ats) if ts]
+    from_time = (min(starts) if starts else now - timedelta(days=1)) - _LANGFUSE_WINDOW_BUFFER
+    to_candidates = list(ends)
+    if len(ends) < len(completed_ats):
+        to_candidates.append(now)
+    to_time = (max(to_candidates) if to_candidates else now) + _LANGFUSE_WINDOW_BUFFER
+    return from_time, to_time
+
+
+def _sweep_observations(
+    client: Any, from_time: datetime, to_time: datetime, wanted_trial_ids: set[str]
+) -> list[Any]:
+    """Paginate the observations endpoint over a time window, keeping only the
+    GENERATIONs whose ``trial_id`` metadata is in ``wanted_trial_ids``.
+
+    This deliberately avoids ``fetch_traces``: the ``/api/public/traces`` endpoint
+    is aggressively rate-limited on Langfuse Cloud, and the old per-trace
+    observation fan-out (one request per trace) tripped its limiter (HTTP 429).
+    A single time-windowed sweep of ``/api/public/observations`` is the read path
+    Langfuse recommends for high volume, and every generation already carries its
+    ``trial_id`` in metadata (see ``server.llm.langfuse_setup``), so we filter
+    client-side instead of issuing one request per trace.
+    """
+    observations: list[Any] = []
+    page = 1
+    while True:
+        res = client.fetch_observations(
+            type="GENERATION",
+            from_start_time=from_time,
+            to_start_time=to_time,
+            page=page,
+            limit=100,
+        )
+        for obs in res.data:
+            if str(_metadata(obs).get("trial_id") or "") in wanted_trial_ids:
+                observations.append(obs)
+        if page >= res.meta.total_pages:
+            break
+        page += 1
+    return observations
+
+
+async def _fetch_langfuse_observations(trial: dict[str, Any]) -> tuple[list[Any], str | None]:
+    """Fetch all Langfuse GENERATION observations belonging to a trial."""
     try:
         from langfuse import Langfuse
 
@@ -293,31 +365,11 @@ async def _fetch_langfuse_observations(trial_id: str) -> tuple[list[Any], str | 
     except Exception as exc:
         return [], f"Langfuse client is not configured: {exc}"
 
-    def _fetch() -> tuple[list[Any], str | None]:
-        traces: list[Any] = []
-        page = 1
-        while True:
-            res = client.fetch_traces(session_id=trial_id, page=page, limit=100)
-            traces.extend(res.data)
-            if page >= res.meta.total_pages:
-                break
-            page += 1
+    trial_id = str(trial["id"])
+    from_time, to_time = _observation_window([trial.get("created_at")], [trial.get("completed_at")])
 
-        observations: list[Any] = []
-        for trace in traces:
-            obs_page = 1
-            while True:
-                obs_res = client.fetch_observations(
-                    trace_id=trace.id,
-                    type="GENERATION",
-                    page=obs_page,
-                    limit=100,
-                )
-                observations.extend(obs_res.data)
-                if obs_page >= obs_res.meta.total_pages:
-                    break
-                obs_page += 1
-        return observations, None
+    def _fetch() -> tuple[list[Any], str | None]:
+        return _sweep_observations(client, from_time, to_time, {trial_id}), None
 
     try:
         return await asyncio.to_thread(_fetch)
@@ -349,9 +401,9 @@ def _empty_langfuse_response(trial_id: str, message: str | None) -> LangfuseStat
 
 @router.get("/trials/{trial_id}/langfuse", response_model=LangfuseStatisticsResponse)
 async def trial_langfuse(trial_id: str, db: DBDep) -> LangfuseStatisticsResponse:
-    await _require_trial(db, trial_id)
+    trial = await _require_trial(db, trial_id)
 
-    observations, error = await _fetch_langfuse_observations(trial_id)
+    observations, error = await _fetch_langfuse_observations(trial)
     if error:
         return _empty_langfuse_response(trial_id, error)
     if not observations:
@@ -1039,9 +1091,9 @@ async def experiment_timeline(exp_id: str, db: DBDep) -> list[ExperimentRoundSta
 
 
 async def _fetch_langfuse_observations_multi(
-    trial_ids: list[str],
+    trials: list[dict[str, Any]],
 ) -> tuple[list[Any], str | None]:
-    """Fetch Langfuse observations for multiple trial IDs (session IDs)."""
+    """Fetch Langfuse GENERATION observations for multiple trials in one sweep."""
     try:
         from langfuse import Langfuse
 
@@ -1049,28 +1101,14 @@ async def _fetch_langfuse_observations_multi(
     except Exception as exc:
         return [], f"Langfuse client is not configured: {exc}"
 
+    wanted = {str(t["id"]) for t in trials}
+    from_time, to_time = _observation_window(
+        [t.get("created_at") for t in trials],
+        [t.get("completed_at") for t in trials],
+    )
+
     def _fetch() -> tuple[list[Any], str | None]:
-        all_obs: list[Any] = []
-        for trial_id in trial_ids:
-            traces: list[Any] = []
-            page = 1
-            while True:
-                res = client.fetch_traces(session_id=trial_id, page=page, limit=100)
-                traces.extend(res.data)
-                if page >= res.meta.total_pages:
-                    break
-                page += 1
-            for trace in traces:
-                obs_page = 1
-                while True:
-                    obs_res = client.fetch_observations(
-                        trace_id=trace.id, type="GENERATION", page=obs_page, limit=100
-                    )
-                    all_obs.extend(obs_res.data)
-                    if obs_page >= obs_res.meta.total_pages:
-                        break
-                    obs_page += 1
-        return all_obs, None
+        return _sweep_observations(client, from_time, to_time, wanted), None
 
     try:
         return await asyncio.to_thread(_fetch)
@@ -1080,7 +1118,13 @@ async def _fetch_langfuse_observations_multi(
 
 @router.get("/experiments/{exp_id}/langfuse", response_model=ExperimentLangfuseResponse)
 async def experiment_langfuse(exp_id: str, db: DBDep) -> ExperimentLangfuseResponse:
-    trial_ids = await _experiment_trial_ids(db, exp_id)
+    rows = await db.execute(
+        select(trials.c.id, trials.c.created_at, trials.c.completed_at)
+        .where(trials.c.experiment_id == exp_id)
+        .order_by(trials.c.created_at)
+    )
+    trial_rows = [dict(row) for row in rows.mappings().all()]
+    trial_ids = [str(row["id"]) for row in trial_rows]
 
     def _empty(msg: str | None) -> ExperimentLangfuseResponse:
         return ExperimentLangfuseResponse(
@@ -1107,7 +1151,7 @@ async def experiment_langfuse(exp_id: str, db: DBDep) -> ExperimentLangfuseRespo
     if not trial_ids:
         return _empty("No trials in this experiment yet.")
 
-    observations, error = await _fetch_langfuse_observations_multi(trial_ids)
+    observations, error = await _fetch_langfuse_observations_multi(trial_rows)
     if error:
         return _empty(error)
     if not observations:
