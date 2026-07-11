@@ -2280,7 +2280,10 @@ async def _run_swarm_steps(
             else:
                 with langfuse_metadata(synth_trace):
                     revised = await synthesizer.synthesize(
-                        prompt=config.prompt, findings=live_findings, objections=objections
+                        prompt=config.prompt,
+                        findings=live_findings,
+                        objections=objections,
+                        previous_draft=candidate,
                     )
                 await _post_synthesis_candidate(db, run_id, threads[0].id, last_round, revised)
                 steps2, approvals2, voters2, objections2 = await _run_ratification(
