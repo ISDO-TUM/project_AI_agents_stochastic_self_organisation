@@ -219,9 +219,7 @@ class GeminiProvider(BaseLLMProvider):
         watchdog = create_task(_log_in_flight_progress(model, started))
         try:
             result = await wait_for(_run(), timeout=self.timeout_seconds)
-            logger.info(
-                "LLM call complete — model=%s elapsed=%.2fs", model, monotonic() - started
-            )
+            logger.info("LLM call complete — model=%s elapsed=%.2fs", model, monotonic() - started)
             return result
         except TimeoutError as err:
             logger.error(

@@ -160,16 +160,12 @@ class PostToBlackboardTool(Tool):
         # Length guard (terse board): reject before any DB work so the agent can
         # retry with a shorter delta or call stand_down. Replies are held to a
         # tighter ceiling than opening proposals.
-        cap = (
-            MAX_PROPOSAL_CHARS
-            if validated_input.entry_type == "proposal"
-            else MAX_REPLY_CHARS
-        )
+        cap = MAX_PROPOSAL_CHARS if validated_input.entry_type == "proposal" else MAX_REPLY_CHARS
         if len(validated_input.content) > cap:
             return (
                 f'{{"error": "post too long ({len(validated_input.content)} chars > '
-                f'{cap} limit) — shorten to a single delta (one new point, '
-                f'disagreement, or new evidence), or call stand_down if you have '
+                f"{cap} limit) — shorten to a single delta (one new point, "
+                f"disagreement, or new evidence), or call stand_down if you have "
                 f'nothing material to add."}}'
             )
 
@@ -289,8 +285,8 @@ class PostToBlackboardTool(Tool):
             if reply_count >= MAX_REPLIES_PER_ROUND:
                 return (
                     f'{{"error": "you already posted {reply_count} replies on this thread '
-                    f'this round (cap: {MAX_REPLIES_PER_ROUND}) — that is enough for one round. '
-                    'Call stand_down(reason) if you have nothing further, or cite(...) an '
+                    f"this round (cap: {MAX_REPLIES_PER_ROUND}) — that is enough for one round. "
+                    "Call stand_down(reason) if you have nothing further, or cite(...) an "
                     'existing point instead of posting again."}'
                 )
 
@@ -316,19 +312,24 @@ class PostToBlackboardTool(Tool):
             candidate_vec = candidate_vecs[0] if candidate_vecs else None
             if candidate_vec and any(candidate_vec):
                 prior_embeddings = (
-                    await db.execute(
-                        text(
-                            "SELECT content_embedding FROM draft_entries WHERE run_id = :run_id "
-                            "AND thread_id = :thread_id AND author_id = :author_id "
-                            "AND entry_type = 'reply'"
-                        ),
-                        {
-                            "run_id": run_id,
-                            "thread_id": thread_id,
-                            "author_id": author_id,
-                        },
+                    (
+                        await db.execute(
+                            text(
+                                "SELECT content_embedding FROM draft_entries "
+                                "WHERE run_id = :run_id "
+                                "AND thread_id = :thread_id AND author_id = :author_id "
+                                "AND entry_type = 'reply'"
+                            ),
+                            {
+                                "run_id": run_id,
+                                "thread_id": thread_id,
+                                "author_id": author_id,
+                            },
+                        )
                     )
-                ).scalars().all()
+                    .scalars()
+                    .all()
+                )
                 for raw in prior_embeddings:
                     if not raw:
                         continue
@@ -608,7 +609,7 @@ class SubmitBidInput(BaseModel):
     thread_id: str | None = Field(
         default=None,
         description=(
-            "The thread's bracketed id, e.g. \"3f9a...\" — never its title. "
+            'The thread\'s bracketed id, e.g. "3f9a..." — never its title. '
             "None for a contract-level bid."
         ),
     )
@@ -619,16 +620,14 @@ class AbstainInput(BaseModel):
     thread_id: str | None = Field(
         default=None,
         description=(
-            "The thread's bracketed id, e.g. \"3f9a...\" — never its title. "
+            'The thread\'s bracketed id, e.g. "3f9a..." — never its title. '
             "None for full contract abstention."
         ),
     )
 
 
 class StandDownInput(BaseModel):
-    reason: str = Field(
-        description="Why you have nothing material left to add on this thread."
-    )
+    reason: str = Field(description="Why you have nothing material left to add on this thread.")
     thread_id: str | None = Field(
         default=None,
         description="The thread you are standing down from. Defaults to your current thread.",

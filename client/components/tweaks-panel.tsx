@@ -63,7 +63,8 @@ const REASONING_EFFORT_OPTIONS: SegmentedOption<ReasoningEffort>[] = [
   {
     value: "high",
     label: "High",
-    tooltip: "Full pipeline (today's default): up to 5 rounds, ratification runs.",
+    tooltip:
+      "Full pipeline (today's default): up to 5 rounds, ratification runs.",
   },
 ];
 
