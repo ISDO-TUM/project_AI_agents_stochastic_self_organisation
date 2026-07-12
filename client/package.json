@@ -3,11 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "predev": "node scripts/build-player-template.mjs --if-missing",
     "dev": "next dev",
+    "prebuild": "node scripts/build-player-template.mjs",
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "build:player": "node scripts/build-player-template.mjs",
+    "standalone": "node scripts/make-standalone.mjs"
   },
   "dependencies": {
     "@radix-ui/react-hover-card": "^1.1.17",
@@ -28,12 +32,16 @@
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
+    "@tailwindcss/vite": "^4.3.2",
     "@types/node": "^25",
     "@types/react": "^19",
     "@types/react-dom": "^19",
+    "@vitejs/plugin-react": "^6.0.3",
     "eslint": "^9",
     "eslint-config-next": "16.2.9",
     "tailwindcss": "^4",
-    "typescript": "^6"
+    "typescript": "^6",
+    "vite": "^8.1.4",
+    "vite-plugin-singlefile": "^2.3.3"
   }
 }

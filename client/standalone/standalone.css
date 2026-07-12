@@ -1,0 +1,17 @@
+/* Font-variable fallbacks for the standalone player. The app's CSS references
+   `var(--font-*)` set by next/font in the Next layout; that layout isn't part
+   of this build, so define them here with self-contained system fallbacks. */
+:root {
+  --font-space-grotesk: "Space Grotesk", system-ui, -apple-system, "Segoe UI",
+    sans-serif;
+  --font-jetbrains-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo,
+    Consolas, monospace;
+  --font-playfair: "Playfair Display", Georgia, "Times New Roman", serif;
+}
+
+/* The Next layout owns <html>/<body> height; reproduce it for the SPA mount. */
+html,
+body,
+#root {
+  height: 100%;
+}

@@ -108,18 +108,27 @@ function reducer(state: CanvasState, action: CanvasAction): CanvasState {
   }
 }
 
-export function useCanvasState() {
-  const [state, dispatch] = useReducer(reducer, {
-    agents: [],
-    sources: [],
-    edges: [],
-  });
+export function useCanvasState(initial?: CanvasState) {
+  const [state, dispatch] = useReducer(
+    reducer,
+    initial ?? {
+      agents: [],
+      sources: [],
+      edges: [],
+    },
+  );
   const { agents, sources, edges } = state;
   // Set once the initial load lands — gates the persist effect below so an
   // offline start can't wipe the stored canvas.
   const loadedRef = useRef(false);
 
   useEffect(() => {
+    // Seeded (standalone replay): the canvas is already the recording's snapshot;
+    // skip the backend load entirely so no network is needed offline.
+    if (initial) {
+      loadedRef.current = true;
+      return;
+    }
     async function load() {
       // The canvas is a stored client-side view over the DB: only nodes in the
       // stored membership appear, at their stored positions. First run (no
@@ -185,6 +194,9 @@ export function useCanvasState() {
     }
 
     load().catch(() => {});
+    // `initial` is provided once at mount (standalone) and never changes; the
+    // backend load is intentionally a mount-only effect.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Persist canvas membership + positions after every change, debounced so

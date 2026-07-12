@@ -13,21 +13,16 @@ import { useApiKeys, apiKeyHeaders } from "@/lib/api-keys-context";
 import { loadSession, saveSession } from "@/lib/session-persist";
 import { userIdHeaders } from "@/lib/user-id";
 import type { SwarmRunConfig } from "../components/swarm-config";
+import type {
+  RecordedStep,
+  SwarmRecording,
+  SwarmStreamStep,
+} from "@/lib/recording";
 
 // SSE goes through the Next rewrite proxy by default (relative ""). If that proxy
 // buffers the stream, set NEXT_PUBLIC_API_URL (e.g. http://localhost:8000) to hit
 // the backend directly — CORS already allows the dev origin.
 const API_BASE = process.env.NEXT_PUBLIC_API_URL ?? "";
-
-// One Server-Sent Event from `POST /api/simulation/run` (engine="swarm").
-interface SwarmStreamStep {
-  type: string;
-  msg: string;
-  node_id?: string | null;
-  thread_id?: string | null;
-  entry_id?: string | null;
-  data?: Record<string, unknown> | null;
-}
 
 const EMPTY_BOARD: BlackboardState = {
   threads: [],
@@ -339,11 +334,32 @@ function reducer(state: SwarmRunState, action: Action): SwarmRunState {
  */
 export function useSwarmRun(): {
   state: SwarmRunState;
-  start: (prompt: string, parentRunId?: string, config?: SwarmRunConfig) => void;
+  start: (
+    prompt: string,
+    parentRunId?: string,
+    config?: SwarmRunConfig,
+  ) => void;
   reset: () => void;
+  /** The current run's captured SSE stream — assemble into a `SwarmRecording`. */
+  getRecording: () => RecordedStep[];
+  /** Replay a recorded run offline through the same reducer (standalone player).
+   *  `instant` builds the final board at once (snapshot); otherwise it animates. */
+  startFromRecording: (
+    rec: SwarmRecording,
+    opts?: { instant?: boolean; speed?: number },
+  ) => void;
 } {
   const [state, dispatch] = useReducer(reducer, undefined, loadPersisted);
   const seqRef = useRef(0);
+  // Captures every SSE frame of the in-flight run (with a relative timestamp) so
+  // a completed run can be exported and replayed byte-for-byte. `t0` anchors the
+  // offsets to the first frame.
+  const recordingRef = useRef<{ t0: number; steps: RecordedStep[] }>({
+    t0: 0,
+    steps: [],
+  });
+  // Pending replay timers, so `reset` can cancel an in-flight replay cleanly.
+  const replayTimersRef = useRef<ReturnType<typeof setTimeout>[]>([]);
   // The in-flight run's abort handle. Without this, starting a new run (or
   // resetting) only stopped this hook from *reading* the old stream — the
   // fetch itself, and the swarm run driving it server-side, kept running to
@@ -357,8 +373,15 @@ export function useSwarmRun(): {
     saveSession(PERSIST_KEY, state);
   }, [state]);
 
-  // Abort any in-flight stream on unmount (route navigation) too.
-  useEffect(() => () => abortRef.current?.abort(), []);
+  // Abort any in-flight stream on unmount (route navigation) too, and cancel a
+  // running replay's pending timers.
+  useEffect(
+    () => () => {
+      abortRef.current?.abort();
+      replayTimersRef.current.forEach(clearTimeout);
+    },
+    [],
+  );
 
   // BYOK keys are sent as X-LLM-* headers on the run request, mirroring the rest
   // of the API layer (lib/api.ts `request`). Without these, a deployment whose
@@ -378,6 +401,7 @@ export function useSwarmRun(): {
       const seq = seqRef.current + 1;
       seqRef.current = seq;
       dispatch({ type: "BEGIN" });
+      recordingRef.current = { t0: performance.now(), steps: [] };
 
       void (async () => {
         try {
@@ -440,6 +464,12 @@ export function useSwarmRun(): {
                 continue;
               }
               if (seqRef.current !== seq) break;
+              // Capture the frame verbatim (thinking frames included — they drive
+              // the agent-pulse animation on replay).
+              recordingRef.current.steps.push({
+                t: performance.now() - recordingRef.current.t0,
+                step,
+              });
               if (step.type === "agent-thinking") {
                 if (!prevThinking) dispatch({ type: "THINKING_RESET" });
                 prevThinking = true;
@@ -466,13 +496,77 @@ export function useSwarmRun(): {
     [keys],
   );
 
+  const getRecording = useCallback(() => recordingRef.current.steps, []);
+
+  // Offline replay: build the board from the recorded frames through the *same*
+  // reducer as a live run. `instant` (snapshot) applies every frame at once for
+  // the final state with no waiting; otherwise frames honour their original
+  // pacing (`speed`). Used by the standalone player.
+  const startFromRecording = useCallback(
+    (rec: SwarmRecording, opts: { instant?: boolean; speed?: number } = {}) => {
+      const { instant = false, speed = 1 } = opts;
+      // Cancel anything in flight — a live fetch or a previous replay.
+      abortRef.current?.abort();
+      replayTimersRef.current.forEach(clearTimeout);
+      replayTimersRef.current = [];
+
+      const seq = seqRef.current + 1;
+      seqRef.current = seq;
+      dispatch({ type: "BEGIN" });
+
+      if (instant) {
+        // Snapshot: apply every frame synchronously (React batches them into one
+        // render) for the final board — no thinking pulses, no animation delay.
+        for (const { step } of rec.steps) {
+          if (step.type === "agent-thinking") continue;
+          applyStep(dispatch, step);
+        }
+        dispatch({ type: "DONE", finalAnswer: rec.finalAnswer ?? undefined });
+        return;
+      }
+
+      const rate = speed > 0 ? speed : 1;
+      let prevThinking = false;
+      let lastAt = 0;
+      for (const { t, step } of rec.steps) {
+        const at = Math.max(0, t) / rate;
+        lastAt = Math.max(lastAt, at);
+        // Precompute the thinking-wave reset at schedule time: timers fire in
+        // order, so this mirrors the live loop's stateful `prevThinking` logic.
+        const openWave = step.type === "agent-thinking" && !prevThinking;
+        prevThinking = step.type === "agent-thinking";
+        const timer = setTimeout(() => {
+          if (seqRef.current !== seq) return;
+          if (step.type === "agent-thinking") {
+            if (openWave) dispatch({ type: "THINKING_RESET" });
+            if (step.node_id)
+              dispatch({ type: "THINKING_ADD", nodeId: step.node_id });
+            return;
+          }
+          applyStep(dispatch, step);
+        }, at);
+        replayTimersRef.current.push(timer);
+      }
+      // Safety net: resolve the run to `done` even if the recording lacks a
+      // trailing `convergence` frame. A real convergence frame's DONE keeps its
+      // own finalAnswer (the reducer only overwrites when a value is provided).
+      const doneTimer = setTimeout(() => {
+        if (seqRef.current === seq) dispatch({ type: "DONE" });
+      }, lastAt + 1);
+      replayTimersRef.current.push(doneTimer);
+    },
+    [],
+  );
+
   const reset = useCallback(() => {
     abortRef.current?.abort();
+    replayTimersRef.current.forEach(clearTimeout);
+    replayTimersRef.current = [];
     seqRef.current += 1;
     dispatch({ type: "RESET" });
   }, []);
 
-  return { state, start, reset };
+  return { state, start, reset, getRecording, startFromRecording };
 }
 
 function applyStep(

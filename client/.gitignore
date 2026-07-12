@@ -20,6 +20,11 @@
 # production
 /build
 
+# standalone single-file player build output
+/standalone/dist
+# generated player template (built by scripts/build-player-template.mjs)
+/public/player-template.html
+
 # misc
 .DS_Store
 *.pem

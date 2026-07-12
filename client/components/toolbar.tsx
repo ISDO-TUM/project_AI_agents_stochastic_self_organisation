@@ -27,6 +27,15 @@ interface ToolbarProps {
   onStop: () => void;
   onAutoLayout: () => void;
   onExport: () => void;
+  /** Swarm mode: save the final board as a self-contained .html (snapshot). */
+  onExportSnapshot?: () => void;
+  /** Swarm mode: save an animated replay of the run as a self-contained .html. */
+  onExportReplay?: () => void;
+  /** Swarm mode: save the raw recording (.json) for the standalone CLI. */
+  onExportRecordingJson?: () => void;
+  /** True once a completed run has been captured this session — enables the
+   *  Recording menu (shown greyed with a hint until then). */
+  recordingReady?: boolean;
   onImport: (raw: string) => void;
   onOpenHistory: () => void;
   showTweaks: boolean;
@@ -36,6 +45,10 @@ interface ToolbarProps {
   onToggleBiddingBoard?: () => void;
   onWidthChange?: (w: number) => void;
   onHeightChange?: (h: number) => void;
+  /** Standalone single-file player: hide all editing/nav controls and show a
+   *  Replay button instead. */
+  standalone?: boolean;
+  onReplay?: () => void;
 }
 
 function Sep({ t }: { t: ReturnType<typeof getTheme> }) {
@@ -669,6 +682,112 @@ function ImportDropdown({
   );
 }
 
+function RecordingDropdown({
+  onExportSnapshot,
+  onExportReplay,
+  onExportRecordingJson,
+  ready,
+  t,
+}: {
+  onExportSnapshot: () => void;
+  onExportReplay?: () => void;
+  onExportRecordingJson?: () => void;
+  ready?: boolean;
+  t: ReturnType<typeof getTheme>;
+}) {
+  const [open, setOpen] = useState(false);
+  const { dark } = useTheme();
+
+  // Before a run completes there's nothing to save: keep the button visible (so
+  // people know the feature exists) but greyed out with a hint.
+  if (!ready) {
+    return (
+      <span
+        style={{ opacity: 0.4, cursor: "default" }}
+        title="Finish a Market Hive run, then save it here as a shareable web page"
+      >
+        <TBtn onClick={() => {}} icon="Clapperboard" t={t}>
+          Recording
+        </TBtn>
+      </span>
+    );
+  }
+
+  return (
+    <div style={{ position: "relative" }}>
+      <TBtn
+        onClick={() => setOpen((x) => !x)}
+        icon="Clapperboard"
+        title="Save this run to share (.html / .json)"
+        active={open}
+        t={t}
+      >
+        Recording
+      </TBtn>
+      {open && (
+        <>
+          <div
+            style={{ position: "fixed", inset: 0, zIndex: 98 }}
+            onClick={() => setOpen(false)}
+          />
+          <div
+            style={{
+              position: "absolute",
+              top: "calc(100% + 6px)",
+              left: "50%",
+              transform: "translateX(-50%)",
+              background: dark
+                ? "rgba(12,10,22,0.97)"
+                : "rgba(255,254,255,0.98)",
+              border: `1px solid ${t.borderHi}`,
+              borderRadius: 10,
+              padding: "5px 0",
+              minWidth: 210,
+              zIndex: 99,
+              boxShadow: dark
+                ? "0 8px 32px rgba(0,0,0,0.55)"
+                : "0 8px 24px rgba(0,0,0,0.12)",
+              animation: "fadeIn 0.15s ease-out",
+            }}
+          >
+            <ToolsMenuItem
+              icon="Camera"
+              label="Save final snapshot (.html)"
+              onClick={() => {
+                setOpen(false);
+                onExportSnapshot();
+              }}
+              t={t}
+            />
+            {onExportReplay && (
+              <ToolsMenuItem
+                icon="Play"
+                label="Save animated replay (.html)"
+                onClick={() => {
+                  setOpen(false);
+                  onExportReplay();
+                }}
+                t={t}
+              />
+            )}
+            {onExportRecordingJson && (
+              <ToolsMenuItem
+                icon="FileJson"
+                label="Save data (.json)"
+                onClick={() => {
+                  setOpen(false);
+                  onExportRecordingJson();
+                }}
+                t={t}
+              />
+            )}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
+
 function TLink({
   children,
   href,
@@ -723,6 +842,10 @@ export function Toolbar({
   onStop,
   onAutoLayout,
   onExport,
+  onExportSnapshot,
+  onExportReplay,
+  onExportRecordingJson,
+  recordingReady,
   onImport,
   onOpenHistory,
   showTweaks,
@@ -732,6 +855,8 @@ export function Toolbar({
   onToggleBiddingBoard,
   onWidthChange,
   onHeightChange,
+  standalone,
+  onReplay,
 }: ToolbarProps) {
   const { dark } = useTheme();
   const t = getTheme(dark);
@@ -793,17 +918,22 @@ export function Toolbar({
             flexShrink: 0,
           }}
         >
-          {/* eslint-disable-next-line @next/next/no-img-element */}
-          <img
-            src={dark ? "/logo_dark.png" : "/logo_light.png"}
-            alt="logo"
-            style={{
-              height: 22,
-              width: "auto",
-              display: "block",
-              flexShrink: 0,
-            }}
-          />
+          {/* The logo lives in /public, which isn't bundled into the standalone
+              single-file player — skip it there (the wordmark still shows) to
+              avoid a broken-image request under file://. */}
+          {!standalone && (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+              src={dark ? "/logo_dark.png" : "/logo_light.png"}
+              alt="logo"
+              style={{
+                height: 22,
+                width: "auto",
+                display: "block",
+                flexShrink: 0,
+              }}
+            />
+          )}
           <span
             style={{
               fontWeight: 700,
@@ -820,7 +950,18 @@ export function Toolbar({
 
         <Sep t={t} />
 
-        {!simMode && onSwitchMode && (
+        {standalone && (
+          <TBtn
+            onClick={() => onReplay?.()}
+            icon="RotateCcw"
+            title="Replay this run from the start"
+            t={t}
+          >
+            Replay
+          </TBtn>
+        )}
+
+        {!standalone && !simMode && onSwitchMode && (
           <>
             <TBtn
               onClick={onSwitchMode}
@@ -834,7 +975,7 @@ export function Toolbar({
           </>
         )}
 
-        {!simMode && (
+        {!standalone && !simMode && (
           <>
             <TBtn onClick={onAddAgent} icon="Plus" title="Add Agent" t={t}>
               Agent
@@ -856,6 +997,15 @@ export function Toolbar({
             <TBtn onClick={onExport} icon="Download" title="Export JSON" t={t}>
               Export
             </TBtn>
+            {appMode === "swarm" && onExportSnapshot && (
+              <RecordingDropdown
+                onExportSnapshot={onExportSnapshot}
+                onExportReplay={onExportReplay}
+                onExportRecordingJson={onExportRecordingJson}
+                ready={recordingReady}
+                t={t}
+              />
+            )}
             <ImportDropdown onImport={onImport} t={t} />
             <TBtn
               onClick={onOpenHistory}
@@ -895,19 +1045,22 @@ export function Toolbar({
           </>
         )}
 
-        {simMode && showBiddingBoardToggle && onToggleBiddingBoard && (
-          <TBtn
-            onClick={onToggleBiddingBoard}
-            icon="ClipboardList"
-            title="Bidding board"
-            active={biddingBoardOpen}
-            t={t}
-          >
-            Board
-          </TBtn>
-        )}
+        {!standalone &&
+          simMode &&
+          showBiddingBoardToggle &&
+          onToggleBiddingBoard && (
+            <TBtn
+              onClick={onToggleBiddingBoard}
+              icon="ClipboardList"
+              title="Bidding board"
+              active={biddingBoardOpen}
+              t={t}
+            >
+              Board
+            </TBtn>
+          )}
 
-        {simMode && (
+        {!standalone && simMode && (
           <TBtn onClick={onStop} icon="Square" danger t={t}>
             Stop
           </TBtn>

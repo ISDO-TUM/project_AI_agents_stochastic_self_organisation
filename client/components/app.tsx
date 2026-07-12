@@ -66,6 +66,13 @@ import {
   saveNotifyPref,
 } from "@/lib/notifications";
 import { generateDummyRun } from "@/lib/dummy-swarm";
+import {
+  buildRecording,
+  injectRecordingIntoTemplate,
+  slugifyName,
+  type PlayerMode,
+  type SwarmRecording,
+} from "@/lib/recording";
 import { getTheme } from "@/lib/theme";
 
 const defaultTweaks: Tweaks = {
@@ -81,9 +88,21 @@ const defaultTweaks: Tweaks = {
 
 interface AppProps {
   onModeSelected?: () => void;
+  // Standalone single-file player: boot straight into a Market Hive run replayed
+  // from an embedded recording, with no backend. Editing/nav controls are hidden.
+  standalone?: boolean;
+  recording?: SwarmRecording;
+  // Snapshot mode: build the final board instantly (no animation) with the
+  // draft/confirmed contributions front and centre.
+  snapshot?: boolean;
 }
 
-export function App({ onModeSelected }: AppProps = {}) {
+export function App({
+  onModeSelected,
+  standalone,
+  recording,
+  snapshot,
+}: AppProps = {}) {
   const { dark, toggle: toggleTheme } = useTheme();
 
   const [tweaks] = useState<Tweaks>(defaultTweaks);
@@ -101,7 +120,7 @@ export function App({ onModeSelected }: AppProps = {}) {
     deleteSource,
     connectNodes,
     deleteEdge: deleteEdgeBase,
-  } = useCanvasState();
+  } = useCanvasState(standalone && recording ? recording.canvas : undefined);
 
   const {
     steps,
@@ -164,11 +183,13 @@ export function App({ onModeSelected }: AppProps = {}) {
   // bouncing back to the mode-selection gate. `hydrated` is false on the server
   // and first client render and true thereafter, so we don't flash the gate
   // before localStorage has been read.
-  const appMode = useSyncExternalStore(
+  const storeAppMode = useSyncExternalStore(
     subscribeAppMode,
     () => readAppMode(),
     () => null,
   );
+  // Standalone always boots into Market Hive — there is no mode gate to pass.
+  const appMode = standalone ? "swarm" : storeAppMode;
   const hydrated = useSyncExternalStore(
     () => () => {},
     () => true,
@@ -216,6 +237,7 @@ export function App({ onModeSelected }: AppProps = {}) {
   const [biddingBoardOpen, setBiddingBoardOpen] = useState(false);
 
   useEffect(() => {
+    if (standalone) return; // no backend in the standalone player
     fetchRules()
       .then((rs) => {
         setRules(rs);
@@ -225,7 +247,7 @@ export function App({ onModeSelected }: AppProps = {}) {
         });
       })
       .catch(() => {});
-  }, []);
+  }, [standalone]);
 
   // Whenever a mode is active — whether freshly chosen or restored on reload —
   // lock the shell onto the app section so the hero intro is skipped. This only
@@ -421,6 +443,120 @@ export function App({ onModeSelected }: AppProps = {}) {
     setImportError(msg);
     importErrorTimerRef.current = setTimeout(() => setImportError(null), 4000);
   }, []);
+
+  // Assemble the last completed swarm run into a self-contained recording: the
+  // verbatim SSE stream plus the canvas it ran against. Feeds both the .json
+  // export and the one-click .html export (and the standalone CLI player).
+  const currentRecording = useCallback(() => {
+    const steps = swarm.getRecording();
+    if (!swarm.state.done || steps.length === 0) return null;
+    const name = (pendingSwarmPrompt || "swarm-run").trim().slice(0, 80);
+    return buildRecording({
+      name,
+      prompt: pendingSwarmPrompt || "",
+      config: swarmConfig,
+      canvas: { agents, sources, edges },
+      steps,
+      finalAnswer: swarm.state.finalAnswer,
+    });
+  }, [swarm, pendingSwarmPrompt, swarmConfig, agents, sources, edges]);
+
+  const download = useCallback(
+    (data: BlobPart, filename: string, type: string) => {
+      const url = URL.createObjectURL(new Blob([data], { type }));
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = filename;
+      a.click();
+      URL.revokeObjectURL(url);
+    },
+    [],
+  );
+
+  // Export the raw recording (feeds the `pnpm --filter app standalone` CLI).
+  const exportRecordingJson = useCallback(() => {
+    const rec = currentRecording();
+    if (!rec) return;
+    download(
+      JSON.stringify(rec),
+      `${slugifyName(rec.meta.name)}.recording.json`,
+      "application/json",
+    );
+  }, [currentRecording, download]);
+
+  // One-click: inject the recording into the pre-built player template and hand
+  // back a finished, self-contained .html — no CLI, no backend. `snapshot` opens
+  // straight on the final board; `replay` animates the run from the start.
+  const exportHtml = useCallback(
+    async (mode: PlayerMode) => {
+      const rec = currentRecording();
+      if (!rec) return;
+      let template: string;
+      try {
+        const res = await fetch("/player-template.html", { cache: "no-store" });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        template = await res.text();
+      } catch {
+        showImportError(
+          "Player template missing — run `pnpm --filter app build:player` once.",
+        );
+        return;
+      }
+      const suffix = mode === "replay" ? "-replay" : "";
+      download(
+        injectRecordingIntoTemplate(template, rec, mode),
+        `${slugifyName(rec.meta.name)}${suffix}.html`,
+        "text/html",
+      );
+    },
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [currentRecording, download],
+  );
+  const exportSnapshotHtml = useCallback(
+    () => exportHtml("snapshot"),
+    [exportHtml],
+  );
+  const exportReplayHtml = useCallback(
+    () => exportHtml("replay"),
+    [exportHtml],
+  );
+
+  // Standalone: (re)build the embedded recording. Snapshot mode jumps straight to
+  // the final board (answer overlay dismissed so the draft/confirmed columns are
+  // visible); replay mode animates and reveals the answer at the end.
+  const replayRun = useCallback(() => {
+    if (!recording) return;
+    setPendingSwarmPrompt(recording.meta.prompt);
+    setAnswerDismissed(!!snapshot);
+    swarm.startFromRecording(recording, { instant: !!snapshot });
+  }, [recording, swarm, snapshot]);
+
+  // Kick the recording off once the standalone player has mounted — deferred a
+  // tick so the board renders first, then the replay animates in.
+  useEffect(() => {
+    if (!(standalone && recording)) return;
+    const id = setTimeout(() => replayRun(), 0);
+    return () => clearTimeout(id);
+    // Mount-only: the recording is embedded at build time and never changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // The draft/confirmed board span is normally sized to the toolbar pill's width.
+  // The standalone toolbar is minimal (and narrow), which would collapse the
+  // boards — so in standalone size them off the viewport instead.
+  const [standaloneBoardSpan, setStandaloneBoardSpan] = useState<number | null>(
+    null,
+  );
+  useEffect(() => {
+    if (!standalone) return;
+    const update = () =>
+      setStandaloneBoardSpan(
+        Math.min(Math.max(window.innerWidth - 96, 620), 1120),
+      );
+    update();
+    window.addEventListener("resize", update);
+    return () => window.removeEventListener("resize", update);
+  }, [standalone]);
 
   const importCanvas = useCallback(
     async (raw: string) => {
@@ -760,7 +896,7 @@ export function App({ onModeSelected }: AppProps = {}) {
                 : swarm.state.runId
               : null
           }
-          topbarWidth={topbarWidth}
+          topbarWidth={standalone ? standaloneBoardSpan : topbarWidth}
           topbarHeight={topbarHeight}
           promptBarHeight={promptBarHeight}
           onSelectAgentChip={openPanel}
@@ -810,6 +946,14 @@ export function App({ onModeSelected }: AppProps = {}) {
           onStop={stopSim}
           onAutoLayout={onAutoLayout}
           onExport={exportCanvas}
+          onExportSnapshot={exportSnapshotHtml}
+          onExportReplay={exportReplayHtml}
+          onExportRecordingJson={exportRecordingJson}
+          recordingReady={
+            appMode === "swarm" &&
+            swarm.state.done &&
+            swarm.getRecording().length > 0
+          }
           onImport={importCanvas}
           onOpenHistory={() => setShowHistory(true)}
           showTweaks={showTweaks}
@@ -819,19 +963,23 @@ export function App({ onModeSelected }: AppProps = {}) {
           onToggleBiddingBoard={() => setBiddingBoardOpen((x) => !x)}
           onWidthChange={setTopbarWidth}
           onHeightChange={setTopbarHeight}
+          standalone={standalone}
+          onReplay={replayRun}
         />
 
-        <PromptBar
-          running={running}
-          turnCount={turns.length}
-          onRun={handleRun}
-          onResetContext={resetContext}
-          onOpenKeys={() => setShowTweaks(true)}
-          iterations={iterations}
-          onIterationsChange={appMode === "swarm" ? undefined : setIterations}
-          batchProgress={appMode === "swarm" ? null : batchProgress}
-          onHeightChange={setPromptBarHeight}
-        />
+        {!standalone && (
+          <PromptBar
+            running={running}
+            turnCount={turns.length}
+            onRun={handleRun}
+            onResetContext={resetContext}
+            onOpenKeys={() => setShowTweaks(true)}
+            iterations={iterations}
+            onIterationsChange={appMode === "swarm" ? undefined : setIterations}
+            batchProgress={appMode === "swarm" ? null : batchProgress}
+            onHeightChange={setPromptBarHeight}
+          />
+        )}
       </div>
 
       {/* Log wall — only shows during active simulation (topology or swarm) */}
