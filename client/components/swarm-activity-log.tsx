@@ -2,7 +2,13 @@
 
 import { useState } from "react";
 import { useTheme } from "@/lib/theme-context";
-import { getTheme, BURG, BURG_LT, BURG_GLOW, SURFACE_DARK_RGB } from "@/lib/theme";
+import {
+  getTheme,
+  BURG,
+  BURG_LT,
+  BURG_GLOW,
+  SURFACE_DARK_RGB,
+} from "@/lib/theme";
 import { BlackboardState, DraftEntry } from "@/lib/types";
 import {
   Activity,
@@ -131,7 +137,9 @@ export function SwarmActivityLog({
         height: "100%",
         display: "flex",
         flexDirection: "column",
-        background: dark ? `rgba(${SURFACE_DARK_RGB},0.97)` : "rgba(248,246,255,0.98)",
+        background: dark
+          ? `rgba(${SURFACE_DARK_RGB},0.97)`
+          : "rgba(248,246,255,0.98)",
         borderLeft: `1px solid ${border}`,
         backdropFilter: "blur(12px)",
         flexShrink: 0,

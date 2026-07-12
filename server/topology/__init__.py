@@ -2893,7 +2893,7 @@ async def _run_bidding(
             round_index=6,
             agent_context=agent_context,
             convergence_threshold=0.85,
-            max_rounds=5,
+            max_rounds=rounds,
         )
         if final_output is not None:
             final_round_id = await _create_self_message_round(

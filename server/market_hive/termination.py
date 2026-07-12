@@ -42,6 +42,7 @@ class Synthesizer(Protocol):
         prompt: str,
         findings: list[ConfirmedEntrySchema],
         objections: list[str] | None = None,
+        previous_draft: str | None = None,
     ) -> str:
         raise NotImplementedError
 

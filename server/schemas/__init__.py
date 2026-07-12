@@ -560,6 +560,10 @@ class KnowledgeFileCreate(KnowledgeFileBase):
     """Request body for creating a knowledge file."""
 
     id: str | None = None
+    skip_injection_check: bool = Field(
+        default=False,
+        description="Skip prompt-injection scanning. Set only for trusted document uploads.",
+    )
 
     @field_validator("id")
     @classmethod
@@ -572,6 +576,7 @@ class KnowledgeFileUpdate(BaseModel):
 
     name: str | None = Field(default=None, max_length=_MAX_NAME_LEN)
     content: str | None = Field(default=None, max_length=_MAX_FILE_CONTENT_LEN)
+    skip_injection_check: bool = False
 
 
 class KnowledgeFileResponse(KnowledgeFileBase):
@@ -866,6 +871,17 @@ class SimulationRunRequest(BaseModel):
                     f"agent_context['{key}'] exceeds {_MAX_AGENT_CONTEXT_VALUE_LEN} characters."
                 )
         return v
+
+    # ── Swarm-engine overrides (ignored for engine="topology") ──────────────
+    swarm_min_takers: int | None = Field(default=None, ge=1, le=20)
+    swarm_max_takers: int | None = Field(default=None, ge=1, le=20)
+    swarm_min_rounds: int | None = Field(default=None, ge=1, le=5)
+    swarm_invite_floor: float | None = Field(default=None, ge=0.0, le=1.0)
+    swarm_decay_rounds: int | None = Field(default=None, ge=1, le=10)
+    swarm_token_budget: int | None = Field(default=None, ge=5000, le=500000)
+    swarm_max_amendments: int | None = Field(default=None, ge=0, le=5)
+    swarm_k_attention: int | None = Field(default=None, ge=3, le=30)
+    swarm_skip_auction: bool = False
 
     ruleset: str | None = Field(
         default=None,

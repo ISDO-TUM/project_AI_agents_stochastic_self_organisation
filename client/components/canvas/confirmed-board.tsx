@@ -505,7 +505,9 @@ export function ConfirmedBoard({
       {/* ── Body ── */}
       <div
         style={{
-          background: dark ? `rgba(${SURFACE_DARK_RGB},0.92)` : "rgba(255,253,244,0.94)",
+          background: dark
+            ? `rgba(${SURFACE_DARK_RGB},0.92)`
+            : "rgba(255,253,244,0.94)",
           border: `1px solid rgba(181,134,13,0.22)`,
           borderTop: "none",
           borderRadius: "0 0 12px 12px",
@@ -578,7 +580,9 @@ export function ConfirmedBoard({
           />
         )}
 
-        {done && resultTable && <ResultTable markdown={resultTable} dark={dark} />}
+        {done && resultTable && (
+          <ResultTable markdown={resultTable} dark={dark} />
+        )}
 
         {!state.loading && state.error && (
           <div

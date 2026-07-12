@@ -574,7 +574,12 @@ async def test_format_output_retracts_contested_entries_and_excludes_from_synthe
 
     class _CapturingSynthesizer:
         async def synthesize(
-            self, *, prompt: str, findings: list[Any], objections: list[str] | None = None
+            self,
+            *,
+            prompt: str,
+            findings: list[Any],
+            objections: list[str] | None = None,
+            previous_draft: str | None = None,
         ) -> str:
             captured["findings"] = findings
             return "synthesized answer"

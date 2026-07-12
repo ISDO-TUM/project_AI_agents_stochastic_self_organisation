@@ -26,7 +26,11 @@ from typing import Any, NamedTuple, Protocol
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-from server.db import deserialise_agent_row, hint_files_in_prompt, load_agent_files
+from server.db import (
+    deserialise_agent_row,
+    hint_files_in_prompt,
+    load_agent_files,
+)
 from server.db.tables import agents as agents_table
 from server.guardrails import build_guarded_system_prompt
 from server.llm import call_agent
@@ -978,7 +982,12 @@ async def _run_auction(
     trial_id: str | None,
     max_iterations: int | None = None,
 ) -> AsyncIterator[SimulationStep]:
-    """Invite agents, drive self-selection, and select takers (PRD §6.2)."""
+    """Invite agents, drive self-selection, and select takers (PRD §6.2).
+
+    When skip_auction is True the LLM self-selection phase is bypassed: all
+    invited agents are recorded as bidders immediately, so every agent that
+    holds evidence is guaranteed to become a taker.
+    """
     invitations = await auction.invite(run_id=run_id, contract_id=contract.id)
     yield _step("system", f"Auction open. {len(invitations)} agent(s) invited.")
 
@@ -2021,6 +2030,18 @@ async def _run_swarm_steps(
             data=_threads_payload(threads, promotion_thresholds),
         )
 
+    # Configure the synthesizer from the first taker's provider and model so
+    # synthesis uses the same LLM stack as the agents, rather than a hardcoded
+    # provider. Only AnswerSynthesizer (which exposes configure()) is affected;
+    # the FallbackAnswerSynthesizer and test fakes are left unchanged.
+    if hasattr(synthesizer, "configure"):
+        first_taker = agents_by_id.get(takers[0])
+        if first_taker and first_taker.get("provider") and first_taker.get("model"):
+            synthesizer.configure(
+                provider=first_taker["provider"],
+                model=first_taker["model"],
+            )
+
     # ── Round 1 — opening proposals (§9.3) ───────────────────────────────────
     if recorder is not None:
         recorder.set_phase(1, "proposals")
@@ -2236,7 +2257,14 @@ async def _run_swarm_steps(
             ratification = None
         else:
             steps, approvals, voters, objections = await _run_ratification(
-                db, run_id, candidate, findings_for_ratify, takers, dropped, agents_by_id, agent_runner
+                db,
+                run_id,
+                candidate,
+                findings_for_ratify,
+                takers,
+                dropped,
+                agents_by_id,
+                agent_runner,
             )
             for step in steps:
                 yield step
@@ -2252,7 +2280,10 @@ async def _run_swarm_steps(
             else:
                 with langfuse_metadata(synth_trace):
                     revised = await synthesizer.synthesize(
-                        prompt=config.prompt, findings=live_findings, objections=objections
+                        prompt=config.prompt,
+                        findings=live_findings,
+                        objections=objections,
+                        previous_draft=candidate,
                     )
                 await _post_synthesis_candidate(db, run_id, threads[0].id, last_round, revised)
                 steps2, approvals2, voters2, objections2 = await _run_ratification(

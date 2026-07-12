@@ -46,7 +46,7 @@ async def test_anthropic_call_non_timeout_path_unchanged() -> None:
     async def fake_send(kwargs: dict[str, Any]) -> Any:
         return SimpleNamespace(content=[_AnthropicBlock("text", text="hello from anthropic")])
 
-    provider._send = fake_send  # type: ignore[method-assign]
+    provider._send = fake_send
 
     result = await provider.call("prompt", "claude-haiku-4-5-20251001")
 
@@ -64,7 +64,7 @@ async def test_anthropic_call_times_out_when_send_hangs() -> None:
         await asyncio.sleep(10)
         return SimpleNamespace(content=[])
 
-    provider._send = hanging_send  # type: ignore[method-assign]
+    provider._send = hanging_send
 
     with pytest.raises(TimeoutError, match=r"exceeded the maximum allowed time \(0.05s\)"):
         await provider.call("prompt", "claude-haiku-4-5-20251001")
@@ -81,7 +81,7 @@ async def test_gemini_call_non_timeout_path_unchanged() -> None:
     async def fake_send(kwargs: dict[str, Any]) -> dict[str, Any]:
         return {"candidates": [{"content": {"parts": [{"text": "hello from gemini"}]}}]}
 
-    provider._send = fake_send  # type: ignore[method-assign]
+    provider._send = fake_send
 
     result = await provider.call("prompt", "gemini-2.0-flash")
 
@@ -99,7 +99,7 @@ async def test_gemini_call_times_out_when_send_hangs() -> None:
         await asyncio.sleep(10)
         return {"candidates": []}
 
-    provider._send = hanging_send  # type: ignore[method-assign]
+    provider._send = hanging_send
 
     with pytest.raises(TimeoutError, match=r"exceeded the maximum allowed time \(0.05s\)"):
         await provider.call("prompt", "gemini-2.0-flash")

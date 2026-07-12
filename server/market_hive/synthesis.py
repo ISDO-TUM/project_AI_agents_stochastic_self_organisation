@@ -35,12 +35,20 @@ _SYSTEM_PROMPT = (
     "specialist agents has deliberated on a shared blackboard and ratified a set of "
     "confirmed findings. Combine those findings into a single, direct answer to the "
     "user's original request.\n\n"
-    "Rules:\n"
+    "Grounding:\n"
     "- Answer the request directly, grounded ONLY in the confirmed findings.\n"
-    "- Be brief: at most a few sentences. No preamble, no restating the question, "
-    "no bullet lists unless the answer is inherently a short list.\n"
     "- Do not introduce facts, caveats, or recommendations the findings do not support.\n"
-    "- Write plain prose addressed to the end user."
+    "- Preserve any citations the agents made as inline citations; if a citation is a "
+    "file name, use the file name.\n\n"
+    "Formatting — your entire reply MUST be valid GitHub-flavoured Markdown:\n"
+    "- Open with one short sentence that directly answers the request.\n"
+    "- When the request calls for multiple items (e.g. clauses, risks, options, "
+    "recommendations), present them as a Markdown bullet or numbered list — one item "
+    "per finding — leading each item with the key term or reference in **bold**, then "
+    "its concrete risk or detail.\n"
+    "- Use short prose instead when the answer is a single point.\n"
+    "- Do NOT use Markdown tables or headings; keep it to a lead sentence plus a list.\n"
+    "- No preamble, no restating the question, no padding. Keep each point tight."
 )
 
 
@@ -64,7 +72,9 @@ def fallback_answer(findings: list[ConfirmedEntrySchema]) -> str:
     ranked = _ranked(_findings_only(findings))
     if not ranked:
         return NO_ANSWER
-    return " ".join(f.content.strip() for f in ranked[:3] if f.content.strip()) or NO_ANSWER
+    # Paragraph breaks (not spaces) so the degraded path is still readable, valid
+    # Markdown rather than a run-on wall of concatenated findings.
+    return "\n\n".join(f.content.strip() for f in ranked[:3] if f.content.strip()) or NO_ANSWER
 
 
 def _user_prompt(
@@ -72,13 +82,20 @@ def _user_prompt(
     findings: list[ConfirmedEntrySchema],
     *,
     objections: list[str] | None = None,
+    previous_draft: str | None = None,
 ) -> str:
     block = "\n".join(f"- {f.content.strip()}" for f in _ranked(findings)[:_MAX_FINDINGS])
+    draft_block = (
+        f"\n\nYOUR PREVIOUS DRAFT (rejected by the takers):\n{previous_draft}"
+        if objections and previous_draft
+        else ""
+    )
     objection_block = (
+        f"{draft_block}"
         "\n\nThe takers reviewed this draft and objected: "
         + "; ".join(objections)
-        + ". Revise to address these objections without inventing content beyond "
-        "the confirmed findings."
+        + ". Revise the draft to address these objections without inventing "
+        "content beyond the confirmed findings."
         if objections
         else ""
     )
@@ -86,7 +103,8 @@ def _user_prompt(
         f"User request:\n{prompt}\n\n"
         f"Confirmed findings (most-endorsed first):\n{block}"
         f"{objection_block}\n\n"
-        "Write the brief final answer to the user's request."
+        "Write the final answer to the user's request as valid Markdown, "
+        "following the formatting rules."
     )
 
 
@@ -99,31 +117,31 @@ class FallbackAnswerSynthesizer:
         prompt: str,
         findings: list[ConfirmedEntrySchema],
         objections: list[str] | None = None,
+        previous_draft: str | None = None,
     ) -> str:
-        # Deterministic join has no revision mechanism — objections are accepted
-        # for interface parity with AnswerSynthesizer but have nothing to act on.
+        # Deterministic join has no revision mechanism — objections and the
+        # rejected draft are accepted for interface parity with
+        # AnswerSynthesizer but have nothing to act on.
         return fallback_answer(findings)
 
 
 class AnswerSynthesizer:
-    """LLM-backed synthesizer: confirmed findings → a couple of sentences."""
+    """LLM-backed synthesizer: confirmed findings → a couple of sentences.
 
-    def __init__(
-        self,
-        *,
-        provider: str = "openai",
-        model: str = "gpt-4o",
-        # On timeout the deterministic joiner takes over — the run still ends,
-        # but the final answer degrades to concatenated findings. Keep generous
-        # so a slow provider doesn't silently swallow the synthesis step. 300s
-        # matches the reasoning-model latency budget used elsewhere in the
-        # codebase (gpt-5 family can spend minutes on a single completion); it
-        # does not retry on timeout, it just falls back to the deterministic join.
-        timeout: float = 300.0,
-    ) -> None:
+    ``provider`` and ``model`` are intentionally left unset at construction time
+    so the orchestrator can configure them from the takers' actual provider and
+    model after the auction (call ``configure()`` before ``synthesize()``).
+    """
+
+    def __init__(self, *, timeout: float = 300.0) -> None:
+        self._provider: str | None = None
+        self._model: str | None = None
+        self._timeout = timeout
+
+    def configure(self, *, provider: str, model: str) -> None:
+        """Set the provider and model derived from the run's taker agents."""
         self._provider = provider
         self._model = model
-        self._timeout = timeout
 
     async def synthesize(
         self,
@@ -131,20 +149,28 @@ class AnswerSynthesizer:
         prompt: str,
         findings: list[ConfirmedEntrySchema],
         objections: list[str] | None = None,
+        previous_draft: str | None = None,
     ) -> str:
         """One LLM call → brief answer. Falls back to the joiner on empty/failure.
 
         ``objections`` (ratified synthesis): when the takers rejected a prior
         draft, their reasons are appended to the prompt so the revision
         specifically addresses them rather than starting from scratch.
+        ``previous_draft`` is that rejected draft — the objections were written
+        against it, so the reviser must see it for them to be actionable.
         """
         findings = _findings_only(findings)
         if not findings:
             return NO_ANSWER
+        if self._provider is None or self._model is None:
+            logger.warning("AnswerSynthesizer.configure() was never called; using fallback.")
+            return fallback_answer(findings)
         try:
             response, _ = await asyncio.wait_for(
                 call_agent(
-                    _user_prompt(prompt, findings, objections=objections),
+                    _user_prompt(
+                        prompt, findings, objections=objections, previous_draft=previous_draft
+                    ),
                     provider=self._provider,
                     model=self._model,
                     system_prompt=_SYSTEM_PROMPT,

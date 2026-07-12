@@ -325,8 +325,14 @@ async def run_simulation(
             "user_id": user_id,
         }
         for field in (
-            "min_takers", "max_takers", "min_rounds", "max_rounds",
-            "token_budget", "max_amendments", "decay_rounds", "invite_floor",
+            "min_takers",
+            "max_takers",
+            "min_rounds",
+            "max_rounds",
+            "token_budget",
+            "max_amendments",
+            "decay_rounds",
+            "invite_floor",
             "demo_mode",
         ):
             value = getattr(body, field, None)

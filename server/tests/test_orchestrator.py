@@ -2028,11 +2028,18 @@ async def test_double_rejection_ships_flagged_with_objections(db: AsyncConnectio
     class _CountingSynthesizer:
         def __init__(self) -> None:
             self.calls: list[list[str] | None] = []
+            self.drafts: list[str | None] = []
 
         async def synthesize(
-            self, *, prompt: str, findings: list[Any], objections: list[str] | None = None
+            self,
+            *,
+            prompt: str,
+            findings: list[Any],
+            objections: list[str] | None = None,
+            previous_draft: str | None = None,
         ) -> str:
             self.calls.append(objections)
+            self.drafts.append(previous_draft)
             return f"draft answer v{len(self.calls)}"
 
     synth = _CountingSynthesizer()
@@ -2044,6 +2051,7 @@ async def test_double_rejection_ships_flagged_with_objections(db: AsyncConnectio
     )
     assert len(synth.calls) == 2
     assert synth.calls[1]  # objections from round 1 were passed to the revision call
+    assert synth.drafts == [None, "draft answer v1"]  # revision sees the rejected draft
     conv = next(s for s in steps if s.type == "convergence")
     assert conv.data["ratification"]["approved"] is False
     assert conv.data["ratification"]["round"] == 2
@@ -2106,7 +2114,12 @@ async def test_demo_mode_skips_ratification(db: AsyncConnection) -> None:
             self.calls = 0
 
         async def synthesize(
-            self, *, prompt: str, findings: list[Any], objections: list[str] | None = None
+            self,
+            *,
+            prompt: str,
+            findings: list[Any],
+            objections: list[str] | None = None,
+            previous_draft: str | None = None,
         ) -> str:
             self.calls += 1
             return "the synthesized answer"

@@ -77,12 +77,12 @@ controlling exposure model, freight quotes).
 
 Six agents, each grounded in its own data:
 
-- **Supply Chain Lead** — disruption alert, supplier master, and a *stale*
+- **Supply Chain Lead** — disruption alert, supplier master, and a _stale_
   2025 scorecard saying the alternate supplier failed its PPAP audit.
 - **Logistics Planner** — freight quotes (air vs sea, bonded-warehouse release).
 - **Production Planner** — consumption vs inventory → week-by-week coverage.
 - **Finance Controller** — penalty/margin exposure model, approval threshold.
-- **Quality & Supplier Compliance** — *current* QM records showing the
+- **Quality & Supplier Compliance** — _current_ QM records showing the
   alternate supplier was re-qualified in 2026-03; corrects the stale scorecard.
 - **Data Privacy Officer** — deliberately irrelevant; should abstain.
 

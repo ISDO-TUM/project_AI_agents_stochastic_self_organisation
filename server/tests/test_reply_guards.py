@@ -96,11 +96,19 @@ async def _post_reply(
     db: AsyncConnection, *, run_id: str, thread_id: str, agent_id: str, round_: int, content: str
 ) -> str:
     tool = PostToBlackboardTool()
-    return await tool.execute(
-        PostToBlackboardInput(
-            content=content, entry_type="reply", thread_id=thread_id, reply_to="deadbeef"
-        ),
-        {"db": db, "run_id": run_id, "agent_id": agent_id, "thread_id": thread_id, "round": round_},
+    return str(
+        await tool.execute(
+            PostToBlackboardInput(
+                content=content, entry_type="reply", thread_id=thread_id, reply_to="deadbeef"
+            ),
+            {
+                "db": db,
+                "run_id": run_id,
+                "agent_id": agent_id,
+                "thread_id": thread_id,
+                "round": round_,
+            },
+        )
     )
 
 
@@ -111,7 +119,11 @@ async def test_reply_cap_allows_up_to_the_limit(db: AsyncConnection) -> None:
 
     for i in range(MAX_REPLIES_PER_ROUND):
         result = await _post_reply(
-            db, run_id=run_id, thread_id=thread_id, agent_id=agent_id, round_=2,
+            db,
+            run_id=run_id,
+            thread_id=thread_id,
+            agent_id=agent_id,
+            round_=2,
             content=f"distinct point number {i}",
         )
         assert "error" not in result
@@ -124,12 +136,20 @@ async def test_reply_beyond_cap_is_rejected(db: AsyncConnection) -> None:
 
     for i in range(MAX_REPLIES_PER_ROUND):
         await _post_reply(
-            db, run_id=run_id, thread_id=thread_id, agent_id=agent_id, round_=2,
+            db,
+            run_id=run_id,
+            thread_id=thread_id,
+            agent_id=agent_id,
+            round_=2,
             content=f"distinct point number {i}",
         )
 
     result = await _post_reply(
-        db, run_id=run_id, thread_id=thread_id, agent_id=agent_id, round_=2,
+        db,
+        run_id=run_id,
+        thread_id=thread_id,
+        agent_id=agent_id,
+        round_=2,
         content="one point too many",
     )
     assert "error" in result
@@ -143,11 +163,19 @@ async def test_reply_cap_resets_next_round(db: AsyncConnection) -> None:
 
     for i in range(MAX_REPLIES_PER_ROUND):
         await _post_reply(
-            db, run_id=run_id, thread_id=thread_id, agent_id=agent_id, round_=2,
+            db,
+            run_id=run_id,
+            thread_id=thread_id,
+            agent_id=agent_id,
+            round_=2,
             content=f"round 2 point {i}",
         )
     result = await _post_reply(
-        db, run_id=run_id, thread_id=thread_id, agent_id=agent_id, round_=3,
+        db,
+        run_id=run_id,
+        thread_id=thread_id,
+        agent_id=agent_id,
+        round_=3,
         content="round 3 point",
     )
     assert "error" not in result
@@ -166,13 +194,21 @@ async def test_near_duplicate_of_own_post_is_rejected(db: AsyncConnection) -> No
         patch("server.market_hive.blackboard.embed_texts", new=AsyncMock(return_value=[same_vec])),
     ):
         first = await _post_reply(
-            db, run_id=run_id, thread_id=thread_id, agent_id=agent_id, round_=2,
+            db,
+            run_id=run_id,
+            thread_id=thread_id,
+            agent_id=agent_id,
+            round_=2,
             content="reject clause 4.2 as a penalty",
         )
         assert "error" not in first
 
         second = await _post_reply(
-            db, run_id=run_id, thread_id=thread_id, agent_id=agent_id, round_=3,
+            db,
+            run_id=run_id,
+            thread_id=thread_id,
+            agent_id=agent_id,
+            round_=3,
             content="clause 4.2 should be rejected, it's a penalty clause",
         )
     assert "error" in second
@@ -195,11 +231,19 @@ async def test_different_authors_near_duplicate_is_not_blocked(db: AsyncConnecti
         patch("server.market_hive.blackboard.embed_texts", new=AsyncMock(return_value=[same_vec])),
     ):
         first = await _post_reply(
-            db, run_id=run_id, thread_id=thread_id, agent_id=agent_a, round_=2,
+            db,
+            run_id=run_id,
+            thread_id=thread_id,
+            agent_id=agent_a,
+            round_=2,
             content="reject clause 4.2 as a penalty",
         )
         second = await _post_reply(
-            db, run_id=run_id, thread_id=thread_id, agent_id=agent_b, round_=2,
+            db,
+            run_id=run_id,
+            thread_id=thread_id,
+            agent_id=agent_b,
+            round_=2,
             content="clause 4.2 should be rejected, it's a penalty clause",
         )
     assert "error" not in first
@@ -215,11 +259,19 @@ async def test_dedup_fails_open_when_embeddings_unavailable(db: AsyncConnection)
 
     with patch("server.market_hive.tools.embed_texts", new=AsyncMock(return_value=None)):
         first = await _post_reply(
-            db, run_id=run_id, thread_id=thread_id, agent_id=agent_id, round_=2,
+            db,
+            run_id=run_id,
+            thread_id=thread_id,
+            agent_id=agent_id,
+            round_=2,
             content="reject clause 4.2 as a penalty",
         )
         second = await _post_reply(
-            db, run_id=run_id, thread_id=thread_id, agent_id=agent_id, round_=3,
+            db,
+            run_id=run_id,
+            thread_id=thread_id,
+            agent_id=agent_id,
+            round_=3,
             content="reject clause 4.2 as a penalty",
         )
     assert "error" not in first

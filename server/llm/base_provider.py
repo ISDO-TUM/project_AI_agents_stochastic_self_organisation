@@ -224,7 +224,9 @@ class BaseLLMProvider(ABC):
                     if streak >= _MAX_CONSECUTIVE_ERROR_ITERATIONS:
                         stuck_tool = tc.name
                 else:
-                    logger.debug("Tool call — model=%s name=%s args=%s", model, tc.name, tc.arguments)
+                    logger.debug(
+                        "Tool call — model=%s name=%s args=%s", model, tc.name, tc.arguments
+                    )
                     consecutive_errors_by_tool[tc.name] = 0
                 results.append((tc, result))
 
