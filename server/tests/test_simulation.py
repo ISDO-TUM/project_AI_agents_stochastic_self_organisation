@@ -438,6 +438,63 @@ async def test_clear_board_preserves_history_and_stats(client: AsyncClient) -> N
     assert ("Agent B", "Agent A") in edge_names
 
 
+async def test_trial_statistics_accept_experiment_id_for_legacy_clients(
+    client: AsyncClient,
+) -> None:
+    """Stale clients may call trial stats routes with an experiment id.
+
+    Resolve that id to the experiment's first trial instead of returning a
+    misleading "Trial not found" response.
+    """
+
+    agent_resp = await client.post(
+        "/api/agents",
+        json={
+            "name": "Agent A",
+            "description": "A test agent.",
+            "system_prompt": "Answer briefly.",
+            "provider": "openai",
+            "model": "gpt-4o",
+            "tools": [],
+            "connections": [],
+        },
+    )
+    assert agent_resp.status_code == 201
+    agent_id = str(agent_resp.json()["id"])
+
+    async with get_engine().connect() as conn:
+        exp_id = await resolve_experiment(
+            conn,
+            "Prompt",
+            3,
+            "weighted_opinion_pooling",
+            None,
+            "static",
+            3,
+            None,
+            reuse_existing=False,
+        )
+        trial_id = await create_trial(
+            conn,
+            "Prompt",
+            "Weighted trial",
+            "weighted_opinion_pooling",
+            exp_id,
+        )
+        round_id = await create_round(conn, trial_id, 1, "weighted_opinion_pooling")
+        await sim.record_message(conn, round_id, agent_id, agent_id, "agent_output", "hello")
+
+    summary_resp = await client.get(f"/api/statistics/trials/{exp_id}/summary")
+    assert summary_resp.status_code == 200
+    summary = summary_resp.json()
+    assert summary["trial_id"] == trial_id
+    assert summary["total_messages"] == 1
+
+    agents_resp = await client.get(f"/api/statistics/trials/{exp_id}/agents")
+    assert agents_resp.status_code == 200
+    assert agents_resp.json()[0]["agent_id"] == agent_id
+
+
 async def test_bidding_statistics_edges_include_board_after_agent_clear(
     client: AsyncClient,
 ) -> None:

@@ -39,6 +39,7 @@ import { HistoryPage } from "@/components/history-page";
 import { PromptBar } from "@/components/prompt-bar";
 import { ContextMenu, ContextMenuItem } from "@/components/context-menu";
 import { TweaksPanel } from "@/components/tweaks-panel";
+import { BenchmarkSuiteModal } from "@/components/benchmark-suite-modal";
 
 import { AgentPanel } from "@/components/panels/agent-panel";
 import { SourcePanel } from "@/components/panels/source-panel";
@@ -172,6 +173,12 @@ export function App({ onModeSelected }: AppProps = {}) {
     () => false,
   );
   const [swarmConfigOpen, setSwarmConfigOpen] = useState(false);
+  const [benchmarkOpen, setBenchmarkOpen] = useState(false);
+  const [benchmarkDatasetId, setBenchmarkDatasetId] = useState<string | null>(
+    null,
+  );
+  const [currentPrompt, setCurrentPrompt] = useState("");
+  const [prefillPrompt, setPrefillPrompt] = useState<string | null>(null);
   const [pendingSwarmPrompt, setPendingSwarmPrompt] = useState("");
   const [topbarWidth, setTopbarWidth] = useState<number | null>(null);
   const [topbarHeight, setTopbarHeight] = useState<number | null>(null);
@@ -281,6 +288,12 @@ export function App({ onModeSelected }: AppProps = {}) {
     },
     [pendingSwarmPrompt, agents, dummy, swarm],
   );
+
+  const handleBenchmarkStarted = useCallback((suiteId: string) => {
+    window.localStorage.setItem("latestBenchmarkSuiteId", suiteId);
+    setBenchmarkOpen(false);
+    window.location.href = "/statistics?view=benchmarks";
+  }, []);
 
   const handleNotifyDecision = useCallback(
     (enabled: boolean, scope: NotifyScope) => {
@@ -394,6 +407,8 @@ export function App({ onModeSelected }: AppProps = {}) {
   const importCanvas = useCallback(
     async (raw: string) => {
       let data: CanvasState;
+      let importedBenchmarkDatasetId: string | null = null;
+      let importedBenchmarkPrompt: string | null = null;
       try {
         // eslint-disable-next-line @typescript-eslint/no-explicit-any
         const parsed = JSON.parse(raw) as any;
@@ -407,6 +422,19 @@ export function App({ onModeSelected }: AppProps = {}) {
           );
           return;
         }
+        importedBenchmarkDatasetId =
+          typeof parsed.benchmarkDatasetId === "string"
+            ? parsed.benchmarkDatasetId
+            : typeof parsed.datasetId === "string"
+              ? parsed.datasetId
+              : null;
+        importedBenchmarkPrompt = importedBenchmarkDatasetId
+          ? typeof parsed.benchmarkPrompt === "string"
+            ? parsed.benchmarkPrompt
+            : typeof parsed.prompt === "string"
+              ? parsed.prompt
+              : null
+          : null;
         data = parsed as CanvasState;
         // Auto-assign positions for any agents/sources that omit them
         // (e.g. configs generated for Market Hive mode without layout info).
@@ -434,6 +462,13 @@ export function App({ onModeSelected }: AppProps = {}) {
 
       // Render the imported canvas locally first so the user sees it instantly.
       dispatch({ type: "LOAD", state: data });
+      setBenchmarkDatasetId(importedBenchmarkDatasetId);
+      if (importedBenchmarkPrompt) {
+        setPrefillPrompt(importedBenchmarkPrompt);
+        setCurrentPrompt(importedBenchmarkPrompt);
+      } else if (!importedBenchmarkDatasetId) {
+        setPrefillPrompt(null);
+      }
       if (Array.isArray(data.selectedRules)) {
         setSelectedRules(
           new Set(data.selectedRules.filter((x) => typeof x === "string")),
@@ -766,8 +801,13 @@ export function App({ onModeSelected }: AppProps = {}) {
           running={running}
           turnCount={turns.length}
           onRun={handleRun}
+          onBenchmark={() => setBenchmarkOpen(true)}
+          benchmarkDisabled={appMode !== "topology" || !benchmarkDatasetId}
           onResetContext={resetContext}
           onOpenKeys={() => setShowTweaks(true)}
+          prefillPrompt={prefillPrompt}
+          onPrefillConsumed={() => setPrefillPrompt(null)}
+          onPromptChange={setCurrentPrompt}
           iterations={iterations}
           onIterationsChange={setIterations}
           batchProgress={batchProgress}
@@ -812,6 +852,17 @@ export function App({ onModeSelected }: AppProps = {}) {
         <SwarmConfigModal
           onCancel={() => setSwarmConfigOpen(false)}
           onConfirm={handleSwarmConfigConfirm}
+        />
+      )}
+
+      {benchmarkOpen && (
+        <BenchmarkSuiteModal
+          datasetId={benchmarkDatasetId}
+          prompt={currentPrompt}
+          fanout={fanout}
+          agentCount={agents.length}
+          onCancel={() => setBenchmarkOpen(false)}
+          onStarted={handleBenchmarkStarted}
         />
       )}
 

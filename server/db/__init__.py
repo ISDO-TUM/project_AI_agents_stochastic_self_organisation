@@ -173,6 +173,52 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
     """
     dialect = conn.dialect.name
     if dialect == "postgresql":
+        # metadata.create_all creates these on fresh databases; CREATE TABLE IF
+        # NOT EXISTS covers older PostgreSQL databases that predate the tables.
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS benchmark_suites (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    dataset_id TEXT NOT NULL,
+                    prompt TEXT NOT NULL,
+                    topology TEXT NOT NULL,
+                    fanout INTEGER NOT NULL DEFAULT 3,
+                    rounds INTEGER NOT NULL DEFAULT 3,
+                    status TEXT NOT NULL DEFAULT 'running',
+                    planned_trials INTEGER NOT NULL DEFAULT 0,
+                    completed_trials INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    CONSTRAINT ck_benchmark_suites_status
+                        CHECK(status IN ('running','completed','failed'))
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS benchmark_suite_runs (
+                    id TEXT PRIMARY KEY,
+                    suite_id TEXT NOT NULL REFERENCES benchmark_suites(id) ON DELETE CASCADE,
+                    experiment_id TEXT NOT NULL REFERENCES experiments(id),
+                    trial_id TEXT NOT NULL REFERENCES trials(id) ON DELETE CASCADE,
+                    consensus_mode TEXT NOT NULL,
+                    topology TEXT NOT NULL DEFAULT 'static',
+                    run_index INTEGER NOT NULL,
+                    dataset_variant_id TEXT,
+                    status TEXT NOT NULL DEFAULT 'running',
+                    score_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    CONSTRAINT ck_benchmark_suite_runs_status
+                        CHECK(status IN ('running','completed','failed'))
+                )
+                """
+            )
+        )
         for stmt in (
             # Pre-existing migrations
             "ALTER TABLE knowledge_files ADD COLUMN IF NOT EXISTS"
@@ -219,9 +265,58 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             "ALTER TABLE messages DROP CONSTRAINT IF EXISTS messages_to_agent_id_fkey",
             # ECSAS: synthesised final answer persisted at run completion
             "ALTER TABLE swarm_runs ADD COLUMN IF NOT EXISTS final_answer TEXT",
+            "ALTER TABLE benchmark_suite_runs ADD COLUMN IF NOT EXISTS"
+            " topology TEXT NOT NULL DEFAULT 'static'",
         ):
             await conn.execute(text(stmt))
     elif dialect == "sqlite":
+        # Same rationale as PostgreSQL above. Fresh in-memory test databases are
+        # created through metadata, while older file-backed SQLite DBs need the
+        # IF NOT EXISTS path.
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS benchmark_suites (
+                    id TEXT PRIMARY KEY,
+                    name TEXT NOT NULL,
+                    dataset_id TEXT NOT NULL,
+                    prompt TEXT NOT NULL,
+                    topology TEXT NOT NULL,
+                    fanout INTEGER NOT NULL DEFAULT 3,
+                    rounds INTEGER NOT NULL DEFAULT 3,
+                    status TEXT NOT NULL DEFAULT 'running',
+                    planned_trials INTEGER NOT NULL DEFAULT 0,
+                    completed_trials INTEGER NOT NULL DEFAULT 0,
+                    created_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    CONSTRAINT ck_benchmark_suites_status
+                        CHECK(status IN ('running','completed','failed'))
+                )
+                """
+            )
+        )
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS benchmark_suite_runs (
+                    id TEXT PRIMARY KEY,
+                    suite_id TEXT NOT NULL REFERENCES benchmark_suites(id) ON DELETE CASCADE,
+                    experiment_id TEXT NOT NULL REFERENCES experiments(id),
+                    trial_id TEXT NOT NULL REFERENCES trials(id) ON DELETE CASCADE,
+                    consensus_mode TEXT NOT NULL,
+                    topology TEXT NOT NULL DEFAULT 'static',
+                    run_index INTEGER NOT NULL,
+                    dataset_variant_id TEXT,
+                    status TEXT NOT NULL DEFAULT 'running',
+                    score_json TEXT NOT NULL DEFAULT '{}',
+                    created_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    CONSTRAINT ck_benchmark_suite_runs_status
+                        CHECK(status IN ('running','completed','failed'))
+                )
+                """
+            )
+        )
         # SQLite: fresh test databases are created with the full schema via
         # metadata.create_all, so migrations only cover the pre-existing
         # knowledge_files/agents columns that may be missing on older DBs.
@@ -250,6 +345,7 @@ async def _apply_column_migrations(conn: AsyncConnection) -> None:
             ("messages", "from_agent_name", "TEXT"),
             ("messages", "to_agent_name", "TEXT"),
             ("swarm_runs", "final_answer", "TEXT"),
+            ("benchmark_suite_runs", "topology", "TEXT NOT NULL DEFAULT 'static'"),
         ):
             result = await conn.execute(text(f"PRAGMA table_info({table})"))
             if col not in {row[1] for row in result.fetchall()}:

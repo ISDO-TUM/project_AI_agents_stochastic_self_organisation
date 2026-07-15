@@ -6,8 +6,9 @@ shape the ``trials → rounds → connections → messages`` trace produced by
 ``server/routes/``) so the topology surface is self-contained.
 """
 
+from server.topology.routes.benchmark_suites import router as benchmark_suites_router
 from server.topology.routes.history import router as history_router
 from server.topology.routes.rules import rules_router
 from server.topology.routes.statistics import router as statistics_router
 
-__all__ = ["history_router", "rules_router", "statistics_router"]
+__all__ = ["benchmark_suites_router", "history_router", "rules_router", "statistics_router"]

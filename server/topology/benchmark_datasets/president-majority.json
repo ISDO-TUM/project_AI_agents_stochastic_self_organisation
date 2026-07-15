@@ -1,0 +1,98 @@
+{
+  "benchmarkDatasetId": "president-majority",
+  "benchmarkPrompt": "Who is described as the president of America in the provided context?",
+  "benchmarkAnswer": "Trump",
+  "agents": [
+    {
+      "id": "72095e3d-b034-4108-801e-7c918d7f73b4",
+      "name": "OpenAI Salesman",
+      "description": "Salesman powered by OpenAI.",
+      "systemPrompt": "If your private context contains the answer, reply with just the person's name. If it does not, reply with the literal string \"unknown\"",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["files"],
+      "connections": [
+        "8c20fd04-4a0f-4d5c-86b0-cf2bcb94711e",
+        "8d56e0d0-14cd-41bd-8ea0-dc1485320341"
+      ],
+      "position": { "x": 180, "y": 160 }
+    },
+    {
+      "id": "8c20fd04-4a0f-4d5c-86b0-cf2bcb94711e",
+      "name": "Anthropic CEO",
+      "description": "CEO of Anthropic powered by Anthropic Claude.",
+      "systemPrompt": "If your private context contains the answer, reply with just the person's name. If it does not, reply with the literal string \"unknown\"",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["files"],
+      "connections": ["8d56e0d0-14cd-41bd-8ea0-dc1485320341"],
+      "position": { "x": 395, "y": 81 }
+    },
+    {
+      "id": "8d56e0d0-14cd-41bd-8ea0-dc1485320341",
+      "name": "Groq Programmer",
+      "description": "Skilled programmer powered by Groq.",
+      "systemPrompt": "If your private context contains the answer, reply with just the person's name. If it does not, reply with the literal string \"unknown\"",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["files"],
+      "connections": [],
+      "position": { "x": 791, "y": 83 }
+    }
+  ],
+  "sources": [
+    {
+      "id": "7bb53db8-8a31-4645-a8f0-c7ddb1c75692",
+      "name": "Name of the president.txt",
+      "type": "text",
+      "content": "The president of America is Trump",
+      "position": { "x": 180, "y": 480 }
+    },
+    {
+      "id": "a168fd51-0c28-4255-9301-1fcb8c214403",
+      "name": "Name of the president.txt",
+      "type": "text",
+      "content": "The president of America is Joe Biden",
+      "position": { "x": 360, "y": 320 }
+    },
+    {
+      "id": "b896ff7f-64b1-4508-96b2-431d38e994db",
+      "name": "Name of the president.txt",
+      "type": "text",
+      "content": "The president of America is Trump",
+      "position": { "x": 617, "y": 436 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e415d374-5efc-4bcb-97f1-25c7a4e0f62c",
+      "from": "72095e3d-b034-4108-801e-7c918d7f73b4",
+      "to": "7bb53db8-8a31-4645-a8f0-c7ddb1c75692"
+    },
+    {
+      "id": "eaf27c96-8860-43a1-96b7-274d79ca508d",
+      "from": "8c20fd04-4a0f-4d5c-86b0-cf2bcb94711e",
+      "to": "a168fd51-0c28-4255-9301-1fcb8c214403"
+    },
+    {
+      "id": "b2f5f4ae-b08b-4d58-9fde-17134ab788b7",
+      "from": "8d56e0d0-14cd-41bd-8ea0-dc1485320341",
+      "to": "b896ff7f-64b1-4508-96b2-431d38e994db"
+    },
+    {
+      "id": "1823c592-1e1d-48dd-a6d4-383fe0db766d",
+      "from": "72095e3d-b034-4108-801e-7c918d7f73b4",
+      "to": "8c20fd04-4a0f-4d5c-86b0-cf2bcb94711e"
+    },
+    {
+      "id": "a3fdc7b8-b35a-4daa-af62-96f26be4c80b",
+      "from": "8c20fd04-4a0f-4d5c-86b0-cf2bcb94711e",
+      "to": "8d56e0d0-14cd-41bd-8ea0-dc1485320341"
+    },
+    {
+      "id": "57dfa18a-9fa3-4df1-976e-e31069b5217d",
+      "from": "72095e3d-b034-4108-801e-7c918d7f73b4",
+      "to": "8d56e0d0-14cd-41bd-8ea0-dc1485320341"
+    }
+  ]
+}

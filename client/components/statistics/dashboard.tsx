@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
+import { BenchmarkSuiteResultsView } from "@/components/statistics/benchmark-suite-results";
 import { ComparisonDashboard } from "@/components/comparison/dashboard";
 import { AgentActivityChart } from "@/components/statistics/agent-activity-chart";
 import { ConsistencySection } from "@/components/statistics/consistency-report";
@@ -32,12 +33,13 @@ import { BURG, BURG_DIM, BURG_LT, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import type { ConsistencyReport, ExperimentListItem } from "@/lib/types";
 
-type ViewId = "collaboration" | "langfuse" | "comparison";
+type ViewId = "collaboration" | "langfuse" | "comparison" | "benchmarks";
 
 const VIEWS: { id: ViewId; label: string; icon: string }[] = [
   { id: "collaboration", label: "Collaboration", icon: "Network" },
   { id: "langfuse", label: "LLM usage", icon: "Cpu" },
   { id: "comparison", label: "Comparison", icon: "GitCompare" },
+  { id: "benchmarks", label: "Benchmarks", icon: "FlaskConical" },
 ];
 
 function formatRunTimestamp(value: string) {
@@ -202,7 +204,15 @@ export function StatisticsDashboard() {
   const [experiments, setExperiments] = useState<ExperimentListItem[]>([]);
   const [experimentId, setExperimentId] = useState<string | null>(null);
   const [experimentsLoading, setExperimentsLoading] = useState(true);
-  const [view, setView] = useState<ViewId>("collaboration");
+  const [view, setView] = useState<ViewId>(() => {
+    if (
+      typeof window !== "undefined" &&
+      new URLSearchParams(window.location.search).get("view") === "benchmarks"
+    ) {
+      return "benchmarks";
+    }
+    return "collaboration";
+  });
   const [consistency, setConsistency] = useState<ConsistencyReport | null>(
     null,
   );
@@ -395,7 +405,7 @@ export function StatisticsDashboard() {
         </div>
 
         <div style={{ maxWidth: 1340, margin: "0 auto" }}>
-          {view !== "comparison" && !noExperiments && (
+          {view !== "comparison" && view !== "benchmarks" && !noExperiments && (
             <div
               style={{
                 display: "flex",
@@ -460,7 +470,9 @@ export function StatisticsDashboard() {
             </div>
           )}
 
-          {view === "comparison" ? (
+          {view === "benchmarks" ? (
+            <BenchmarkSuiteResultsView />
+          ) : view === "comparison" ? (
             <ComparisonDashboard />
           ) : noExperiments ? (
             <EmptyState

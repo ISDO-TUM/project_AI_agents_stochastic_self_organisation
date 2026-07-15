@@ -9,11 +9,13 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
+import { fetchBenchmarkCanvas, fetchBenchmarkDatasets } from "@/lib/api";
 import { LIcon } from "@/lib/icons";
 import { BURG, BURG_LT, getTheme } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 import { Toast } from "./panels/panel-primitives";
 import type { AppMode } from "@/components/mode-gate";
+import type { BenchmarkDataset } from "@/lib/types";
 
 interface ToolbarProps {
   simMode: boolean;
@@ -576,14 +578,68 @@ function ImportDropdown({
 }) {
   const [open, setOpen] = useState(false);
   const [pasteOpen, setPasteOpen] = useState(false);
+  const [datasets, setDatasets] = useState<BenchmarkDataset[]>([]);
+  const [selectedDatasetId, setSelectedDatasetId] = useState("");
+  const [benchmarkLoading, setBenchmarkLoading] = useState(false);
+  const [benchmarkImporting, setBenchmarkImporting] = useState(false);
+  const [toast, setToast] = useState<string | null>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const { dark } = useTheme();
+
+  const loadBenchmarkDatasets = useCallback(() => {
+    if (datasets.length > 0 || benchmarkLoading) return;
+    setBenchmarkLoading(true);
+    fetchBenchmarkDatasets()
+      .then((rows) => {
+        setDatasets(rows);
+        setSelectedDatasetId((current) => current || rows[0]?.id || "");
+      })
+      .catch((err) => {
+        setToast(err instanceof Error ? err.message : String(err));
+      })
+      .finally(() => {
+        setBenchmarkLoading(false);
+      });
+  }, [benchmarkLoading, datasets.length]);
+
+  const handleBenchmarkImport = async () => {
+    if (!selectedDatasetId || benchmarkImporting) return;
+    setBenchmarkImporting(true);
+    try {
+      const canvas = await fetchBenchmarkCanvas(selectedDatasetId);
+      onImport(
+        JSON.stringify(
+          {
+            agents: canvas.agents,
+            sources: canvas.sources,
+            edges: canvas.edges,
+            benchmarkDatasetId: canvas.datasetId,
+            benchmarkPrompt: canvas.prompt,
+            benchmarkAnswer: canvas.answer,
+          },
+          null,
+          2,
+        ),
+      );
+      setOpen(false);
+    } catch (err) {
+      setToast(err instanceof Error ? err.message : String(err));
+    } finally {
+      setBenchmarkImporting(false);
+    }
+  };
+
+  const handleToggleOpen = () => {
+    const next = !open;
+    setOpen(next);
+    if (next) loadBenchmarkDatasets();
+  };
 
   return (
     <>
       <div style={{ position: "relative" }}>
         <TBtn
-          onClick={() => setOpen((x) => !x)}
+          onClick={handleToggleOpen}
           icon="Upload"
           title="Import"
           active={open}
@@ -610,7 +666,7 @@ function ImportDropdown({
                 border: `1px solid ${t.borderHi}`,
                 borderRadius: 10,
                 padding: "5px 0",
-                minWidth: 170,
+                minWidth: 250,
                 zIndex: 99,
                 boxShadow: dark
                   ? "0 8px 32px rgba(0,0,0,0.55)"
@@ -618,6 +674,18 @@ function ImportDropdown({
                 animation: "fadeIn 0.15s ease-out",
               }}
             >
+              <div
+                style={{
+                  color: t.textDim,
+                  fontSize: 10,
+                  fontWeight: 900,
+                  letterSpacing: 0.4,
+                  padding: "7px 14px 4px",
+                  textTransform: "uppercase",
+                }}
+              >
+                Canvas
+              </div>
               <ToolsMenuItem
                 icon="FolderOpen"
                 label="Choose from files"
@@ -636,6 +704,96 @@ function ImportDropdown({
                 }}
                 t={t}
               />
+              <div
+                style={{
+                  background: t.border,
+                  height: 1,
+                  margin: "5px 0",
+                }}
+              />
+              <div
+                style={{
+                  color: t.textDim,
+                  fontSize: 10,
+                  fontWeight: 900,
+                  letterSpacing: 0.4,
+                  padding: "7px 14px 4px",
+                  textTransform: "uppercase",
+                }}
+              >
+                Benchmarks
+              </div>
+              <div
+                style={{ display: "grid", gap: 8, padding: "6px 14px 10px" }}
+              >
+                <select
+                  value={selectedDatasetId}
+                  disabled={benchmarkLoading || benchmarkImporting}
+                  onChange={(e) => setSelectedDatasetId(e.target.value)}
+                  style={{
+                    width: "100%",
+                    background: t.inputBg,
+                    border: `1px solid ${t.border}`,
+                    borderRadius: 8,
+                    color: t.text,
+                    fontSize: 12,
+                    fontWeight: 700,
+                    padding: "8px 9px",
+                  }}
+                >
+                  {datasets.length === 0 ? (
+                    <option value="">
+                      {benchmarkLoading ? "Loading..." : "No benchmarks"}
+                    </option>
+                  ) : (
+                    datasets.map((dataset) => (
+                      <option key={dataset.id} value={dataset.id}>
+                        {dataset.name}
+                      </option>
+                    ))
+                  )}
+                </select>
+                <button
+                  type="button"
+                  onClick={handleBenchmarkImport}
+                  disabled={
+                    !selectedDatasetId || benchmarkLoading || benchmarkImporting
+                  }
+                  style={{
+                    alignItems: "center",
+                    background:
+                      selectedDatasetId &&
+                      !benchmarkLoading &&
+                      !benchmarkImporting
+                        ? BURG
+                        : t.inputBg,
+                    border: "none",
+                    borderRadius: 8,
+                    color:
+                      selectedDatasetId &&
+                      !benchmarkLoading &&
+                      !benchmarkImporting
+                        ? "#fff"
+                        : t.textDim,
+                    cursor:
+                      selectedDatasetId &&
+                      !benchmarkLoading &&
+                      !benchmarkImporting
+                        ? "pointer"
+                        : "not-allowed",
+                    display: "flex",
+                    fontSize: 12,
+                    fontWeight: 800,
+                    gap: 7,
+                    justifyContent: "center",
+                    padding: "8px 10px",
+                    width: "100%",
+                  }}
+                >
+                  <LIcon name="FlaskConical" size={13} color="currentColor" />
+                  {benchmarkImporting ? "Importing..." : "Import benchmark"}
+                </button>
+              </div>
             </div>
           </>
         )}
@@ -665,6 +823,7 @@ function ImportDropdown({
           dark={dark}
         />
       )}
+      {toast && <Toast message={toast} onDone={() => setToast(null)} />}
     </>
   );
 }
