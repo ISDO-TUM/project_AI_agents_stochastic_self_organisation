@@ -32,21 +32,35 @@ async def embed_texts(
 
     Returns a list of embedding vectors ordered to match the input list.
     Returns ``None`` on any failure so callers can fall back gracefully.
+
+    Blank texts (LLMs occasionally pass an empty query/content) are never sent
+    to the API — it rejects them with a 400, which would fail the *whole* batch.
+    They come back as zero vectors, which every consumer already treats as
+    "no embedding" (``cosine`` with a zero vector is 0.0). An all-blank batch
+    returns ``None`` without an API round-trip.
     """
     if not texts:
         return []
+    non_blank = [t for t in texts if t.strip()]
+    if not non_blank:
+        return None
     try:
         client = _get_embedding_client()
         response = await client.embeddings.create(
-            input=texts,
+            input=non_blank,
             model=model,
             encoding_format="float",
         )
         sorted_data = sorted(response.data, key=lambda e: e.index)
-        return [e.embedding for e in sorted_data]
+        vectors = [e.embedding for e in sorted_data]
     except Exception:
         logger.warning("Embedding API call failed; falling back to text similarity", exc_info=True)
         return None
+    if len(non_blank) == len(texts):
+        return vectors
+    zero = [0.0] * len(vectors[0])
+    it = iter(vectors)
+    return [next(it) if t.strip() else zero for t in texts]
 
 
 def cosine(a: list[float], b: list[float]) -> float:

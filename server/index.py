@@ -2,17 +2,18 @@ import asyncio
 import json
 import logging
 import os
-from collections.abc import AsyncGenerator, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
 from pathlib import Path
-from typing import Any
 
 from dotenv import load_dotenv
-from fastapi import FastAPI, Request, Response
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse, StreamingResponse
+from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
-from server.db import cleanup_stale_data, close_db, get_engine, init_db, prune_trials
+from server.db import close_db, init_db
 from server.llm.credentials import MissingCredentialsError
 from server.llm.langfuse_setup import langfuse_context
 from server.market_hive.routes import router as market_hive_router
@@ -31,28 +32,21 @@ from server.topology.routes import (
     statistics_router,
 )
 
+# Uvicorn's own dictConfig (Config.configure_logging(), run before this module
+# is imported) only touches its own "uvicorn"/"uvicorn.error"/"uvicorn.access"
+# loggers — it never sets a level or handler on the root logger. Without this,
+# every `logging.getLogger(__name__).info(...)` in server/* (swarm promotion,
+# equilibrium, and termination decisions included) silently resolves to
+# root's default WARNING threshold and never reaches the terminal, even with
+# --reload running in the foreground. LOG_LEVEL lets DEBUG be dialed in for a
+# specific run without a code change.
+logging.basicConfig(
+    level=os.environ.get("LOG_LEVEL", "INFO").upper(),
+    format="%(asctime)s %(levelname)-8s %(name)s: %(message)s",
+    datefmt="%H:%M:%S",
+)
+
 logger = logging.getLogger(__name__)
-
-_CLEANUP_INTERVAL_SECONDS = 3600  # run every hour
-_STALE_AFTER_HOURS = 24
-
-
-async def _cleanup_loop() -> None:
-    """Background task: hourly, drop stale agents/files and prune old run history."""
-    while True:
-        await asyncio.sleep(_CLEANUP_INTERVAL_SECONDS)
-        try:
-            deleted = await cleanup_stale_data(get_engine(), max_age_hours=_STALE_AFTER_HOURS)
-            if deleted:
-                logger.info("Periodic cleanup: removed %d stale agent(s)", deleted)
-        except Exception:
-            logger.exception("Periodic cleanup failed — will retry next cycle")
-        try:
-            pruned = await prune_trials(get_engine())
-            if pruned:
-                logger.info("Periodic cleanup: pruned %d trial(s) from history", pruned)
-        except Exception:
-            logger.exception("History pruning failed — will retry next cycle")
 
 
 # Search upward from this file so the .env at the repo root is always found,
@@ -79,19 +73,17 @@ for _var in _BASE_URL_VARS:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """Initialise the session database on startup and close it on shutdown."""
+    """Initialise the session database on startup and close it on shutdown.
+
+    Note: there is deliberately NO periodic cleanup task here. Agents, knowledge
+    files and run history persist until the user deletes them explicitly — the
+    former 24h stale-agent sweep and trial pruning were removed so data survives
+    long-running deployments.
+    """
     await init_db()
-    cleanup_task = asyncio.create_task(_cleanup_loop())
     try:
         yield
     finally:
-        cleanup_task.cancel()
-        try:
-            await cleanup_task
-        except asyncio.CancelledError:
-            # Expected during shutdown after explicit task cancellation.
-            # Intentionally ignored so application teardown can continue.
-            pass
         # Drain any Langfuse events still buffered in the background consumer so
         # they survive the container stopping (e.g. a Railway redeploy) instead
         # of being dropped mid-batch.
@@ -132,6 +124,7 @@ app.add_middleware(
         "X-LLM-API-Key",
         "X-LLM-Model",
         "X-Request-ID",
+        "X-User-Id",
     ],
 )
 
@@ -144,13 +137,44 @@ _SECURITY_HEADERS: dict[str, str] = {
 }
 
 
-@app.middleware("http")
-async def add_security_headers(request: Request, call_next: Callable[..., Any]) -> Response:
-    """Attach security-hardening response headers to every reply."""
-    response: Response = await call_next(request)
-    for header, value in _SECURITY_HEADERS.items():
-        response.headers[header] = value
-    return response
+class _SecurityHeadersMiddleware:
+    """Attach security-hardening response headers to every reply.
+
+    Implemented as a plain ASGI middleware rather than ``@app.middleware("http")``
+    (Starlette's ``BaseHTTPMiddleware``). ``BaseHTTPMiddleware`` runs the entire
+    downstream call — including this app's long-lived SSE ``StreamingResponse``
+    for ``POST /api/simulation/run`` — inside a *second* task with its own anyio
+    cancel scope. When a client disconnects mid-stream (a dropped proxy, or the
+    browser aborting the fetch — e.g. Next's Fast Refresh forcing a full page
+    reload), that scope cancels everything running underneath it, including the
+    swarm orchestrator's own best-effort "mark the run interrupted" cleanup and
+    the DB connection pool's teardown of the now-defunct connection. That was
+    producing a storm of ``asyncio.CancelledError`` / asyncpg "Exception
+    terminating connection" tracebacks on every dropped SSE connection, even
+    though the run itself was already being handled gracefully. A pure ASGI
+    middleware only wraps ``send``, so it adds no extra task or cancel scope
+    around the request.
+    """
+
+    def __init__(self, app: ASGIApp) -> None:
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_security_headers(message: Message) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                for header, value in _SECURITY_HEADERS.items():
+                    headers[header] = value
+            await send(message)
+
+        await self.app(scope, receive, send_with_security_headers)
+
+
+app.add_middleware(_SecurityHeadersMiddleware)
 
 
 @app.exception_handler(MissingCredentialsError)

@@ -24,7 +24,7 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.db import get_db
 from server.db.tables import agent_trust, agents
-from server.market_hive.blackboard import Blackboard
+from server.market_hive.blackboard import _ENDORSER_COUNT_SUBQUERY, Blackboard
 from server.market_hive.schemas import (
     AgentTrustEntry,
     AmendmentSchema,
@@ -76,23 +76,19 @@ async def _fetch_draft_entries(
         text(
             f"""
             SELECT de.id, de.run_id, de.thread_id, de.round, de.author_id,
-                   COALESCE(a.name, de.author_id) AS author_name,
+                   COALESCE(de.author_name, a.name, de.author_id) AS author_name,
                    de.entry_type, de.content,
                    de.reply_to, de.mention_agents, de.is_visible,
                    de.deleted_at, de.last_cited_round, de.created_at,
                    COALESCE(cc.cnt, 0) AS citation_count
             FROM draft_entries de
             LEFT JOIN agents a ON a.id = de.author_id
-            LEFT JOIN (
-                SELECT cited_entry_id, COUNT(*) AS cnt
-                FROM citations WHERE run_id = :run_id1
-                GROUP BY cited_entry_id
-            ) cc ON cc.cited_entry_id = de.id
-            WHERE de.run_id = :run_id2 {vis_clause}
+            LEFT JOIN ({_ENDORSER_COUNT_SUBQUERY}) cc ON cc.entry_id = de.id
+            WHERE de.run_id = :run_id {vis_clause}
             ORDER BY de.round ASC, de.created_at ASC
             """
         ),
-        {"run_id1": run_id, "run_id2": run_id},
+        {"run_id": run_id},
     )
     entries: list[DraftEntrySchema] = []
     for row in result.mappings().fetchall():
@@ -246,6 +242,25 @@ async def get_run_status(run_id: str, db: DBDep) -> RunStatusResponse:
         termination_round=run_row["termination_round"],
         token_usage=json.loads(run_row["token_usage"] or "{}"),
     )
+
+
+@router.get(
+    "/api/simulation/{run_id}/metrics",
+    summary="Consensus quality metrics for a terminated run",
+)
+async def get_run_metrics(run_id: str, db: DBDep) -> dict[str, Any]:
+    """The metrics snapshot computed once at run finalization (consensus
+    observability). 404s both when the run doesn't exist and when it hasn't
+    terminated yet — metrics are computed exactly once, at the end."""
+    row = (
+        await db.execute(text("SELECT metrics FROM run_metrics WHERE run_id = :id"), {"id": run_id})
+    ).fetchone()
+    if row is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="no metrics for this run (not found, or not yet terminated)",
+        )
+    return cast(dict[str, Any], json.loads(row[0]))
 
 
 @router.post(

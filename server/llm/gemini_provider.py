@@ -16,14 +16,25 @@ The API key is sent as a Bearer token in the ``Authorization`` header,
 consistent with how the proxy authenticates all providers.
 """
 
+import contextlib
+import logging
+from asyncio import CancelledError, create_task, wait_for
+from time import monotonic
 from typing import Any, cast
 
 import httpx
 
-from .base_provider import BaseLLMProvider
+from .base_provider import (
+    _MAX_CONSECUTIVE_ERROR_ITERATIONS,
+    BaseLLMProvider,
+    _is_tool_error,
+    _log_in_flight_progress,
+)
 from .credentials import resolve_api_key, resolve_base_url
 from .langfuse_setup import observe, update_current_generation
 from .normalizer import NormalizedToolCall, extract_gemini_tool_calls
+
+logger = logging.getLogger(__name__)
 
 _DEFAULT_MAX_TOKENS = 20_000
 
@@ -140,30 +151,90 @@ class GeminiProvider(BaseLLMProvider):
         system_prompt: str | None = None,
         tools: list[dict[str, Any]] | None = None,
         tool_handler: Any | None = None,
+        max_iterations: int | None = None,
     ) -> str:
+        effective_max_iterations = (
+            max_iterations if max_iterations is not None else self.max_iterations
+        )
         messages = self._build_messages(prompt, system_prompt)
         kwargs = self._build_kwargs(model, messages, tools)
 
         if system_prompt:
             kwargs["body"]["systemInstruction"] = {"parts": [{"text": system_prompt}]}
 
-        response: dict[str, Any] = {}
-        for _ in range(self.max_iterations):
-            response = await self._send(kwargs)
-            tool_calls = self._extract_tool_calls(response)
+        async def _run() -> str:
+            response: dict[str, Any] = {}
+            # Per-tool-name streak, not per-iteration — see base_provider.py's
+            # _call_inner for why: an iteration that also makes a succeeding
+            # call alongside a repeatedly-rejected one never reads as
+            # "all-error", so tracking each tool's own streak is what
+            # actually catches a model stuck on one bad action.
+            consecutive_errors_by_tool: dict[str, int] = {}
+            for iteration in range(effective_max_iterations):
+                response = await self._send(kwargs)
+                tool_calls = self._extract_tool_calls(response)
 
-            if not tool_calls:
-                return self._extract_text(response)
+                if not tool_calls:
+                    return self._extract_text(response)
 
-            results: list[tuple[NormalizedToolCall, str]] = []
-            for tc in tool_calls:
-                result = await tool_handler(tc.name, tc.arguments) if tool_handler else ""
-                results.append((tc, result))
+                results: list[tuple[NormalizedToolCall, str]] = []
+                stuck_tool: str | None = None
+                for tc in tool_calls:
+                    result = await tool_handler(tc.name, tc.arguments) if tool_handler else ""
+                    if _is_tool_error(result):
+                        logger.info(
+                            "Tool call rejected — model=%s name=%s args=%s -> %s",
+                            model,
+                            tc.name,
+                            tc.arguments,
+                            result[:300],
+                        )
+                        streak = consecutive_errors_by_tool.get(tc.name, 0) + 1
+                        consecutive_errors_by_tool[tc.name] = streak
+                        if streak >= _MAX_CONSECUTIVE_ERROR_ITERATIONS:
+                            stuck_tool = tc.name
+                    else:
+                        consecutive_errors_by_tool[tc.name] = 0
+                    results.append((tc, result))
 
-            self._append_assistant_and_tool_results(messages, response, results)
-            kwargs["body"]["contents"] = messages
+                self._append_assistant_and_tool_results(messages, response, results)
+                kwargs["body"]["contents"] = messages
 
-        return self._extract_text(response)
+                if stuck_tool is not None:
+                    logger.warning(
+                        "Gemini call ending turn early — model=%s tool=%s got %d consecutive "
+                        "rejections at iteration %d/%d — not recovering from this rejected "
+                        "tool call, stopping instead of exhausting the iteration budget.",
+                        model,
+                        stuck_tool,
+                        consecutive_errors_by_tool[stuck_tool],
+                        iteration + 1,
+                        effective_max_iterations,
+                    )
+                    return self._extract_text(response)
+
+            return self._extract_text(response)
+
+        started = monotonic()
+        watchdog = create_task(_log_in_flight_progress(model, started))
+        try:
+            result = await wait_for(_run(), timeout=self.timeout_seconds)
+            logger.info("LLM call complete — model=%s elapsed=%.2fs", model, monotonic() - started)
+            return result
+        except TimeoutError as err:
+            logger.error(
+                "LLM call timed out after %ds (elapsed=%.2fs) — model=%s",
+                self.timeout_seconds,
+                monotonic() - started,
+                model,
+            )
+            raise TimeoutError(
+                f"The LLM call exceeded the maximum allowed time ({self.timeout_seconds}s)."
+            ) from err
+        finally:
+            watchdog.cancel()
+            with contextlib.suppress(CancelledError):
+                await watchdog
 
 
 async def call_gemini(
@@ -172,6 +243,7 @@ async def call_gemini(
     system_prompt: str | None = None,
     tools: list[dict[str, Any]] | None = None,
     tool_handler: Any | None = None,
+    max_iterations: int | None = None,
 ) -> str:
     return await GeminiProvider().call(
         prompt,
@@ -179,4 +251,5 @@ async def call_gemini(
         system_prompt=system_prompt,
         tools=tools,
         tool_handler=tool_handler,
+        max_iterations=max_iterations,
     )

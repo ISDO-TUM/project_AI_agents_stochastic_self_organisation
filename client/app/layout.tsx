@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import {
   Space_Grotesk,
   JetBrains_Mono,
@@ -26,6 +26,15 @@ const playfair = Playfair_Display({
 export const metadata: Metadata = {
   title: "Mycellium",
   description: "Drop a new agent in. It finds its place. The system adapts.",
+  appleWebApp: {
+    capable: true,
+    statusBarStyle: "black-translucent",
+    title: "Mycellium",
+  },
+};
+
+export const viewport: Viewport = {
+  themeColor: "#8b1a2f",
 };
 
 export default function RootLayout({

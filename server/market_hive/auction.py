@@ -39,6 +39,7 @@ Two PRD points are reconciled here (both flagged in the progress doc):
 from __future__ import annotations
 
 import json
+import logging
 import uuid
 from dataclasses import dataclass, field
 from typing import Any
@@ -47,6 +48,9 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
 from server.llm.embeddings import cosine
+from server.market_hive.trust import trust_for_all
+
+logger = logging.getLogger(__name__)
 
 # ── Defaults (mirror SWARM_DEFAULTS in PRD §15) ────────────────────────────────
 DEFAULT_INVITE_FLOOR = 0.3
@@ -165,7 +169,7 @@ class AuctionEngine:
             .fetchall()
         )
 
-        trust_by_agent = await self._trust_scores(task_type)
+        trust_by_agent = await self._trust_scores(task_type, contract_emb)
 
         invitations: list[Invitation] = []
         all_agents: list[Invitation] = []
@@ -200,6 +204,34 @@ class AuctionEngine:
         return invitations
 
     # ── Phase 2: recording self-selection ────────────────────────────────────
+
+    async def resolve_thread_id(
+        self, *, contract_id: str | None, thread_id: str | None
+    ) -> str | None:
+        """Validate an LLM-supplied ``thread_id`` against real threads for this contract.
+
+        The auction prompt shows agents each thread's id to copy verbatim, but an
+        LLM can still echo the title or invent an id instead — inserting that
+        straight into ``bids.thread_id`` would FK-violate (PRD "never block the
+        run" philosophy: a bad copy should degrade to a contract-level bid, not
+        crash the turn).
+        """
+        if thread_id is None or contract_id is None:
+            return thread_id
+        row = (
+            await self._db.execute(
+                text("SELECT 1 FROM threads WHERE id = :id AND contract_id = :contract_id"),
+                {"id": thread_id, "contract_id": contract_id},
+            )
+        ).fetchone()
+        if row is None:
+            logger.warning(
+                "auction: thread_id %r not found for contract %s — treating as contract-level bid",
+                thread_id,
+                contract_id,
+            )
+            return None
+        return thread_id
 
     async def record_bid(
         self,
@@ -264,7 +296,10 @@ class AuctionEngine:
         contract = (
             (
                 await self._db.execute(
-                    text("SELECT task_type, confidence FROM contracts WHERE id = :id"),
+                    text(
+                        "SELECT task_type, confidence, contract_embedding "
+                        "FROM contracts WHERE id = :id"
+                    ),
                     {"id": contract_id},
                 )
             )
@@ -273,7 +308,8 @@ class AuctionEngine:
         )
         mm_confidence = float(contract["confidence"]) if contract else 0.0
         task_type = contract["task_type"] if contract else ""
-        trust_by_agent = await self._trust_scores(task_type)
+        contract_emb = self._parse_embedding(contract["contract_embedding"]) if contract else None
+        trust_by_agent = await self._trust_scores(task_type, contract_emb)
 
         thread_clause = (
             "AND thread_id = :thread_id" if thread_id is not None else "AND thread_id IS NULL"
@@ -411,15 +447,16 @@ class AuctionEngine:
 
     # ── helpers ────────────────────────────────────────────────────────────────
 
-    async def _trust_scores(self, domain: str) -> dict[str, float]:
-        """Map of agent_id → trust_score for a domain (only agents with a row)."""
-        rows = (
-            await self._db.execute(
-                text("SELECT agent_id, trust_score FROM agent_trust WHERE domain = :domain"),
-                {"domain": domain},
-            )
-        ).fetchall()
-        return {r[0]: float(r[1]) for r in rows}
+    async def _trust_scores(
+        self, domain: str, contract_embedding: list[float] | None
+    ) -> dict[str, float]:
+        """Map of agent_id → trust_score for this contract (only agents with
+        ledger history). Similarity-weighted against ``contract_embedding``
+        when present; falls back to exact domain-label matching offline."""
+        scores: dict[str, float] = await trust_for_all(
+            self._db, contract_embedding=contract_embedding, domain_label=domain
+        )
+        return scores
 
     async def _insert_bid(
         self,

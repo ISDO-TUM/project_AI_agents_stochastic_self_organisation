@@ -60,6 +60,8 @@ _ECSAS_TABLES = {
     "reputation",
     "agent_trust",
     "amendments",
+    "disputes",
+    "turn_log",
 }
 
 
@@ -102,14 +104,75 @@ async def test_draft_entries_columns(db: AsyncConnection) -> None:
         "content",
         "is_visible",
         "last_cited_round",
+        "claim",
+        "stance",
+        "stance_target",
+        "evidence",
+        "merged_into",
     ):
         assert expected in cols, f"draft_entries table missing column: {expected}"
 
 
 async def test_confirmed_entries_columns(db: AsyncConnection) -> None:
     cols = await _get_columns(db, "confirmed_entries")
-    for expected in ("id", "run_id", "thread_id", "content", "entry_type", "round_confirmed"):
+    for expected in (
+        "id",
+        "run_id",
+        "thread_id",
+        "content",
+        "entry_type",
+        "round_confirmed",
+        "status",
+    ):
         assert expected in cols, f"confirmed_entries table missing column: {expected}"
+
+
+async def test_citations_columns(db: AsyncConnection) -> None:
+    cols = await _get_columns(db, "citations")
+    for expected in (
+        "id",
+        "run_id",
+        "citing_agent_id",
+        "cited_entry_id",
+        "round",
+        "reason",
+    ):
+        assert expected in cols, f"citations table missing column: {expected}"
+
+
+async def test_disputes_columns(db: AsyncConnection) -> None:
+    cols = await _get_columns(db, "disputes")
+    for expected in (
+        "id",
+        "run_id",
+        "disputing_agent_id",
+        "confirmed_entry_id",
+        "reason",
+        "round",
+        "created_at",
+    ):
+        assert expected in cols, f"disputes table missing column: {expected}"
+
+
+async def test_turn_log_columns(db: AsyncConnection) -> None:
+    cols = await _get_columns(db, "turn_log")
+    for expected in ("id", "run_id", "agent_id", "phase", "round", "status", "created_at"):
+        assert expected in cols, f"turn_log table missing column: {expected}"
+
+
+async def test_swarm_runs_resilient_and_ratification_columns(db: AsyncConnection) -> None:
+    cols = await _get_columns(db, "swarm_runs")
+    for expected in (
+        "id",
+        "status",
+        "final_answer",
+        "phase",
+        "current_round",
+        "heartbeat_at",
+        "config",
+        "ratification",
+    ):
+        assert expected in cols, f"swarm_runs table missing column: {expected}"
 
 
 async def test_bids_columns(db: AsyncConnection) -> None:
@@ -161,3 +224,73 @@ async def test_metadata_create_all_is_idempotent(db: AsyncConnection) -> None:
     await db.run_sync(metadata.create_all)
     tables = await _get_tables(db)
     assert "swarm_runs" in tables
+
+
+def test_structured_columns_have_migration_entries() -> None:
+    """Guards the documents_used bug class: a new column must appear in BOTH
+    the PostgreSQL and SQLite branches of _apply_column_migrations, not just
+    in tables.py (which only fresh databases pick up via create_all)."""
+    import inspect
+
+    from server import db as db_module
+
+    src = inspect.getsource(db_module._apply_column_migrations)
+    for col in (
+        "claim",
+        "stance",
+        "stance_target",
+        "evidence",
+        "merged_into",
+        "heartbeat_at",
+        "ratification",
+        "phase",
+        "current_round",
+        "session_id",
+        "parent_run_id",
+        "origin_run_id",
+    ):
+        assert src.count(col) >= 2, f"{col} missing from a migration branch"
+
+
+async def test_reaper_marks_stale_running_runs_interrupted(db: AsyncConnection) -> None:
+    from datetime import UTC, datetime, timedelta
+
+    from sqlalchemy import text
+
+    from server.db import reap_stale_runs
+
+    await db.execute(
+        text(
+            "INSERT INTO swarm_runs (id, status, mode, heartbeat_at) "
+            "VALUES ('stale', 'running', 'swarm', :old), "
+            "       ('fresh', 'running', 'swarm', :now)"
+        ),
+        {"old": datetime.now(UTC) - timedelta(minutes=30), "now": datetime.now(UTC)},
+    )
+    await db.commit()
+    n = await reap_stale_runs(db)
+    assert n == 1
+    status_rows = (await db.execute(text("SELECT id, status FROM swarm_runs"))).fetchall()
+    rows = {r[0]: r[1] for r in status_rows}
+    assert rows["stale"] == "interrupted" and rows["fresh"] == "running"
+
+
+def test_max_rounds_defaults_to_five() -> None:
+    from server.market_hive.schemas import SwarmRunConfig
+
+    assert SwarmRunConfig(prompt="test").max_rounds == 5
+
+
+def test_quiescence_is_a_valid_termination_reason() -> None:
+    from server.market_hive.schemas import SwarmFinalOutput
+
+    # SwarmFinalOutput.termination_reason must accept "quiescence"
+    out = SwarmFinalOutput(
+        run_id="test_run",
+        answers={},
+        confirmed_layer=[],
+        final_answer=None,
+        termination_round=3,
+        termination_reason="quiescence",
+    )
+    assert out.termination_reason == "quiescence"

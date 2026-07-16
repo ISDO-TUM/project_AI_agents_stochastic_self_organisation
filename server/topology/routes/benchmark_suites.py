@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import math
 import re
 import uuid
 from collections import defaultdict
@@ -28,6 +29,7 @@ from server.db.tables import (
     benchmark_suites,
     messages,
     rounds,
+    trials,
 )
 from server.llm.credentials import RequestCredentials, current_credentials, use_credentials
 from server.schemas import (
@@ -276,7 +278,10 @@ async def _score_trial(
     }
 
 
-async def _llm_usage_for_trials(trial_ids: list[str]) -> dict[str, int | float]:
+async def _llm_usage_for_trials(
+    db: AsyncConnection,
+    trial_ids: list[str],
+) -> dict[str, int | float]:
     if not trial_ids:
         return {
             "generation_count": 0,
@@ -285,7 +290,15 @@ async def _llm_usage_for_trials(trial_ids: list[str]) -> dict[str, int | float]:
             "total_tokens": 0,
             "total_cost": 0.0,
         }
-    observations, _message = await _fetch_langfuse_observations_multi(trial_ids)
+    rows = await db.execute(
+        select(trials.c.id, trials.c.created_at, trials.c.completed_at).where(
+            trials.c.id.in_(trial_ids)
+        )
+    )
+    trial_rows = [dict(row) for row in rows.mappings().all()]
+    observations, message = await _fetch_langfuse_observations_multi(trial_rows)
+    if message:
+        logger.debug("Benchmark Langfuse usage unavailable: %s", message)
     input_tokens = 0
     output_tokens = 0
     total_cost = 0.0
@@ -293,7 +306,9 @@ async def _llm_usage_for_trials(trial_ids: list[str]) -> dict[str, int | float]:
         obs_input, obs_output = _usage(obs)
         input_tokens += obs_input
         output_tokens += obs_output
-        total_cost += _cost(obs)
+        obs_cost = _cost(obs)
+        if math.isfinite(obs_cost):
+            total_cost += obs_cost
     return {
         "generation_count": len(observations),
         "input_tokens": input_tokens,
@@ -558,7 +573,7 @@ async def benchmark_suite_results(suite_id: str, db: DBDep) -> BenchmarkSuiteRes
             for run in completed
             if isinstance(run.score.get("message_count"), (int, float))
         ]
-        llm_usage = await _llm_usage_for_trials([run.trial_id for run in completed])
+        llm_usage = await _llm_usage_for_trials(db, [run.trial_id for run in completed])
         total_tokens = int(llm_usage["total_tokens"])
         total_cost = float(llm_usage["total_cost"])
         aggregates.append(

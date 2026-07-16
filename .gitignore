@@ -40,3 +40,8 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 demos/company-dataset-demo
+Benchmark-result
+.worktrees/
+
+# Baseline benchmark harness — raw run output (real LLM cost per run)
+benchmarks/results/

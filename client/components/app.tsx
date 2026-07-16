@@ -4,6 +4,7 @@ import {
   useState,
   useEffect,
   useCallback,
+  useMemo,
   useRef,
   useSyncExternalStore,
 } from "react";
@@ -30,7 +31,6 @@ import {
   createFile,
   deleteFileApi,
   attachFile,
-  clearAll,
 } from "@/lib/api";
 import { Canvas } from "@/components/canvas";
 import { LogWall } from "@/components/log-wall";
@@ -50,12 +50,13 @@ import {
   subscribeAppMode,
 } from "@/components/mode-gate";
 import {
-  SwarmConfigModal,
   SwarmRunConfig,
-} from "@/components/swarm-config-modal";
+  DEFAULT_SWARM_CONFIG,
+} from "@/components/swarm-config";
 import { useDummySwarm } from "@/hooks/useDummySwarm";
 import { useSwarmRun } from "@/hooks/useSwarmRun";
 import { FinalAnswerReveal } from "@/components/canvas/final-answer-reveal";
+import { extractResultTable } from "@/lib/result-table";
 import { NotifyConsentModal } from "@/components/notify-consent-modal";
 import {
   NotifyScope,
@@ -95,6 +96,8 @@ export function App({ onModeSelected }: AppProps = {}) {
     dispatch,
     saveAgent,
     deleteAgent,
+    removeAgentFromCanvas,
+    addExistingAgents,
     saveSource,
     deleteSource,
     connectNodes,
@@ -180,6 +183,8 @@ export function App({ onModeSelected }: AppProps = {}) {
   const [currentPrompt, setCurrentPrompt] = useState("");
   const [prefillPrompt, setPrefillPrompt] = useState<string | null>(null);
   const [pendingSwarmPrompt, setPendingSwarmPrompt] = useState("");
+  const [swarmConfig, setSwarmConfig] =
+    useState<SwarmRunConfig>(DEFAULT_SWARM_CONFIG);
   const [topbarWidth, setTopbarWidth] = useState<number | null>(null);
   const [topbarHeight, setTopbarHeight] = useState<number | null>(null);
   const [promptBarHeight, setPromptBarHeight] = useState<number | null>(null);
@@ -188,7 +193,7 @@ export function App({ onModeSelected }: AppProps = {}) {
   // (draft → confirmed), like the dummy — no REST re-fetch, no activity log.
   const swarm = useSwarmRun();
   // The completion answer overlay shows once per run; dismissing it sets this so
-  // it stays closed until the next run resets it (see handleSwarmConfigConfirm).
+  // it stays closed until the next run resets it (see handleRun's swarm branch).
   const [answerDismissed, setAnswerDismissed] = useState(false);
   // First-run consent for an "answer ready" browser notification.
   const [notifyConsentOpen, setNotifyConsentOpen] = useState(false);
@@ -197,6 +202,18 @@ export function App({ onModeSelected }: AppProps = {}) {
   const blackboardState = dummy.state.active
     ? dummy.state.blackboard
     : swarm.state.blackboard;
+  // The Market Maker's drafting window: a run is underway but its contract
+  // hasn't streamed in yet. Animates the MM chip in the agent dock.
+  const swarmDrafting =
+    (dummy.state.active || swarm.state.active) && !blackboardState.contract;
+  // The run's tabular deliverable (e.g. the allocation table), lifted from the
+  // author's blackboard message so the completion overlay can show it under the
+  // answer. Only meaningful once the run is done.
+  const swarmResultTable = useMemo(
+    () =>
+      swarm.state.done ? extractResultTable(swarm.state.blackboard) : null,
+    [swarm.state.done, swarm.state.blackboard],
+  );
 
   // Run configuration — edited in the Settings panel, read at run start.
   const [consensusMode, setConsensusMode] =
@@ -241,7 +258,25 @@ export function App({ onModeSelected }: AppProps = {}) {
     (prompt: string) => {
       if (appMode === "swarm") {
         setPendingSwarmPrompt(prompt);
-        setSwarmConfigOpen(true);
+        if (prompt.trim().toLowerCase() === "test_mohamed") {
+          swarm.reset();
+          const fixture = generateDummyRun(
+            { takers: swarmConfig.takersMax, rounds: swarmConfig.roundsMax },
+            agents,
+          );
+          dummy.start(fixture);
+          setRunId(fixture.runId);
+          return;
+        }
+        dummy.reset();
+        setRunId(null);
+        setAnswerDismissed(false);
+        // First swarm run, notifications available, never asked → request consent.
+        // Non-blocking: the run starts regardless of the user's choice.
+        if (notificationsSupported() && readNotifyPref() === null) {
+          setNotifyConsentOpen(true);
+        }
+        swarm.start(prompt, undefined, swarmConfig);
         return;
       }
       const active = rules.filter((r) => selectedRules.has(r.id));
@@ -253,6 +288,10 @@ export function App({ onModeSelected }: AppProps = {}) {
     },
     [
       appMode,
+      swarmConfig,
+      agents,
+      dummy,
+      swarm,
       rules,
       selectedRules,
       runSim,
@@ -261,32 +300,6 @@ export function App({ onModeSelected }: AppProps = {}) {
       fanout,
       iterations,
     ],
-  );
-
-  const handleSwarmConfigConfirm = useCallback(
-    (config: SwarmRunConfig) => {
-      setSwarmConfigOpen(false);
-      if (pendingSwarmPrompt.trim().toLowerCase() === "test_mohamed") {
-        swarm.reset();
-        const fixture = generateDummyRun(
-          { takers: config.takersMax, rounds: config.roundsMax },
-          agents,
-        );
-        dummy.start(fixture);
-        setRunId(fixture.runId);
-        return;
-      }
-      dummy.reset();
-      setRunId(null);
-      setAnswerDismissed(false);
-      // First swarm run, notifications available, never asked → request consent.
-      // Non-blocking: the run starts regardless of the user's choice.
-      if (notificationsSupported() && readNotifyPref() === null) {
-        setNotifyConsentOpen(true);
-      }
-      swarm.start(pendingSwarmPrompt);
-    },
-    [pendingSwarmPrompt, agents, dummy, swarm],
   );
 
   const handleBenchmarkStarted = useCallback((suiteId: string) => {
@@ -358,7 +371,10 @@ export function App({ onModeSelected }: AppProps = {}) {
         !e.ctrlKey
       ) {
         if (selNode) {
-          if (agents.some((a) => a.id === selNode)) deleteAgent(selNode);
+          // Canvas gesture — removes agents from the canvas only; files are
+          // still deleted for real.
+          if (agents.some((a) => a.id === selNode))
+            removeAgentFromCanvas(selNode);
           else deleteSource(selNode);
           setSelNode(null);
         }
@@ -374,7 +390,7 @@ export function App({ onModeSelected }: AppProps = {}) {
     selNode,
     selEdge,
     agents,
-    deleteAgent,
+    removeAgentFromCanvas,
     deleteSource,
     deleteEdge,
     setPanel,
@@ -387,6 +403,22 @@ export function App({ onModeSelected }: AppProps = {}) {
   const exportCanvas = useCallback(() => {
     const payload: CanvasState = { agents, sources, edges };
     if (selectedRules.size > 0) payload.selectedRules = [...selectedRules];
+    // Embed the last completed Market Hive run so its results can be saved
+    // alongside the setup and compared against later runs.
+    if (swarm.state.done && swarm.state.runId) {
+      const board = swarm.state.blackboard;
+      payload.swarmResults = {
+        runId: swarm.state.runId,
+        trialId: swarm.state.trialId,
+        experimentId: swarm.state.experimentId,
+        prompt: pendingSwarmPrompt || null,
+        exportedAt: new Date().toISOString(),
+        finalAnswer: swarm.state.finalAnswer,
+        threads: board.threads,
+        confirmed: board.confirmed,
+        draft: board.draft,
+      };
+    }
     const blob = new Blob([JSON.stringify(payload, null, 2)], {
       type: "application/json",
     });
@@ -396,7 +428,7 @@ export function App({ onModeSelected }: AppProps = {}) {
     a.download = "canvas.json";
     a.click();
     URL.revokeObjectURL(url);
-  }, [agents, sources, edges, selectedRules]);
+  }, [agents, sources, edges, selectedRules, swarm.state, pendingSwarmPrompt]);
 
   const showImportError = useCallback((msg: string) => {
     if (importErrorTimerRef.current) clearTimeout(importErrorTimerRef.current);
@@ -461,6 +493,7 @@ export function App({ onModeSelected }: AppProps = {}) {
       }
 
       // Render the imported canvas locally first so the user sees it instantly.
+      // The LOAD dispatch also updates the stored canvas membership.
       dispatch({ type: "LOAD", state: data });
       setBenchmarkDatasetId(importedBenchmarkDatasetId);
       if (importedBenchmarkPrompt) {
@@ -488,13 +521,24 @@ export function App({ onModeSelected }: AppProps = {}) {
           ...existingFiles.map((f) => deleteFileApi(f.id).catch(() => {})),
         ]);
 
+        // Defensively delete-by-id before each create: imported files/agents
+        // often carry fixed ids (so a demo's internal edges resolve), and a
+        // stale row with that same id may not be visible in existingAgents/
+        // existingFiles above (e.g. it was scoped to a different session) —
+        // without this the create below 409s on an id it can't see to clean up.
         await Promise.all(
           data.sources.map((s) =>
-            createFile(s.name, s.content, s.id).catch(() => {}),
+            deleteFileApi(s.id)
+              .catch(() => {})
+              .then(() => createFile(s.name, s.content, s.id).catch(() => {})),
           ),
         );
         await Promise.all(
-          data.agents.map((a) => createAgent(a, { preserveId: true })),
+          data.agents.map((a) =>
+            deleteAgentApi(a.id)
+              .catch(() => {})
+              .then(() => createAgent(a, { preserveId: true })),
+          ),
         );
         const fileIds = new Set(data.sources.map((s) => s.id));
         await Promise.all(
@@ -538,18 +582,21 @@ export function App({ onModeSelected }: AppProps = {}) {
     [simMode, agents, sources, setPanel],
   );
 
-  const nodeCtxItems = (id: string): ContextMenuItem[] => [
-    { label: "Edit", icon: "Settings2", fn: () => openPanel(id) },
-    {
-      label: "Delete",
-      icon: "Trash2",
-      danger: true,
-      fn: () => {
-        if (agents.some((a) => a.id === id)) deleteAgent(id);
-        else deleteSource(id);
+  const nodeCtxItems = (id: string): ContextMenuItem[] => {
+    const isAgent = agents.some((a) => a.id === id);
+    return [
+      { label: "Edit", icon: "Settings2", fn: () => openPanel(id) },
+      {
+        label: isAgent ? "Remove from Canvas" : "Delete",
+        icon: isAgent ? "Eraser" : "Trash2",
+        danger: !isAgent,
+        fn: () => {
+          if (isAgent) removeAgentFromCanvas(id);
+          else deleteSource(id);
+        },
       },
-    },
-  ];
+    ];
+  };
 
   const canvasCtxItems: ContextMenuItem[] = [
     {
@@ -607,13 +654,22 @@ export function App({ onModeSelected }: AppProps = {}) {
   }, [setPanel, setSelNode]);
 
   const onClear = useCallback(async () => {
-    await clearAll().catch(() => {});
+    // Clearing empties the canvas only — agents and files stay in the DB (and
+    // in the agents list); they can be re-added via the "Existing" tab.
     dispatch({ type: "CLEAR" });
     // Also wipe the swarm run state and boards so the canvas starts fresh.
+    // Both run hooks must be reset: `blackboardState` falls back to
+    // `swarm.state.blackboard` whenever `dummy.state.active` is false, so a
+    // real (non-"test_mohamed") run's draft/confirmed/threads — persisted to
+    // sessionStorage by useSwarmRun — used to survive Clear entirely and kept
+    // showing up in the draft board / bidding board / graph view.
     dummy.reset();
+    swarm.reset();
     setRunId(null);
+    setAnswerDismissed(false);
+    setBiddingBoardOpen(false);
     stopSim();
-  }, [dispatch, dummy, stopSim]);
+  }, [dispatch, dummy, swarm, stopSim]);
   const onAutoLayout = useCallback(
     () => dispatch({ type: "AUTO_LAYOUT" }),
     [dispatch],
@@ -750,9 +806,13 @@ export function App({ onModeSelected }: AppProps = {}) {
           swarmFinalAnswer={
             appMode === "swarm" ? swarm.state.finalAnswer : null
           }
+          swarmRatification={
+            appMode === "swarm" ? swarm.state.ratification : null
+          }
           onShowFinalAnswer={() => setAnswerDismissed(false)}
           swarmTrustVectors={dummy.state.trustVectors}
           swarmRespondingIds={swarm.state.responding}
+          swarmDrafting={appMode === "swarm" && swarmDrafting}
           phonebook={
             topology === "dynamic"
               ? {
@@ -809,8 +869,8 @@ export function App({ onModeSelected }: AppProps = {}) {
           onPrefillConsumed={() => setPrefillPrompt(null)}
           onPromptChange={setCurrentPrompt}
           iterations={iterations}
-          onIterationsChange={setIterations}
-          batchProgress={batchProgress}
+          onIterationsChange={appMode === "swarm" ? undefined : setIterations}
+          batchProgress={appMode === "swarm" ? null : batchProgress}
           onHeightChange={setPromptBarHeight}
         />
       </div>
@@ -845,6 +905,8 @@ export function App({ onModeSelected }: AppProps = {}) {
           simRunning={simMode}
           onClose={() => setShowTweaks(false)}
           appMode={appMode}
+          swarmConfig={swarmConfig}
+          onSwarmConfigChange={setSwarmConfig}
         />
       )}
 
@@ -852,6 +914,17 @@ export function App({ onModeSelected }: AppProps = {}) {
         <SwarmConfigModal
           onCancel={() => setSwarmConfigOpen(false)}
           onConfirm={handleSwarmConfigConfirm}
+        />
+      )}
+
+      {benchmarkOpen && (
+        <BenchmarkSuiteModal
+          datasetId={benchmarkDatasetId}
+          prompt={currentPrompt}
+          fanout={fanout}
+          agentCount={agents.length}
+          onCancel={() => setBenchmarkOpen(false)}
+          onStarted={handleBenchmarkStarted}
         />
       )}
 
@@ -885,6 +958,8 @@ export function App({ onModeSelected }: AppProps = {}) {
         findings={swarm.state.blackboard.confirmed.filter(
           (e) => e.entry_type === "finding",
         )}
+        ratification={swarm.state.ratification}
+        resultTable={swarmResultTable}
         onClose={() => setAnswerDismissed(true)}
       />
 
@@ -901,8 +976,20 @@ export function App({ onModeSelected }: AppProps = {}) {
             setPanel(null);
             setSourceOverlay(null);
           }}
+          onAddExisting={async (picked) => {
+            await addExistingAgents(picked);
+            setPanel(null);
+            setSourceOverlay(null);
+          }}
           onDelete={async (id) => {
             await deleteAgent(id);
+            setPanel(null);
+            setSourceOverlay(null);
+            setSelNode(null);
+            setCtx(null);
+          }}
+          onClearFromCanvas={(id) => {
+            removeAgentFromCanvas(id);
             setPanel(null);
             setSourceOverlay(null);
             setSelNode(null);
@@ -1016,8 +1103,8 @@ export function App({ onModeSelected }: AppProps = {}) {
           >
             <div
               style={{
-                width: "min(1100px, 92vw)",
-                height: "min(820px, 88vh)",
+                width: "min(1240px, 94vw)",
+                height: "min(840px, 90vh)",
                 borderRadius: 16,
                 overflow: "hidden",
                 boxShadow: dark

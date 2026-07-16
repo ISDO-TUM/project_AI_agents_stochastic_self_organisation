@@ -12,7 +12,7 @@ export const PopoverAnchor = PopoverPrimitive.Anchor;
 export const PopoverContent = forwardRef<
   React.ElementRef<typeof PopoverPrimitive.Content>,
   React.ComponentPropsWithoutRef<typeof PopoverPrimitive.Content>
->(({ children, sideOffset = 10, ...props }, ref) => {
+>(({ children, sideOffset = 10, style, ...props }, ref) => {
   const { dark } = useTheme();
   const t = getTheme(dark);
   return (
@@ -32,6 +32,12 @@ export const PopoverContent = forwardRef<
           minWidth: 240,
           zIndex: 9999,
           animation: "selectIn 0.15s cubic-bezier(0.16,1,0.3,1)",
+          // Merged, not overwritten — a caller-supplied `style` (e.g. the
+          // graph view's `{ maxWidth: 340 }`) must extend these defaults,
+          // not replace them. This previously wiped out background/border/
+          // zIndex/animation for any caller that passed its own `style`,
+          // leaving the popover open in the DOM but fully invisible.
+          ...style,
         }}
         {...props}
       >

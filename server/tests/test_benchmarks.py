@@ -1,4 +1,9 @@
+import pytest
 from httpx import AsyncClient
+
+from server.db import get_engine
+from server.db.tables import trials
+from server.topology.routes import benchmark_suites
 
 _DEMO_AGENT_IDS = [
     "a1111111-1111-4111-8111-111111111111",
@@ -115,3 +120,44 @@ async def test_demo_benchmark_needles_lookup_endpoint_is_removed(
     response = await client.get("/benchmark/needlehaystack/missing/needles")
 
     assert response.status_code == 404
+
+
+async def test_benchmark_usage_fetches_langfuse_with_trial_rows(
+    client: AsyncClient,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: list[list[dict[str, object]]] = []
+
+    async def fake_fetch(rows: list[dict[str, object]]) -> tuple[list[object], None]:
+        captured.append(rows)
+        return [], None
+
+    monkeypatch.setattr(
+        benchmark_suites,
+        "_fetch_langfuse_observations_multi",
+        fake_fetch,
+    )
+
+    async with get_engine().connect() as conn:
+        await conn.execute(
+            trials.insert().values(
+                id="trial-benchmark-usage",
+                user_prompt="Who is the approved supplier?",
+                description="benchmark run",
+                mode="plurality_voting",
+                status="completed",
+                created_at="2026-01-01T00:00:00+00:00",
+                completed_at="2026-01-01T00:01:00+00:00",
+            )
+        )
+        await conn.commit()
+
+        usage = await benchmark_suites._llm_usage_for_trials(
+            conn,
+            ["trial-benchmark-usage"],
+        )
+
+    assert usage["total_tokens"] == 0
+    assert captured
+    assert captured[0][0]["id"] == "trial-benchmark-usage"
+    assert captured[0][0]["created_at"] == "2026-01-01T00:00:00+00:00"

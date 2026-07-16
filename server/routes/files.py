@@ -13,11 +13,15 @@ from server.db import deserialise_knowledge_file_row, get_db
 from server.db.tables import knowledge_files
 from server.guardrails import PromptInjectionError, sanitize_prompt
 from server.schemas import KnowledgeFileCreate, KnowledgeFileResponse, KnowledgeFileUpdate
+from server.users import UserIdDep, scoped
 
 router = APIRouter(prefix="/api/files", tags=["Knowledge Files"])
 
 DBDep = Annotated[AsyncConnection, Depends(get_db)]
-_PATCHABLE_COLUMNS: frozenset[str] = frozenset(KnowledgeFileUpdate.model_fields.keys())
+_NON_COLUMN_FIELDS: frozenset[str] = frozenset({"skip_injection_check"})
+_PATCHABLE_COLUMNS: frozenset[str] = (
+    frozenset(KnowledgeFileUpdate.model_fields.keys()) - _NON_COLUMN_FIELDS
+)
 
 
 @router.post(
@@ -27,17 +31,21 @@ _PATCHABLE_COLUMNS: frozenset[str] = frozenset(KnowledgeFileUpdate.model_fields.
     summary="Create a new knowledge file",
     description="Persist a new knowledge file and return it with its generated UUID.",
 )
-async def create_knowledge_file(body: KnowledgeFileCreate, db: DBDep) -> KnowledgeFileResponse:
-    # Sanitise content to prevent stored prompt injection
-    try:
-        sanitize_prompt(body.content, field_name="knowledge file content")
-    except PromptInjectionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-        ) from exc
+async def create_knowledge_file(
+    body: KnowledgeFileCreate, db: DBDep, user_id: UserIdDep = None
+) -> KnowledgeFileResponse:
+    if not body.skip_injection_check:
+        try:
+            sanitize_prompt(body.content, field_name="knowledge file content")
+        except PromptInjectionError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
     file_id = body.id or str(uuid.uuid4())
     await db.execute(
-        insert(knowledge_files).values(id=file_id, name=body.name, content=body.content)
+        insert(knowledge_files).values(
+            id=file_id, name=body.name, content=body.content, user_id=user_id
+        )
     )
     await db.commit()
     result = await db.execute(select(knowledge_files).where(knowledge_files.c.id == file_id))
@@ -52,10 +60,10 @@ async def create_knowledge_file(body: KnowledgeFileCreate, db: DBDep) -> Knowled
 @router.get(
     "",
     response_model=list[KnowledgeFileResponse],
-    summary="List all knowledge files",
+    summary="List the caller's knowledge files",
 )
-async def list_knowledge_files(db: DBDep) -> list[KnowledgeFileResponse]:
-    result = await db.execute(select(knowledge_files))
+async def list_knowledge_files(db: DBDep, user_id: UserIdDep = None) -> list[KnowledgeFileResponse]:
+    result = await db.execute(scoped(select(knowledge_files), knowledge_files.c.user_id, user_id))
     rows = result.mappings().all()
     return [KnowledgeFileResponse(**deserialise_knowledge_file_row(row)) for row in rows]
 
@@ -84,13 +92,13 @@ async def get_knowledge_file(file_id: str, db: DBDep) -> KnowledgeFileResponse:
 async def replace_knowledge_file(
     file_id: str, body: KnowledgeFileCreate, db: DBDep
 ) -> KnowledgeFileResponse:
-    # Sanitise content to prevent stored prompt injection
-    try:
-        sanitize_prompt(body.content, field_name="knowledge file content")
-    except PromptInjectionError as exc:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
-        ) from exc
+    if not body.skip_injection_check:
+        try:
+            sanitize_prompt(body.content, field_name="knowledge file content")
+        except PromptInjectionError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail=str(exc)
+            ) from exc
     existing = await db.execute(select(knowledge_files.c.id).where(knowledge_files.c.id == file_id))
     if existing.first() is None:
         raise HTTPException(
@@ -128,7 +136,7 @@ async def update_knowledge_file(
         )
 
     # Sanitise content if provided
-    if body.content is not None:
+    if body.content is not None and not body.skip_injection_check:
         try:
             sanitize_prompt(body.content, field_name="knowledge file content")
         except PromptInjectionError as exc:

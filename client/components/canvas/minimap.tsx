@@ -1,7 +1,7 @@
 "use client";
 
 import { Agent, Source, Edge } from "@/lib/types";
-import { BURG, getTheme } from "@/lib/theme";
+import { BURG, getTheme, SURFACE_DARK_RGB } from "@/lib/theme";
 import { useTheme } from "@/lib/theme-context";
 
 interface MinimapProps {
@@ -60,7 +60,9 @@ export function Minimap({ agents, sources, edges }: MinimapProps) {
         width={W}
         height={H}
         style={{
-          background: dark ? "rgba(6,5,12,0.82)" : "rgba(255,255,255,0.82)",
+          background: dark
+            ? `rgba(${SURFACE_DARK_RGB},0.9)`
+            : "rgba(255,255,255,0.82)",
           backdropFilter: "blur(12px)",
           borderRadius: 10,
           border: `1px solid ${t.border}`,

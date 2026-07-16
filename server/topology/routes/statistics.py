@@ -6,6 +6,7 @@ import asyncio
 import logging
 from collections import Counter, defaultdict
 from collections.abc import Sequence
+from datetime import UTC, datetime, timedelta
 from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, status
@@ -17,6 +18,11 @@ from server.db.tables import agents, connections, experiments, messages, rounds,
 from server.llm import call_agent
 from server.llm.credentials import resolve_api_key, use_credentials
 from server.llm.embeddings import cosine, embed_texts
+from server.market_hive.history import (
+    SWARM_BOARD_ID,
+    SWARM_BOARD_MESSAGE_TYPES,
+    SWARM_BOARD_NAME,
+)
 from server.schemas import (
     AgentStatistics,
     ConsistencyReport,
@@ -37,6 +43,7 @@ from server.schemas import (
     RoundStatistics,
     TrialStatisticsSummary,
 )
+from server.users import UserIdDep, scoped
 
 router = APIRouter(prefix="/api/statistics", tags=["Statistics"])
 logger = logging.getLogger(__name__)
@@ -48,6 +55,14 @@ _CONN_ROUNDS = connections.join(rounds, rounds.c.id == connections.c.round_id)
 _BIDDING_BOARD_ID = "__bidding_board__"
 _BIDDING_BOARD_NAME = "Board"
 _BIDDING_BOARD_MESSAGE_TYPES = ("bidding_bid", "bidding_match")
+
+# Modes whose agents converse with a shared board rather than each other. The
+# graph views synthesise agent→board edges from these message types, since
+# board-directed messages carry no to_agent_id.
+_BOARD_BY_MODE: dict[str, tuple[tuple[str, ...], str, str]] = {
+    "bidding": (_BIDDING_BOARD_MESSAGE_TYPES, _BIDDING_BOARD_ID, _BIDDING_BOARD_NAME),
+    "swarm": (SWARM_BOARD_MESSAGE_TYPES, SWARM_BOARD_ID, SWARM_BOARD_NAME),
+}
 
 
 def _is_agent_edge(from_agent_id: str | None, to_agent_id: str | None) -> bool:
@@ -118,19 +133,21 @@ async def trial_summary(trial_id: str, db: DBDep) -> TrialStatisticsSummary:
         if _is_agent_edge(frm, to):
             edges.add((frm, to))
 
-    if trial["mode"] == "bidding":
+    board = _BOARD_BY_MODE.get(str(trial["mode"]))
+    if board is not None:
+        board_types, board_id, _ = board
         board_rows = await db.execute(
             select(messages.c.from_agent_id)
             .select_from(_MSG_ROUNDS)
             .where(
                 rounds.c.trial_id == resolved_trial_id,
                 messages.c.from_agent_id.is_not(None),
-                messages.c.message_type.in_(_BIDDING_BOARD_MESSAGE_TYPES),
+                messages.c.message_type.in_(board_types),
             )
             .group_by(messages.c.from_agent_id)
         )
         for (agent_id,) in board_rows.all():
-            edges.add((agent_id, _BIDDING_BOARD_ID))
+            edges.add((agent_id, board_id))
 
     return TrialStatisticsSummary(
         trial_id=resolved_trial_id,
@@ -281,8 +298,79 @@ def _latency_ms(row: Any) -> float:
     return float(_num(row, "latency") * 1000)
 
 
-async def _fetch_langfuse_observations(trial_id: str) -> tuple[list[Any], str | None]:
-    """Fetch all Langfuse observations for traces whose session_id is trial_id."""
+# Pad the observation-fetch time window so events whose start time falls slightly
+# outside a trial's [created_at, completed_at] bounds (clock skew, flush lag) are
+# still captured.
+_LANGFUSE_WINDOW_BUFFER = timedelta(minutes=5)
+
+
+def _parse_iso(value: Any) -> datetime | None:
+    """Parse a stored ISO timestamp into an aware UTC datetime, tolerantly."""
+    if isinstance(value, datetime):
+        return value if value.tzinfo else value.replace(tzinfo=UTC)
+    if not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(str(value))
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+
+
+def _observation_window(
+    created_ats: Sequence[Any], completed_ats: Sequence[Any]
+) -> tuple[datetime, datetime]:
+    """Padded [from, to] bounds spanning the given trials' lifetimes.
+
+    Any trial without a ``completed_at`` (still running, or missing) extends the
+    upper bound to *now* so its in-flight generations are included.
+    """
+    now = datetime.now(UTC)
+    starts = [ts for ts in (_parse_iso(v) for v in created_ats) if ts]
+    ends = [ts for ts in (_parse_iso(v) for v in completed_ats) if ts]
+    from_time = (min(starts) if starts else now - timedelta(days=1)) - _LANGFUSE_WINDOW_BUFFER
+    to_candidates = list(ends)
+    if len(ends) < len(completed_ats):
+        to_candidates.append(now)
+    to_time = (max(to_candidates) if to_candidates else now) + _LANGFUSE_WINDOW_BUFFER
+    return from_time, to_time
+
+
+def _sweep_observations(
+    client: Any, from_time: datetime, to_time: datetime, wanted_trial_ids: set[str]
+) -> list[Any]:
+    """Paginate the observations endpoint over a time window, keeping only the
+    GENERATIONs whose ``trial_id`` metadata is in ``wanted_trial_ids``.
+
+    This deliberately avoids ``fetch_traces``: the ``/api/public/traces`` endpoint
+    is aggressively rate-limited on Langfuse Cloud, and the old per-trace
+    observation fan-out (one request per trace) tripped its limiter (HTTP 429).
+    A single time-windowed sweep of ``/api/public/observations`` is the read path
+    Langfuse recommends for high volume, and every generation already carries its
+    ``trial_id`` in metadata (see ``server.llm.langfuse_setup``), so we filter
+    client-side instead of issuing one request per trace.
+    """
+    observations: list[Any] = []
+    page = 1
+    while True:
+        res = client.fetch_observations(
+            type="GENERATION",
+            from_start_time=from_time,
+            to_start_time=to_time,
+            page=page,
+            limit=100,
+        )
+        for obs in res.data:
+            if str(_metadata(obs).get("trial_id") or "") in wanted_trial_ids:
+                observations.append(obs)
+        if page >= res.meta.total_pages:
+            break
+        page += 1
+    return observations
+
+
+async def _fetch_langfuse_observations(trial: dict[str, Any]) -> tuple[list[Any], str | None]:
+    """Fetch all Langfuse GENERATION observations belonging to a trial."""
     try:
         from langfuse import Langfuse
 
@@ -290,31 +378,11 @@ async def _fetch_langfuse_observations(trial_id: str) -> tuple[list[Any], str | 
     except Exception as exc:
         return [], f"Langfuse client is not configured: {exc}"
 
-    def _fetch() -> tuple[list[Any], str | None]:
-        traces: list[Any] = []
-        page = 1
-        while True:
-            res = client.fetch_traces(session_id=trial_id, page=page, limit=100)
-            traces.extend(res.data)
-            if page >= res.meta.total_pages:
-                break
-            page += 1
+    trial_id = str(trial["id"])
+    from_time, to_time = _observation_window([trial.get("created_at")], [trial.get("completed_at")])
 
-        observations: list[Any] = []
-        for trace in traces:
-            obs_page = 1
-            while True:
-                obs_res = client.fetch_observations(
-                    trace_id=trace.id,
-                    type="GENERATION",
-                    page=obs_page,
-                    limit=100,
-                )
-                observations.extend(obs_res.data)
-                if obs_page >= obs_res.meta.total_pages:
-                    break
-                obs_page += 1
-        return observations, None
+    def _fetch() -> tuple[list[Any], str | None]:
+        return _sweep_observations(client, from_time, to_time, {trial_id}), None
 
     try:
         return await asyncio.to_thread(_fetch)
@@ -349,7 +417,7 @@ async def trial_langfuse(trial_id: str, db: DBDep) -> LangfuseStatisticsResponse
     trial = await _require_trial(db, trial_id)
     resolved_trial_id = str(trial["id"])
 
-    observations, error = await _fetch_langfuse_observations(resolved_trial_id)
+    observations, error = await _fetch_langfuse_observations(trial)
     if error:
         return _empty_langfuse_response(resolved_trial_id, error)
     if not observations:
@@ -543,7 +611,9 @@ async def trial_edges(trial_id: str, db: DBDep) -> list[EdgeStatistics]:
     rows = (await db.execute(stmt)).mappings().all()
     edge_stats = [EdgeStatistics(**dict(row)) for row in rows]
 
-    if trial["mode"] == "bidding":
+    board = _BOARD_BY_MODE.get(str(trial["mode"]))
+    if board is not None:
+        board_types, board_id, board_name = board
         board_from_name = func.coalesce(messages.c.from_agent_name, agents.c.name, "Unknown").label(
             "from_agent_name"
         )
@@ -557,7 +627,7 @@ async def trial_edges(trial_id: str, db: DBDep) -> list[EdgeStatistics]:
             .where(
                 rounds.c.trial_id == resolved_trial_id,
                 messages.c.from_agent_id.is_not(None),
-                messages.c.message_type.in_(_BIDDING_BOARD_MESSAGE_TYPES),
+                messages.c.message_type.in_(board_types),
             )
             .group_by(messages.c.from_agent_id, board_from_name)
             .order_by(func.count(messages.c.id).desc())
@@ -567,8 +637,8 @@ async def trial_edges(trial_id: str, db: DBDep) -> list[EdgeStatistics]:
             EdgeStatistics(
                 from_agent_id=str(row["from_agent_id"]),
                 from_agent_name=str(row["from_agent_name"]),
-                to_agent_id=_BIDDING_BOARD_ID,
-                to_agent_name=_BIDDING_BOARD_NAME,
+                to_agent_id=board_id,
+                to_agent_name=board_name,
                 message_count=int(row["message_count"]),
             )
             for row in board_rows
@@ -654,27 +724,20 @@ def _avg(values: Sequence[float | int]) -> float:
 
 
 @router.get("/experiments", response_model=list[ExperimentListItem])
-async def list_experiments(db: DBDep) -> list[ExperimentListItem]:
-    rows = (
-        (
-            await db.execute(
-                select(
-                    experiments.c.id,
-                    experiments.c.description,
-                    experiments.c.created_at,
-                    experiments.c.simulation_params,
-                    func.count(trials.c.id).label("trial_count"),
-                )
-                .select_from(
-                    experiments.outerjoin(trials, trials.c.experiment_id == experiments.c.id)
-                )
-                .group_by(experiments.c.id)
-                .order_by(experiments.c.created_at.desc())
-            )
+async def list_experiments(db: DBDep, user_id: UserIdDep = None) -> list[ExperimentListItem]:
+    stmt = (
+        select(
+            experiments.c.id,
+            experiments.c.description,
+            experiments.c.created_at,
+            experiments.c.simulation_params,
+            func.count(trials.c.id).label("trial_count"),
         )
-        .mappings()
-        .all()
+        .select_from(experiments.outerjoin(trials, trials.c.experiment_id == experiments.c.id))
+        .group_by(experiments.c.id)
+        .order_by(experiments.c.created_at.desc())
     )
+    rows = (await db.execute(scoped(stmt, experiments.c.user_id, user_id))).mappings().all()
 
     import json as _json
 
@@ -760,19 +823,21 @@ async def experiment_summary(exp_id: str, db: DBDep) -> ExperimentSummary:
             if _is_agent_edge(frm, to):
                 edges.add((frm, to))
         trial_mode = await db.scalar(select(trials.c.mode).where(trials.c.id == tid))
-        if trial_mode == "bidding":
+        board = _BOARD_BY_MODE.get(str(trial_mode))
+        if board is not None:
+            board_types, board_id, _ = board
             board_rows = await db.execute(
                 select(messages.c.from_agent_id)
                 .select_from(_MSG_ROUNDS)
                 .where(
                     rounds.c.trial_id == tid,
                     messages.c.from_agent_id.is_not(None),
-                    messages.c.message_type.in_(_BIDDING_BOARD_MESSAGE_TYPES),
+                    messages.c.message_type.in_(board_types),
                 )
                 .group_by(messages.c.from_agent_id)
             )
             for (agent_id,) in board_rows.all():
-                edges.add((agent_id, _BIDDING_BOARD_ID))
+                edges.add((agent_id, board_id))
         agent_counts.append(len(agent_ids))
         edge_counts.append(len(edges))
 
@@ -935,7 +1000,9 @@ async def experiment_edges(exp_id: str, db: DBDep) -> list[ExperimentEdgeStatist
             edge_names[key] = (str(row["from_agent_name"]), str(row["to_agent_name"]))
 
         trial_mode = await db.scalar(select(trials.c.mode).where(trials.c.id == tid))
-        if trial_mode == "bidding":
+        board = _BOARD_BY_MODE.get(str(trial_mode))
+        if board is not None:
+            board_types, board_id, board_name = board
             board_from_name = func.coalesce(
                 messages.c.from_agent_name, agents.c.name, "Unknown"
             ).label("from_agent_name")
@@ -949,15 +1016,15 @@ async def experiment_edges(exp_id: str, db: DBDep) -> list[ExperimentEdgeStatist
                 .where(
                     rounds.c.trial_id == tid,
                     messages.c.from_agent_id.is_not(None),
-                    messages.c.message_type.in_(_BIDDING_BOARD_MESSAGE_TYPES),
+                    messages.c.message_type.in_(board_types),
                 )
                 .group_by(messages.c.from_agent_id, board_from_name)
             )
             board_rows = (await db.execute(board_stmt)).mappings().all()
             for row in board_rows:
-                key = (str(row["from_agent_id"]), _BIDDING_BOARD_ID)
+                key = (str(row["from_agent_id"]), board_id)
                 edge_counts[key].append(int(row["message_count"]))
-                edge_names[key] = (str(row["from_agent_name"]), _BIDDING_BOARD_NAME)
+                edge_names[key] = (str(row["from_agent_name"]), board_name)
 
     return sorted(
         [
@@ -1040,9 +1107,9 @@ async def experiment_timeline(exp_id: str, db: DBDep) -> list[ExperimentRoundSta
 
 
 async def _fetch_langfuse_observations_multi(
-    trial_ids: list[str],
+    trials: list[dict[str, Any]],
 ) -> tuple[list[Any], str | None]:
-    """Fetch Langfuse observations for multiple trial IDs (session IDs)."""
+    """Fetch Langfuse GENERATION observations for multiple trials in one sweep."""
     try:
         from langfuse import Langfuse
 
@@ -1050,28 +1117,14 @@ async def _fetch_langfuse_observations_multi(
     except Exception as exc:
         return [], f"Langfuse client is not configured: {exc}"
 
+    wanted = {str(t["id"]) for t in trials}
+    from_time, to_time = _observation_window(
+        [t.get("created_at") for t in trials],
+        [t.get("completed_at") for t in trials],
+    )
+
     def _fetch() -> tuple[list[Any], str | None]:
-        all_obs: list[Any] = []
-        for trial_id in trial_ids:
-            traces: list[Any] = []
-            page = 1
-            while True:
-                res = client.fetch_traces(session_id=trial_id, page=page, limit=100)
-                traces.extend(res.data)
-                if page >= res.meta.total_pages:
-                    break
-                page += 1
-            for trace in traces:
-                obs_page = 1
-                while True:
-                    obs_res = client.fetch_observations(
-                        trace_id=trace.id, type="GENERATION", page=obs_page, limit=100
-                    )
-                    all_obs.extend(obs_res.data)
-                    if obs_page >= obs_res.meta.total_pages:
-                        break
-                    obs_page += 1
-        return all_obs, None
+        return _sweep_observations(client, from_time, to_time, wanted), None
 
     try:
         return await asyncio.to_thread(_fetch)
@@ -1081,7 +1134,13 @@ async def _fetch_langfuse_observations_multi(
 
 @router.get("/experiments/{exp_id}/langfuse", response_model=ExperimentLangfuseResponse)
 async def experiment_langfuse(exp_id: str, db: DBDep) -> ExperimentLangfuseResponse:
-    trial_ids = await _experiment_trial_ids(db, exp_id)
+    rows = await db.execute(
+        select(trials.c.id, trials.c.created_at, trials.c.completed_at)
+        .where(trials.c.experiment_id == exp_id)
+        .order_by(trials.c.created_at)
+    )
+    trial_rows = [dict(row) for row in rows.mappings().all()]
+    trial_ids = [str(row["id"]) for row in trial_rows]
 
     def _empty(msg: str | None) -> ExperimentLangfuseResponse:
         return ExperimentLangfuseResponse(
@@ -1108,7 +1167,7 @@ async def experiment_langfuse(exp_id: str, db: DBDep) -> ExperimentLangfuseRespo
     if not trial_ids:
         return _empty("No trials in this experiment yet.")
 
-    observations, error = await _fetch_langfuse_observations_multi(trial_ids)
+    observations, error = await _fetch_langfuse_observations_multi(trial_rows)
     if error:
         return _empty(error)
     if not observations:
@@ -1259,6 +1318,7 @@ async def experiment_langfuse(exp_id: str, db: DBDep) -> ExperimentLangfuseRespo
 # ---------------------------------------------------------------------------
 
 _ANSWER_PRIORITY = (
+    "swarm_final",
     "consensus",
     "bidding_final_output",
     "broadcast_no_consensus_outputs",
