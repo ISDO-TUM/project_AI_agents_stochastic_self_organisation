@@ -151,6 +151,48 @@ messages = Table(
     Column("created_at", Text, nullable=False),
 )
 
+benchmark_suites = Table(
+    "benchmark_suites",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("name", Text, nullable=False),
+    Column("dataset_id", Text, nullable=False),
+    Column("prompt", Text, nullable=False),
+    Column("topology", Text, nullable=False),
+    Column("fanout", Integer, nullable=False, server_default=text("3")),
+    Column("rounds", Integer, nullable=False, server_default=text("3")),
+    Column("status", Text, nullable=False, server_default=text("'running'")),
+    Column("planned_trials", Integer, nullable=False, server_default=text("0")),
+    Column("completed_trials", Integer, nullable=False, server_default=text("0")),
+    Column("created_at", Text, nullable=False),
+    Column("completed_at", Text),
+    CheckConstraint(
+        "status IN ('running','completed','failed')",
+        name="ck_benchmark_suites_status",
+    ),
+)
+
+benchmark_suite_runs = Table(
+    "benchmark_suite_runs",
+    metadata,
+    Column("id", Text, primary_key=True),
+    Column("suite_id", Text, ForeignKey("benchmark_suites.id", ondelete="CASCADE"), nullable=False),
+    Column("experiment_id", Text, ForeignKey("experiments.id"), nullable=False),
+    Column("trial_id", Text, ForeignKey("trials.id", ondelete="CASCADE"), nullable=False),
+    Column("consensus_mode", Text, nullable=False),
+    Column("topology", Text, nullable=False, server_default=text("'static'")),
+    Column("run_index", Integer, nullable=False),
+    Column("dataset_variant_id", Text),
+    Column("status", Text, nullable=False, server_default=text("'running'")),
+    Column("score_json", Text, nullable=False, server_default=text("'{}'")),
+    Column("created_at", Text, nullable=False),
+    Column("completed_at", Text),
+    CheckConstraint(
+        "status IN ('running','completed','failed')",
+        name="ck_benchmark_suite_runs_status",
+    ),
+)
+
 # ── ECSAS swarm tables ────────────────────────────────────────────────────────
 
 swarm_runs = Table(

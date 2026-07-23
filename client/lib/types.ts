@@ -12,6 +12,8 @@ export type ConsensusMode =
   | "plurality_voting"
   | "bidding";
 
+export type BenchmarkConsensusMode = ConsensusMode;
+
 export type TopologyMode = "static" | "dynamic";
 
 export interface Position {
@@ -338,6 +340,92 @@ export interface ConsistencyReport {
   aiSummary: string | null;
   available: boolean;
   message: string | null;
+}
+
+// ─── Topology Benchmarks ────────────────────────────────────────────────────
+
+export interface BenchmarkDataset {
+  id: string;
+  name: string;
+  description: string;
+  defaultPrompt: string;
+  evaluatorType: "exact_match";
+  metrics: string[];
+  minAgents: number;
+}
+
+export interface BenchmarkMechanismConfig {
+  topology: TopologyMode;
+  mode: BenchmarkConsensusMode;
+  runs: number;
+}
+
+export interface BenchmarkCanvasImport extends CanvasState {
+  datasetId: string;
+  prompt: string;
+  answer: string;
+}
+
+export interface BenchmarkSuiteStart {
+  suiteId: string;
+  plannedTrials: number;
+  experimentIds: string[];
+  trialIds: string[];
+  status: string;
+}
+
+export interface BenchmarkSuiteSummary {
+  id: string;
+  name: string;
+  datasetId: string;
+  prompt: string;
+  topology: string;
+  fanout: number;
+  rounds: number;
+  status: string;
+  plannedTrials: number;
+  completedTrials: number;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface BenchmarkSuiteRunResult {
+  id: string;
+  suiteId: string;
+  experimentId: string;
+  trialId: string;
+  topology: string;
+  consensusMode: string;
+  runIndex: number;
+  datasetVariantId: string | null;
+  status: string;
+  score: Record<string, unknown>;
+  createdAt: string;
+  completedAt: string | null;
+}
+
+export interface BenchmarkMechanismAggregate {
+  topology: string;
+  consensusMode: string;
+  runs: number;
+  completed: number;
+  failed: number;
+  accuracy: number | null;
+  avgRounds: number | null;
+  avgMessages: number | null;
+  generationCount: number;
+  inputTokens: number;
+  outputTokens: number;
+  totalTokens: number;
+  totalCost: number;
+  avgTokens: number | null;
+  avgCost: number | null;
+}
+
+export interface BenchmarkSuiteResults {
+  suite: BenchmarkSuiteSummary;
+  runs: BenchmarkSuiteRunResult[];
+  aggregates: BenchmarkMechanismAggregate[];
 }
 
 export type CanvasAction =

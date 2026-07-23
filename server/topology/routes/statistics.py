@@ -74,6 +74,17 @@ async def _require_trial(db: AsyncConnection, trial_id: str) -> dict[str, object
     result = await db.execute(select(trials).where(trials.c.id == trial_id))
     row = result.mappings().first()
     if row is None:
+        # Backward-compatible stats lookup: older/stale clients sometimes send
+        # an experiment id to trial-scoped stats routes. Resolve it to the first
+        # trial in that experiment instead of returning a confusing 404.
+        result = await db.execute(
+            select(trials)
+            .where(trials.c.experiment_id == trial_id)
+            .order_by(trials.c.created_at.asc(), trials.c.id.asc())
+            .limit(1)
+        )
+        row = result.mappings().first()
+    if row is None:
         raise HTTPException(status.HTTP_404_NOT_FOUND, "Trial not found.")
     return dict(row)
 
@@ -88,18 +99,19 @@ async def _agent_names(db: AsyncConnection, ids: set[str]) -> dict[str, str]:
 @router.get("/trials/{trial_id}/summary", response_model=TrialStatisticsSummary)
 async def trial_summary(trial_id: str, db: DBDep) -> TrialStatisticsSummary:
     trial = await _require_trial(db, trial_id)
+    resolved_trial_id = str(trial["id"])
 
     round_count = await db.scalar(
-        select(func.count()).select_from(rounds).where(rounds.c.trial_id == trial_id)
+        select(func.count()).select_from(rounds).where(rounds.c.trial_id == resolved_trial_id)
     )
     total_messages = await db.scalar(
-        select(func.count()).select_from(_MSG_ROUNDS).where(rounds.c.trial_id == trial_id)
+        select(func.count()).select_from(_MSG_ROUNDS).where(rounds.c.trial_id == resolved_trial_id)
     )
 
     type_rows = await db.execute(
         select(messages.c.message_type, func.count().label("n"))
         .select_from(_MSG_ROUNDS)
-        .where(rounds.c.trial_id == trial_id)
+        .where(rounds.c.trial_id == resolved_trial_id)
         .group_by(messages.c.message_type)
     )
     message_type_counts = {row.message_type: row.n for row in type_rows.all()}
@@ -108,7 +120,7 @@ async def trial_summary(trial_id: str, db: DBDep) -> TrialStatisticsSummary:
         await db.execute(
             select(connections.c.from_agent_id, connections.c.to_agent_id)
             .select_from(_CONN_ROUNDS)
-            .where(rounds.c.trial_id == trial_id)
+            .where(rounds.c.trial_id == resolved_trial_id)
         )
     ).all()
     agent_ids: set[str] = set()
@@ -128,7 +140,7 @@ async def trial_summary(trial_id: str, db: DBDep) -> TrialStatisticsSummary:
             select(messages.c.from_agent_id)
             .select_from(_MSG_ROUNDS)
             .where(
-                rounds.c.trial_id == trial_id,
+                rounds.c.trial_id == resolved_trial_id,
                 messages.c.from_agent_id.is_not(None),
                 messages.c.message_type.in_(board_types),
             )
@@ -138,7 +150,7 @@ async def trial_summary(trial_id: str, db: DBDep) -> TrialStatisticsSummary:
             edges.add((agent_id, board_id))
 
     return TrialStatisticsSummary(
-        trial_id=trial_id,
+        trial_id=resolved_trial_id,
         user_prompt=str(trial["user_prompt"]),
         description=str(trial["description"]),
         mode=str(trial["mode"]) if trial["mode"] is not None else None,
@@ -154,7 +166,8 @@ async def trial_summary(trial_id: str, db: DBDep) -> TrialStatisticsSummary:
 
 @router.get("/trials/{trial_id}/agents", response_model=list[AgentStatistics])
 async def trial_agents(trial_id: str, db: DBDep) -> list[AgentStatistics]:
-    await _require_trial(db, trial_id)
+    trial = await _require_trial(db, trial_id)
+    resolved_trial_id = str(trial["id"])
 
     message_rows = (
         await db.execute(
@@ -166,7 +179,7 @@ async def trial_agents(trial_id: str, db: DBDep) -> list[AgentStatistics]:
                 messages.c.to_agent_name,
             )
             .select_from(_MSG_ROUNDS)
-            .where(rounds.c.trial_id == trial_id)
+            .where(rounds.c.trial_id == resolved_trial_id)
         )
     ).all()
     connection_rows = (
@@ -178,7 +191,7 @@ async def trial_agents(trial_id: str, db: DBDep) -> list[AgentStatistics]:
                 connections.c.to_agent_name,
             )
             .select_from(_CONN_ROUNDS)
-            .where(rounds.c.trial_id == trial_id)
+            .where(rounds.c.trial_id == resolved_trial_id)
         )
     ).all()
 
@@ -242,7 +255,7 @@ def _num(data: Any, *keys: str) -> float:
     """Read the first numeric value from a dict-like or object-like source."""
     for key in keys:
         value = data.get(key) if isinstance(data, dict) else getattr(data, key, None)
-        if isinstance(value, int | float):
+        if isinstance(value, (int, float)):
             return float(value)
     return 0.0
 
@@ -402,13 +415,14 @@ def _empty_langfuse_response(trial_id: str, message: str | None) -> LangfuseStat
 @router.get("/trials/{trial_id}/langfuse", response_model=LangfuseStatisticsResponse)
 async def trial_langfuse(trial_id: str, db: DBDep) -> LangfuseStatisticsResponse:
     trial = await _require_trial(db, trial_id)
+    resolved_trial_id = str(trial["id"])
 
     observations, error = await _fetch_langfuse_observations(trial)
     if error:
-        return _empty_langfuse_response(trial_id, error)
+        return _empty_langfuse_response(resolved_trial_id, error)
     if not observations:
         return _empty_langfuse_response(
-            trial_id,
+            resolved_trial_id,
             "No Langfuse generations found for this trial. New runs include trial metadata.",
         )
 
@@ -531,7 +545,7 @@ async def trial_langfuse(trial_id: str, db: DBDep) -> LangfuseStatisticsResponse
 
     return LangfuseStatisticsResponse(
         summary=LangfuseStatisticsSummary(
-            trial_id=trial_id,
+            trial_id=resolved_trial_id,
             trace_count=len(trace_ids),
             generation_count=len(observations),
             input_tokens=total_in,
@@ -553,6 +567,7 @@ async def trial_langfuse(trial_id: str, db: DBDep) -> LangfuseStatisticsResponse
 @router.get("/trials/{trial_id}/edges", response_model=list[EdgeStatistics])
 async def trial_edges(trial_id: str, db: DBDep) -> list[EdgeStatistics]:
     trial = await _require_trial(db, trial_id)
+    resolved_trial_id = str(trial["id"])
 
     # Prefer the name snapshotted on the connection; fall back to the live agent
     # row (legacy data) and finally to "Unknown" once the agent is gone. The
@@ -580,7 +595,7 @@ async def trial_edges(trial_id: str, db: DBDep) -> list[EdgeStatistics]:
             .outerjoin(to_agent, to_agent.c.id == connections.c.to_agent_id)
         )
         .where(
-            rounds.c.trial_id == trial_id,
+            rounds.c.trial_id == resolved_trial_id,
             connections.c.from_agent_id.is_not(None),
             connections.c.to_agent_id.is_not(None),
             connections.c.from_agent_id != connections.c.to_agent_id,
@@ -610,7 +625,7 @@ async def trial_edges(trial_id: str, db: DBDep) -> list[EdgeStatistics]:
             )
             .select_from(_MSG_ROUNDS.outerjoin(agents, agents.c.id == messages.c.from_agent_id))
             .where(
-                rounds.c.trial_id == trial_id,
+                rounds.c.trial_id == resolved_trial_id,
                 messages.c.from_agent_id.is_not(None),
                 messages.c.message_type.in_(board_types),
             )
@@ -634,12 +649,13 @@ async def trial_edges(trial_id: str, db: DBDep) -> list[EdgeStatistics]:
 
 @router.get("/trials/{trial_id}/timeline", response_model=list[RoundStatistics])
 async def trial_timeline(trial_id: str, db: DBDep) -> list[RoundStatistics]:
-    await _require_trial(db, trial_id)
+    trial = await _require_trial(db, trial_id)
+    resolved_trial_id = str(trial["id"])
 
     round_rows = (
         await db.execute(
             select(rounds.c.id, rounds.c.round_index, rounds.c.phase)
-            .where(rounds.c.trial_id == trial_id)
+            .where(rounds.c.trial_id == resolved_trial_id)
             .order_by(rounds.c.round_index.asc(), rounds.c.id.asc())
         )
     ).all()
@@ -648,7 +664,7 @@ async def trial_timeline(trial_id: str, db: DBDep) -> list[RoundStatistics]:
         await db.execute(
             select(messages.c.round_id)
             .select_from(_MSG_ROUNDS)
-            .where(rounds.c.trial_id == trial_id)
+            .where(rounds.c.trial_id == resolved_trial_id)
         )
     ).all()
     connection_rows = (
@@ -659,7 +675,7 @@ async def trial_timeline(trial_id: str, db: DBDep) -> list[RoundStatistics]:
                 connections.c.to_agent_id,
             )
             .select_from(_CONN_ROUNDS)
-            .where(rounds.c.trial_id == trial_id)
+            .where(rounds.c.trial_id == resolved_trial_id)
         )
     ).all()
 

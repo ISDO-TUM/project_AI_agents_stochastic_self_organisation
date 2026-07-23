@@ -9,6 +9,15 @@ import type {
   Agent,
   AgentStat,
   AgentTrustEntry,
+  BenchmarkCanvasImport,
+  BenchmarkDataset,
+  BenchmarkMechanismAggregate,
+  BenchmarkMechanismConfig,
+  BenchmarkSuiteResults,
+  BenchmarkSuiteRunResult,
+  BenchmarkSuiteStart,
+  BenchmarkSuiteSummary,
+  CanvasState,
   ConsensusMode,
   ConsistencyReport,
   EdgeStat,
@@ -410,6 +419,234 @@ export async function fetchHistoryMessages(filters: {
     `/api/history/messages${suffix}`,
   );
   return rows.map(wireToHistoryMessage);
+}
+
+// ─── Topology benchmark suites ──────────────────────────────────────────────
+
+interface WireBenchmarkDataset {
+  id: string;
+  name: string;
+  description: string;
+  default_prompt: string;
+  evaluator_type: "exact_match";
+  metrics: string[];
+  min_agents: number;
+}
+
+interface WireBenchmarkSuiteStart {
+  suite_id: string;
+  planned_trials: number;
+  experiment_ids: string[];
+  trial_ids: string[];
+  status: string;
+}
+
+interface WireBenchmarkSuiteSummary {
+  id: string;
+  name: string;
+  dataset_id: string;
+  prompt: string;
+  topology: string;
+  fanout: number;
+  rounds: number;
+  status: string;
+  planned_trials: number;
+  completed_trials: number;
+  created_at: string;
+  completed_at: string | null;
+}
+
+interface WireBenchmarkSuiteRun {
+  id: string;
+  suite_id: string;
+  experiment_id: string;
+  trial_id: string;
+  topology: string;
+  consensus_mode: string;
+  run_index: number;
+  dataset_variant_id: string | null;
+  status: string;
+  score: Record<string, unknown>;
+  created_at: string;
+  completed_at: string | null;
+}
+
+interface WireBenchmarkAggregate {
+  topology: string;
+  consensus_mode: string;
+  runs: number;
+  completed: number;
+  failed: number;
+  accuracy: number | null;
+  avg_rounds: number | null;
+  avg_messages: number | null;
+  generation_count: number;
+  input_tokens: number;
+  output_tokens: number;
+  total_tokens: number;
+  total_cost: number;
+  avg_tokens: number | null;
+  avg_cost: number | null;
+}
+
+interface WireBenchmarkSuiteResults {
+  suite: WireBenchmarkSuiteSummary;
+  runs: WireBenchmarkSuiteRun[];
+  aggregates: WireBenchmarkAggregate[];
+}
+
+interface WireBenchmarkCanvas extends CanvasState {
+  dataset_id: string;
+  prompt: string;
+  answer: string;
+}
+
+function wireToBenchmarkDataset(row: WireBenchmarkDataset): BenchmarkDataset {
+  return {
+    id: row.id,
+    name: row.name,
+    description: row.description,
+    defaultPrompt: row.default_prompt,
+    evaluatorType: row.evaluator_type,
+    metrics: row.metrics,
+    minAgents: row.min_agents,
+  };
+}
+
+function wireToBenchmarkSuite(
+  row: WireBenchmarkSuiteSummary,
+): BenchmarkSuiteSummary {
+  return {
+    id: row.id,
+    name: row.name,
+    datasetId: row.dataset_id,
+    prompt: row.prompt,
+    topology: row.topology,
+    fanout: row.fanout,
+    rounds: row.rounds,
+    status: row.status,
+    plannedTrials: row.planned_trials,
+    completedTrials: row.completed_trials,
+    createdAt: row.created_at,
+    completedAt: row.completed_at,
+  };
+}
+
+function wireToBenchmarkRun(
+  row: WireBenchmarkSuiteRun,
+): BenchmarkSuiteRunResult {
+  return {
+    id: row.id,
+    suiteId: row.suite_id,
+    experimentId: row.experiment_id,
+    trialId: row.trial_id,
+    topology: row.topology,
+    consensusMode: row.consensus_mode,
+    runIndex: row.run_index,
+    datasetVariantId: row.dataset_variant_id,
+    status: row.status,
+    score: row.score,
+    createdAt: row.created_at,
+    completedAt: row.completed_at,
+  };
+}
+
+function wireToBenchmarkAggregate(
+  row: WireBenchmarkAggregate,
+): BenchmarkMechanismAggregate {
+  return {
+    topology: row.topology,
+    consensusMode: row.consensus_mode,
+    runs: row.runs,
+    completed: row.completed,
+    failed: row.failed,
+    accuracy: row.accuracy,
+    avgRounds: row.avg_rounds,
+    avgMessages: row.avg_messages,
+    generationCount: row.generation_count,
+    inputTokens: row.input_tokens,
+    outputTokens: row.output_tokens,
+    totalTokens: row.total_tokens,
+    totalCost: row.total_cost,
+    avgTokens: row.avg_tokens,
+    avgCost: row.avg_cost,
+  };
+}
+
+export async function fetchBenchmarkDatasets(): Promise<BenchmarkDataset[]> {
+  const rows = await request<WireBenchmarkDataset[]>(
+    "GET",
+    "/api/topology/benchmark-datasets",
+  );
+  return rows.map(wireToBenchmarkDataset);
+}
+
+export async function fetchBenchmarkCanvas(
+  datasetId: string,
+): Promise<BenchmarkCanvasImport> {
+  const row = await request<WireBenchmarkCanvas>(
+    "GET",
+    `/api/topology/benchmark-datasets/${datasetId}/canvas`,
+  );
+  return {
+    agents: row.agents,
+    sources: row.sources,
+    edges: row.edges,
+    datasetId: row.dataset_id,
+    prompt: row.prompt,
+    answer: row.answer,
+  };
+}
+
+export async function fetchBenchmarkSuites(): Promise<BenchmarkSuiteSummary[]> {
+  const rows = await request<WireBenchmarkSuiteSummary[]>(
+    "GET",
+    "/api/topology/benchmark-suites",
+  );
+  return rows.map(wireToBenchmarkSuite);
+}
+
+export async function createBenchmarkSuite(options: {
+  prompt: string;
+  datasetId: string;
+  topology: TopologyMode;
+  fanout: number;
+  rounds: number;
+  mechanisms: BenchmarkMechanismConfig[];
+}): Promise<BenchmarkSuiteStart> {
+  const data = await request<WireBenchmarkSuiteStart>(
+    "POST",
+    "/api/topology/benchmark-suites",
+    {
+      prompt: options.prompt,
+      dataset_id: options.datasetId,
+      topology: options.topology,
+      fanout: options.fanout,
+      rounds: options.rounds,
+      mechanisms: options.mechanisms,
+    },
+  );
+  return {
+    suiteId: data.suite_id,
+    plannedTrials: data.planned_trials,
+    experimentIds: data.experiment_ids,
+    trialIds: data.trial_ids,
+    status: data.status,
+  };
+}
+
+export async function fetchBenchmarkSuiteResults(
+  suiteId: string,
+): Promise<BenchmarkSuiteResults> {
+  const row = await request<WireBenchmarkSuiteResults>(
+    "GET",
+    `/api/topology/benchmark-suites/${suiteId}/results`,
+  );
+  return {
+    suite: wireToBenchmarkSuite(row.suite),
+    runs: row.runs.map(wireToBenchmarkRun),
+    aggregates: row.aggregates.map(wireToBenchmarkAggregate),
+  };
 }
 
 // ─── Statistics endpoints ───────────────────────────────────────────────────

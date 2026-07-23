@@ -946,3 +946,138 @@ class SimulationStartResponse(BaseModel):
     trial_id: str = Field(description="ID of the first trial (used for live message streaming).")
     trial_ids: list[str] = Field(description="IDs of all scheduled trials.")
     status: str = Field(default="started", description="Background simulation status.")
+
+
+# ── Topology benchmark suites ────────────────────────────────────────────────
+
+
+_BenchmarkConsensusMode = Literal[
+    "broadcast_no_consensus",
+    "weighted_opinion_pooling",
+    "plurality_voting",
+    "bidding",
+]
+
+
+class BenchmarkDatasetSummary(BaseModel):
+    """Built-in benchmark dataset option shown in the topology UI."""
+
+    id: str
+    name: str
+    description: str
+    default_prompt: str
+    evaluator_type: Literal["exact_match"]
+    metrics: list[str]
+    min_agents: int = 2
+
+
+class BenchmarkMechanismRequest(BaseModel):
+    """One consensus mechanism and repetition count inside a benchmark suite."""
+
+    mode: _BenchmarkConsensusMode
+    topology: _TopologyMode = "static"
+    runs: int = Field(ge=1, le=20)
+
+
+class BenchmarkSuiteCreateRequest(BaseModel):
+    """Request body for creating a topology benchmark suite."""
+
+    prompt: str = Field(min_length=1, max_length=_MAX_PROMPT_LEN)
+    dataset_id: str = Field(min_length=1, max_length=120)
+    topology: _TopologyMode = "static"
+    fanout: int = Field(default=3, ge=0, le=10)
+    rounds: int = Field(default=3, ge=1, le=10)
+    mechanisms: list[BenchmarkMechanismRequest] = Field(min_length=1, max_length=8)
+
+    @field_validator("mechanisms")
+    @classmethod
+    def mechanisms_must_be_unique(
+        cls, v: list[BenchmarkMechanismRequest]
+    ) -> list[BenchmarkMechanismRequest]:
+        keys = [(item.topology, item.mode) for item in v]
+        if len(keys) != len(set(keys)):
+            raise ValueError("Each topology/consensus pair may appear only once.")
+        return v
+
+
+class BenchmarkSuiteStartResponse(BaseModel):
+    """Response returned after a benchmark suite has been scheduled."""
+
+    suite_id: str
+    planned_trials: int
+    experiment_ids: list[str]
+    trial_ids: list[str]
+    status: str = "started"
+
+
+class BenchmarkSuiteRunResult(BaseModel):
+    """One trial result inside a benchmark suite."""
+
+    id: str
+    suite_id: str
+    experiment_id: str
+    trial_id: str
+    consensus_mode: str
+    topology: str
+    run_index: int
+    dataset_variant_id: str | None = None
+    status: str
+    score: dict[str, Any]
+    created_at: str
+    completed_at: str | None = None
+
+
+class BenchmarkSuiteSummary(BaseModel):
+    """Benchmark suite row plus aggregate progress."""
+
+    id: str
+    name: str
+    dataset_id: str
+    prompt: str
+    topology: str
+    fanout: int
+    rounds: int
+    status: str
+    planned_trials: int
+    completed_trials: int
+    created_at: str
+    completed_at: str | None = None
+
+
+class BenchmarkMechanismAggregate(BaseModel):
+    """Aggregate result for one consensus mechanism in a suite."""
+
+    consensus_mode: str
+    topology: str
+    runs: int
+    completed: int
+    failed: int
+    accuracy: float | None = None
+    avg_rounds: float | None = None
+    avg_messages: float | None = None
+    generation_count: int = 0
+    input_tokens: int = 0
+    output_tokens: int = 0
+    total_tokens: int = 0
+    total_cost: float = 0.0
+    avg_tokens: float | None = None
+    avg_cost: float | None = None
+
+
+class BenchmarkSuiteResultsResponse(BaseModel):
+    """Detailed benchmark suite result payload."""
+
+    suite: BenchmarkSuiteSummary
+    runs: list[BenchmarkSuiteRunResult]
+    aggregates: list[BenchmarkMechanismAggregate]
+
+
+class BenchmarkCanvasResponse(BaseModel):
+    """Importable benchmark canvas plus its prompt."""
+
+    dataset_id: str
+    prompt: str
+    answer: str
+    agents: list[DemoCanvasAgent]
+    sources: list[DemoCanvasSource]
+    edges: list[DemoCanvasEdge]

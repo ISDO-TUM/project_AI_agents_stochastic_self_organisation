@@ -14,8 +14,13 @@ interface PromptBarProps {
   // Consensus mode, topology and fan-out now live in the Settings panel; the
   // prompt bar only collects the prompt and triggers the run.
   onRun: (prompt: string) => void;
+  onBenchmark?: () => void;
+  benchmarkDisabled?: boolean;
   onResetContext: () => void;
   onOpenKeys: () => void;
+  prefillPrompt?: string | null;
+  onPrefillConsumed?: () => void;
+  onPromptChange?: (prompt: string) => void;
   iterations?: number;
   onIterationsChange?: (n: number) => void;
   batchProgress?: { completed: number; total: number } | null;
@@ -26,8 +31,13 @@ export function PromptBar({
   running,
   turnCount,
   onRun,
+  onBenchmark,
+  benchmarkDisabled = false,
   onResetContext,
   onOpenKeys,
+  prefillPrompt,
+  onPrefillConsumed,
+  onPromptChange,
   iterations = 1,
   onIterationsChange,
   batchProgress,
@@ -63,13 +73,30 @@ export function PromptBar({
   const hasAnyKey = hasLocalKey || hasServerModels;
   const inputDisabled = running || !hasAnyKey;
   const canRun = !running && hasAnyKey && val.trim().length > 0;
+  const canBenchmark =
+    !running && hasAnyKey && !benchmarkDisabled && val.trim().length > 0;
+
+  useEffect(() => {
+    if (prefillPrompt == null) return;
+    queueMicrotask(() => {
+      setVal(prefillPrompt);
+      onPromptChange?.(prefillPrompt);
+      onPrefillConsumed?.();
+    });
+  }, [onPrefillConsumed, onPromptChange, prefillPrompt]);
 
   const handleSubmit = useCallback(() => {
     if (!canRun) return;
     onRun(val);
     setVal("");
+    onPromptChange?.("");
     setPreview(false);
-  }, [canRun, onRun, val]);
+  }, [canRun, onPromptChange, onRun, val]);
+
+  const handleChange = (next: string) => {
+    setVal(next);
+    onPromptChange?.(next);
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === "Enter" && !e.shiftKey) {
@@ -83,7 +110,7 @@ export function PromptBar({
       const start = el.selectionStart;
       const end = el.selectionEnd;
       const next = val.substring(0, start) + "  " + val.substring(end);
-      setVal(next);
+      handleChange(next);
       requestAnimationFrame(() => {
         el.selectionStart = el.selectionEnd = start + 2;
       });
@@ -220,7 +247,7 @@ export function PromptBar({
         <textarea
           ref={textareaRef}
           value={val}
-          onChange={(e) => setVal(e.target.value)}
+          onChange={(e) => handleChange(e.target.value)}
           onKeyDown={handleKeyDown}
           disabled={inputDisabled}
           placeholder={
@@ -352,6 +379,50 @@ export function PromptBar({
         )}
 
         {/* Run button */}
+        {onBenchmark && (
+          <button
+            type="button"
+            onClick={onBenchmark}
+            disabled={!canBenchmark}
+            title={
+              benchmarkDisabled
+                ? "Import a benchmark dataset first"
+                : "Configure benchmark runs"
+            }
+            style={{
+              background: canBenchmark ? t.inputBg : "transparent",
+              border: `1px solid ${canBenchmark ? t.border : "transparent"}`,
+              borderRadius: 100,
+              color: canBenchmark ? t.textSub : t.textDim,
+              fontSize: 12,
+              fontWeight: 800,
+              padding: "7px 12px",
+              cursor: canBenchmark ? "pointer" : "not-allowed",
+              display: "flex",
+              alignItems: "center",
+              gap: 7,
+              whiteSpace: "nowrap",
+              flexShrink: 0,
+            }}
+            onMouseEnter={(e) => {
+              if (canBenchmark) {
+                const el = e.currentTarget as HTMLButtonElement;
+                el.style.color = t.text;
+                el.style.borderColor = BURG;
+              }
+            }}
+            onMouseLeave={(e) => {
+              if (canBenchmark) {
+                const el = e.currentTarget as HTMLButtonElement;
+                el.style.color = t.textSub;
+                el.style.borderColor = t.border;
+              }
+            }}
+          >
+            <LIcon name="FlaskConical" size={13} color="currentColor" />
+            Benchmark
+          </button>
+        )}
         <button
           onClick={handleSubmit}
           disabled={!canRun}

@@ -25,7 +25,12 @@ from server.routes import (
     test_router,
 )
 from server.topology.benchmarks import benchmark_router
-from server.topology.routes import history_router, rules_router, statistics_router
+from server.topology.routes import (
+    benchmark_suites_router,
+    history_router,
+    rules_router,
+    statistics_router,
+)
 
 # Uvicorn's own dictConfig (Config.configure_logging(), run before this module
 # is imported) only touches its own "uvicorn"/"uvicorn.error"/"uvicorn.access"
@@ -190,6 +195,7 @@ app.include_router(test_router)
 app.include_router(history_router)
 app.include_router(statistics_router)
 app.include_router(rules_router)
+app.include_router(benchmark_suites_router)
 app.include_router(benchmark_router)
 
 # Market-Hive (ECSAS) engine routes.

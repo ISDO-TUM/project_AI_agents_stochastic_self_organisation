@@ -1,0 +1,126 @@
+{
+  "benchmarkDatasetId": "needlehaystack-majority",
+  "benchmarkPrompt": "Which person in Organisation Delta has the blue security token?",
+  "benchmarkAnswer": "Priya Shah",
+  "agents": [
+    {
+      "id": "a1111111-1111-4111-8111-111111111111",
+      "name": "Delta Access Lead",
+      "description": "Reviews current Organisation Delta access records.",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "systemPrompt": "You answer benchmark questions using your attached files/private context. Return a concise answer and do not invent facts that are absent from your context.",
+      "tools": ["files"],
+      "connections": [
+        "a2222222-2222-4222-8222-222222222222",
+        "a3333333-3333-4333-8333-333333333333"
+      ],
+      "position": { "x": 180, "y": 150 }
+    },
+    {
+      "id": "a2222222-2222-4222-8222-222222222222",
+      "name": "Badge Audit Analyst",
+      "description": "Checks audit notes for security token ownership.",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "systemPrompt": "You answer benchmark questions using your attached files/private context. Return a concise answer and do not invent facts that are absent from your context.",
+      "tools": ["files"],
+      "connections": ["a4444444-4444-4444-8444-444444444444"],
+      "position": { "x": 470, "y": 90 }
+    },
+    {
+      "id": "a3333333-3333-4333-8333-333333333333",
+      "name": "Facilities Reviewer",
+      "description": "Reads facilities notes and token handover records.",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "systemPrompt": "You answer benchmark questions using your attached files/private context. Return a concise answer and do not invent facts that are absent from your context.",
+      "tools": ["files"],
+      "connections": ["a4444444-4444-4444-8444-444444444444"],
+      "position": { "x": 760, "y": 150 }
+    },
+    {
+      "id": "a4444444-4444-4444-8444-444444444444",
+      "name": "Legacy Records Clerk",
+      "description": "Has an older conflicting access note.",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "systemPrompt": "You answer benchmark questions using your attached files/private context. Return a concise answer and do not invent facts that are absent from your context.",
+      "tools": ["files"],
+      "connections": [],
+      "position": { "x": 470, "y": 310 }
+    }
+  ],
+  "sources": [
+    {
+      "id": "f1111111-1111-4111-8111-111111111111",
+      "name": "delta_access_register.txt",
+      "type": "text",
+      "content": "Organisation Delta rotated badge colors after the spring access review. The person in Organisation Delta who has the blue security token is Priya Shah. A site memo says blue tokens require manager approval and identity verification.",
+      "position": { "x": 120, "y": 430 }
+    },
+    {
+      "id": "f2222222-2222-4222-8222-222222222222",
+      "name": "badge_audit_q2.txt",
+      "type": "text",
+      "content": "Badge Audit Q2: The blue security token for Organisation Delta is assigned to Priya Shah. Procurement tickets mention archived visitor badges for Mira Novak.",
+      "position": { "x": 410, "y": 500 }
+    },
+    {
+      "id": "f3333333-3333-4333-8333-333333333333",
+      "name": "facilities_handover.txt",
+      "type": "text",
+      "content": "Facilities handover: Priya Shah collected the blue security token after identity verification. The red security token belongs to a finance team member in Organisation Gamma.",
+      "position": { "x": 720, "y": 430 }
+    },
+    {
+      "id": "f4444444-4444-4444-8444-444444444444",
+      "name": "legacy_onboarding_note.txt",
+      "type": "text",
+      "content": "Legacy onboarding checklist: Jonas Berg is listed next to a blue token entry. This note predates the spring access review and may be stale.",
+      "position": { "x": 470, "y": 620 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-nh-a1-a2",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "a2222222-2222-4222-8222-222222222222"
+    },
+    {
+      "id": "e-nh-a1-a3",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "a3333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-nh-a2-a4",
+      "from": "a2222222-2222-4222-8222-222222222222",
+      "to": "a4444444-4444-4444-8444-444444444444"
+    },
+    {
+      "id": "e-nh-a3-a4",
+      "from": "a3333333-3333-4333-8333-333333333333",
+      "to": "a4444444-4444-4444-8444-444444444444"
+    },
+    {
+      "id": "e-nh-a1-f1",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "f1111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "e-nh-a2-f2",
+      "from": "a2222222-2222-4222-8222-222222222222",
+      "to": "f2222222-2222-4222-8222-222222222222"
+    },
+    {
+      "id": "e-nh-a3-f3",
+      "from": "a3333333-3333-4333-8333-333333333333",
+      "to": "f3333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-nh-a4-f4",
+      "from": "a4444444-4444-4444-8444-444444444444",
+      "to": "f4444444-4444-4444-8444-444444444444"
+    }
+  ]
+}

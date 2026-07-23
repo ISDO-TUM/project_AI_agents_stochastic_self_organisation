@@ -1,0 +1,98 @@
+{
+  "benchmarkDatasetId": "approved-supplier-conflict",
+  "benchmarkPrompt": "Who is the currently approved supplier for office laptops?",
+  "benchmarkAnswer": "Acme Computers",
+  "agents": [
+    {
+      "id": "a1111111-1111-4111-8111-111111111111",
+      "name": "Procurement Lead",
+      "description": "Owns the master procurement agreement and approved-vendor list.",
+      "systemPrompt": "You are the Procurement Lead responsible for vendor contracts. When asked about suppliers, consult your attached files and give a clear answer. Always cite the document name, effective dates, and vendor codes that support your answer. If your files do not contain the information, say so explicitly.",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["files"],
+      "connections": [
+        "a2222222-2222-4222-8222-222222222222",
+        "a3333333-3333-4333-8333-333333333333"
+      ],
+      "position": { "x": 400, "y": 80 }
+    },
+    {
+      "id": "a2222222-2222-4222-8222-222222222222",
+      "name": "Compliance Officer",
+      "description": "Verifies vendors meet audit, ISO, and regulatory requirements.",
+      "systemPrompt": "You are the Compliance Officer responsible for vendor qualification. When asked about suppliers, consult your attached files and give a clear answer. Always cite the audit report, certification status, and compliance findings that support your answer. If your files do not contain the information, say so explicitly.",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["files"],
+      "connections": ["a3333333-3333-4333-8333-333333333333"],
+      "position": { "x": 200, "y": 350 }
+    },
+    {
+      "id": "a3333333-3333-4333-8333-333333333333",
+      "name": "Field Operations",
+      "description": "On-site team using a local procurement handbook from before the vendor consolidation.",
+      "systemPrompt": "You are a Field Operations coordinator handling on-site procurement. When asked about suppliers, consult your attached files and give a clear answer. Always cite the document name and any details that support your answer. If your files do not contain the information, say so explicitly.",
+      "provider": "openai",
+      "model": "gpt-4o-mini",
+      "tools": ["files"],
+      "connections": [],
+      "position": { "x": 600, "y": 350 }
+    }
+  ],
+  "sources": [
+    {
+      "id": "f1111111-1111-4111-8111-111111111111",
+      "name": "2026_master_agreement.txt",
+      "type": "text",
+      "content": "Master Procurement Agreement - IT Hardware, effective 2026-01-01.\nVendor: Acme Computers (Vendor Code: AC-2026).\nScope: all office laptops, workstations, and peripherals across EMEA.\nContract value: EUR 2.4M annually.\nThis agreement supersedes all prior local purchasing arrangements.\nApproved by: Chief Procurement Officer, December 2025.",
+      "position": { "x": 300, "y": 500 }
+    },
+    {
+      "id": "f2222222-2222-4222-8222-222222222222",
+      "name": "compliance_audit_Q1_2026.txt",
+      "type": "text",
+      "content": "Compliance Audit Report Q1 2026 - Vendor Qualification.\nAcme Computers has passed all required compliance checks: ISO 27001 certified, GDPR compliant, ESG score A-.\nAcme Computers remains the sole approved supplier for IT hardware (Material Group: IT-HW).\nAll purchase orders must reference Master Agreement MA-2026-EMEA.\nNon-compliant orders will be flagged for review.",
+      "position": { "x": 100, "y": 500 }
+    },
+    {
+      "id": "f3333333-3333-4333-8333-333333333333",
+      "name": "field_ops_handbook.txt",
+      "type": "text",
+      "content": "Field Operations Procurement Handbook - Last updated: November 2024.\nThe approved IT supplier for laptops and workstations is BetaSystems GmbH.\nBetaSystems GmbH provides next-day delivery in the Munich area.\nAll laptop orders must be placed through BetaSystems GmbH via the procurement portal.\nVendor code: BS-LOCAL. Contact: orders@betasystems.de.",
+      "position": { "x": 500, "y": 500 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-pl-co",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "a2222222-2222-4222-8222-222222222222"
+    },
+    {
+      "id": "e-co-fo",
+      "from": "a2222222-2222-4222-8222-222222222222",
+      "to": "a3333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-pl-fo",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "a3333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-pl-f1",
+      "from": "a1111111-1111-4111-8111-111111111111",
+      "to": "f1111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "e-co-f2",
+      "from": "a2222222-2222-4222-8222-222222222222",
+      "to": "f2222222-2222-4222-8222-222222222222"
+    },
+    {
+      "id": "e-fo-f3",
+      "from": "a3333333-3333-4333-8333-333333333333",
+      "to": "f3333333-3333-4333-8333-333333333333"
+    }
+  ]
+}
