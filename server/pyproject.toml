@@ -3,16 +3,16 @@ name = "server"
 version = "0.1.0"
 requires-python = ">=3.12"
 dependencies = [
-    "fastapi==0.138.1",
-    "uvicorn==0.49.0",
+    "fastapi==0.140.0",
+    "uvicorn==0.51.0",
     "sqlalchemy[asyncio]==2.0.51",
     "asyncpg==0.31.0",
     "aiosqlite==0.22.1",
-    "openai==2.44.0",
-    "anthropic==0.112.0",
-    "groq==1.5.0",
+    "openai==2.48.0",
+    "anthropic==0.120.0",
+    "groq==1.6.0",
     "python-dotenv==1.2.2",
-    "pandas==3.0.3",
+    "pandas==3.0.5",
     "langfuse>=2.0.0,<5.0.0",
     "fanoutqa>=0.2",
     "rouge-score>=0.1.2",
