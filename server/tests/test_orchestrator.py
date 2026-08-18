@@ -2058,7 +2058,7 @@ async def test_double_rejection_ships_flagged_with_objections(db: AsyncConnectio
     assert conv.data["ratification"]["objections"]
 
 
-# ── demo_mode (fast runs: skip wave 2, vote sub-round, ratification, dispute) ─
+# ── demo_mode (fast runs: skip wave 2, ratification, dispute; voting still runs) ─
 
 
 async def test_demo_mode_skips_wave_two(db: AsyncConnection) -> None:
@@ -2085,7 +2085,11 @@ async def test_demo_mode_skips_wave_two(db: AsyncConnection) -> None:
     assert proposals == 4
 
 
-async def test_demo_mode_skips_vote_subround(db: AsyncConnection) -> None:
+async def test_demo_mode_still_runs_vote_subround(db: AsyncConnection) -> None:
+    """Voting is a second, more reliable endorsement path than citations
+    alone (weaker models don't always manage to cite each other correctly),
+    so demo_mode no longer skips it — only wave 2, ratification, and the
+    dispute tool are trimmed for speed."""
     await _insert_agent(db, "a1", "Alpha")
     await _insert_agent(db, "a2", "Beta")
 
@@ -2095,11 +2099,9 @@ async def test_demo_mode_skips_vote_subround(db: AsyncConnection) -> None:
         agent_runner=_scripted_runner(),
     )
 
-    assert not any(s.msg.startswith("Vote sub-round") for s in steps)
+    assert any(s.msg.startswith("Vote sub-round") for s in steps)
     votes = (await db.execute(text("SELECT COUNT(*) FROM votes"))).scalar_one()
-    assert votes == 0
-    # Cold-start still degrades gracefully to temperature=1.0 with zero votes,
-    # so the run still reaches a normal completed state.
+    assert votes > 0
     run = (await db.execute(text("SELECT status FROM swarm_runs"))).mappings().fetchone()
     assert run is not None
     assert run["status"] == "completed"

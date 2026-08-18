@@ -2074,18 +2074,22 @@ async def _run_swarm_steps(
             recorder.set_phase(1, "vote")
         await journal.phase(db, "vote", 1)
         _enter_phase("vote")
-        if not config.demo_mode:
-            async for step in _run_vote_subround(
-                db,
-                run_id,
-                threads,
-                takers_by_thread,
-                agents_by_id,
-                agent_runner,
-                journal,
-                config.trial_id,
-            ):
-                yield step
+        # Voting runs even in demo_mode: citation-only promotion (demo_mode's
+        # other trimmed phases still apply) leaves confirmation dependent on
+        # agents successfully cross-citing each other, which weaker models
+        # don't always manage — votes are a second, more reliable endorsement
+        # path into the same citations/votes union check_promotions counts.
+        async for step in _run_vote_subround(
+            db,
+            run_id,
+            threads,
+            takers_by_thread,
+            agents_by_id,
+            agent_runner,
+            journal,
+            config.trial_id,
+        ):
+            yield step
         for step in await _apply_dropouts(db, run_id, agents_by_id, dropped, announced_dropouts):
             yield step
         takers = [t for t in takers if t not in dropped]
