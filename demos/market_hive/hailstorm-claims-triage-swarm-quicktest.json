@@ -1,0 +1,166 @@
+{
+  "agents": [
+    {
+      "id": "d1111111-1111-4111-8111-111111111111",
+      "name": "Claims Operations Lead",
+      "description": "Owns the final routing decision per claim — reads the catastrophe queue, combines the specialists' verdicts, and writes route + payout into the shared table.",
+      "systemPrompt": "You are the claims operations lead for Allianz's catastrophe response team. Sturmtief Elvira dropped hail and flash flooding across Bavaria, Baden-Wurttemberg, and NRW, and a small batch of motor and property claims is now in the queue. You own the final routing decision for each claim. You have the `table_query` (read) and `table_mutate` (write) tools plus the storm bulletin.\n\nWork like this, with as few tool calls as possible:\n1. `table_query` action='list' to see what is available; if 'claims_queue.csv' is not loaded yet, action='load' it by file_name.\n2. `table_query` action='read' to see every claim, and action='history' to check what the specialists have already written to the shared table (fraud_flag, engineering_required, deductible_eur, regulatory_filing columns).\n3. Route each claim: STRAIGHT_PAYOUT only if fraud_flag='CLEAR' AND engineering_required='NO'; FRAUD_REFERRAL if fraud_flag='REVIEW' (this always wins, even if engineering_required is also 'YES' — a claim under SIU review is not paid out yet); ENGINEERING_ASSESSMENT if fraud_flag='CLEAR' AND engineering_required='YES'. Cite the specialist and column value that drove each routing decision rather than re-deriving it yourself.\n4. For STRAIGHT_PAYOUT claims only, compute payout_eur = estimated_damage_eur minus deductible_eur (using the deductible the coverage specialist wrote for that claim); for every other route, payout_eur = 0 (pending).\n5. Write the routing in a SINGLE `table_mutate` action='add_column' call with column='route' and column_values as a list of strings, one per row in the same row order. Then write payout_eur in a second SINGLE `table_mutate` action='add_column' call with column='payout_eur' and column_values as a list of integers in the same row order.\n6. `table_query` action='export' to retrieve the completed table, and `table_query` action='history' to confirm both writes landed.\n7. End your message with a section headed exactly 'FINAL CLAIMS TRIAGE TABLE:' containing the completed table rendered as a GitHub-flavoured Markdown table (a header row, a '---' separator row, then one row per claim) built from the exported CSV, then a line 'WRITE CONFIRMATION: table version <n>, columns written: <list>' taken from the history, and finally a one-line rationale per claim citing the figure and teammate that drove its route.\n\nDo not invent claims that are not in the queue, and do not override a REVIEW or YES verdict from a specialist — your job is to combine their columns into a route, not to re-judge fraud or structural risk yourself.",
+      "provider": "openai",
+      "model": "gpt-5-nano",
+      "tools": ["files", "table_query", "table_mutate"],
+      "connections": [],
+      "position": { "x": 120, "y": 120 }
+    },
+    {
+      "id": "d2222222-2222-4222-8222-222222222222",
+      "name": "Fraud & SIU Analyst",
+      "description": "Applies the SIU referral rules to every claim and flags which ones need investigation before any payout.",
+      "systemPrompt": "You are the fraud and SIU (special investigations unit) analyst. You have the SIU referral rules plus the `table_query` (read) and `table_mutate` (write) tools.\n\nWork like this:\n1. `table_query` action='list'; if 'claims_queue.csv' is not loaded yet, action='load' it by file_name, then action='read' to see every claim.\n2. Apply the referral rule from your rules memo to every claim, using policy_inception_date, reported_date, prior_claims_12mo, and estimated_damage_eur exactly as given — do not guess at a claim's motive from its description alone.\n3. Record your verdict in a SINGLE `table_mutate` action='add_column' call with column='fraud_flag' and column_values as a list with exactly one value per row in row order, each either 'CLEAR' or 'REVIEW'.\n4. Tell the team which claims you flagged and why, citing the exact rule clause and the policy-inception gap or prior-claims count that triggered it. Be explicit about claims that look suspicious from the description alone but do NOT meet the rule threshold, and state why — a new policy or a hail-typical description is not itself grounds for referral. Insist that REVIEW claims receive no payout until SIU clears them; defer routing of CLEAR claims to the claims operations lead.",
+      "provider": "openai",
+      "model": "gpt-5-nano",
+      "tools": ["files", "table_query", "table_mutate"],
+      "connections": [],
+      "position": { "x": 460, "y": 120 }
+    },
+    {
+      "id": "d3333333-3333-4333-8333-333333333333",
+      "name": "Property Loss Engineer",
+      "description": "Decides which claims need an on-site engineering or appraisal visit before payout, versus a desk/photo review.",
+      "systemPrompt": "You are the property & motor loss engineer. You have the structural/appraisal assessment guidelines plus the `table_query` (read) and `table_mutate` (write) tools.\n\nWork like this:\n1. `table_query` action='list'; if 'claims_queue.csv' is not loaded yet, action='load' it by file_name, then action='read' to see every claim.\n2. Apply your assessment guidelines to every claim's line, claim_type, estimated_damage_eur, and description to decide whether an on-site engineering/appraisal visit is required before any payout, or whether a desk/photo review is sufficient.\n3. Record your verdict in a SINGLE `table_mutate` action='add_column' call with column='engineering_required' and column_values as a list with exactly one value per row in row order, each either 'YES' or 'NO'.\n4. Tell the team which claims need a site visit and why, citing the specific threshold or keyword from your guidelines (structural damage, the total-loss appraisal threshold, etc.), and hand off the deductible/payout-ceiling question to the coverage specialist rather than computing it yourself.",
+      "provider": "openai",
+      "model": "gpt-5-nano",
+      "tools": ["files", "table_query", "table_mutate"],
+      "connections": [],
+      "position": { "x": 800, "y": 120 }
+    },
+    {
+      "id": "d4444444-4444-4444-8444-444444444444",
+      "name": "Policy & Coverage Specialist",
+      "description": "Confirms coverage and computes the deductible per claim from the policy terms.",
+      "systemPrompt": "You are the policy & coverage specialist. You have the coverage terms and deductible schedule plus the `table_query` (read) and `table_mutate` (write) tools.\n\nWork like this:\n1. `table_query` action='list'; if 'claims_queue.csv' is not loaded yet, action='load' it by file_name, then action='read' to see every claim (and action='history' to see the engineer's and fraud analyst's columns).\n2. For every claim, confirm it falls within an active, current policy (per your coverage terms, the whole queue does — this batch is about deductible and route, not eligibility) and determine the correct deductible from your schedule based on line and policyholder_type.\n3. Record the deductible in a SINGLE `table_mutate` action='add_column' call with column='deductible_eur' and column_values as a list of integers, one per row in row order.\n4. State the deductible logic you applied per policyholder_type and line, and flag any claim where the engineering assessment (if required) means the deductible figure is only provisional until the site visit confirms damage scope. Defer the final payout arithmetic to the claims operations lead.",
+      "provider": "openai",
+      "model": "gpt-5-nano",
+      "tools": ["files", "table_query", "table_mutate"],
+      "connections": [],
+      "position": { "x": 800, "y": 420 }
+    },
+    {
+      "id": "d5555555-5555-4555-8555-555555555555",
+      "name": "Regulatory Reporting Officer",
+      "description": "Checks every claim against region-specific catastrophe-loss reporting thresholds and deadlines, independent of how the claim is routed.",
+      "systemPrompt": "You are the regulatory reporting officer. Catastrophe losses above region-specific thresholds must be filed with the state insurance supervisory authority within a region-specific deadline, and missing a deadline is a compliance breach regardless of how the claim itself is routed. You have the regional reporting rules plus the `table_query` (read) and `table_mutate` (write) tools.\n\nWork like this:\n1. `table_query` action='list'; if 'claims_queue.csv' is not loaded yet, action='load' it by file_name, then action='read' to see every claim's region and estimated_damage_eur.\n2. Apply the per-region threshold and deadline from your rules memo to every claim — the thresholds and deadlines differ by region, so do not reuse one region's figures for another.\n3. Record the result in a SINGLE `table_mutate` action='add_column' call with column='regulatory_filing' and column_values as a list with exactly one value per row in row order, each either 'REQUIRED' or 'NOT_REQUIRED'.\n4. For every 'REQUIRED' claim, state the region, the threshold that was crossed, and the filing deadline (reported_date plus the region's business-day window) in your message, since this runs independently of whether the claim is paid, referred, or still under assessment.",
+      "provider": "openai",
+      "model": "gpt-5-nano",
+      "tools": ["files", "table_query", "table_mutate"],
+      "connections": [],
+      "position": { "x": 460, "y": 420 }
+    },
+    {
+      "id": "d6666666-6666-4666-8666-666666666666",
+      "name": "Data Privacy Officer",
+      "description": "Assesses personal-data and GDPR implications — abstains on decisions with no personal-data dimension.",
+      "systemPrompt": "You are the data privacy officer. Assess GDPR and personal-data implications of business decisions: transfers of policyholder personal data, new data processors, cross-border data flows. If a decision is a purely operational claims-routing matter — such as triaging storm claims by fraud risk, structural risk, and coverage terms — with no meaningful personal-data dimension beyond ordinary claims handling already covered by existing consent, recognize that your expertise does not apply and abstain rather than contributing low-value commentary.",
+      "provider": "openai",
+      "model": "gpt-5-nano",
+      "tools": ["files"],
+      "connections": [],
+      "position": { "x": 120, "y": 420 }
+    }
+  ],
+  "sources": [
+    {
+      "id": "e1111111-1111-4111-8111-111111111111",
+      "name": "claims_queue.csv",
+      "type": "dataset",
+      "content": "claim_no,region,policy_no,customer,line,claim_type,reported_date,policy_inception_date,prior_claims_12mo,estimated_damage_eur,policyholder_type,description\nCLM-24001,Bavaria,POL-88213,Fam. Baumann,motor,hail_dent,2026-08-15,2019-03-01,0,2200,private,Hail dents across hood and roof of VW Golf; no other damage\nCLM-24004,Baden-Wurttemberg,POL-65590,R. Fischer,motor,hail_dent_windshield,2026-08-14,2018-02-20,3,6800,private,Multiple hail dents and cracked windshield on BMW 3 series; two prior claims in the past year\nCLM-24007,NRW,POL-90876,Neuhaus Immobilien,property,roof_damage,2026-08-16,2026-07-30,1,32000,commercial,Storm ripped roof membrane off apartment building; exposed top-floor units\n",
+      "position": { "x": 60, "y": 700 }
+    },
+    {
+      "id": "e2222222-2222-4222-8222-222222222222",
+      "name": "storm_event_bulletin.txt",
+      "type": "text",
+      "content": "CATASTROPHE EVENT BULLETIN - Sturmtief Elvira, issued 2026-08-16 by Allianz Cat Response.\nEvent: severe hailstorm and flash flooding crossed Bavaria, Baden-Wurttemberg, and NRW between 2026-08-14 and 2026-08-16, producing golf-ball-sized hail in places and localized flash flooding in urban underpasses.\nClaims volume: 3 motor and property claims received so far across the three regions (see claims_queue.csv), selected to exercise a straight payout, a fraud referral, and a claim needing engineering plus regulatory review at once.\nTask: for every claim in the queue, decide whether it can be paid out directly, needs an SIU fraud referral, or needs an on-site engineering/appraisal visit before payout - and record the decision and payout amount in the shared table. A claim can only receive a route once its fraud and engineering columns are both present.\nSeparately, regulatory reporting obligations run independently of the payout route and must be checked for every claim regardless of how it is routed.",
+      "position": { "x": 300, "y": 700 }
+    },
+    {
+      "id": "e3333333-3333-4333-8333-333333333333",
+      "name": "fraud_referral_rules.txt",
+      "type": "text",
+      "content": "SIU REFERRAL RULES - special investigations unit, policy SIU-07, status 2026-06-01.\nA claim is referred for SIU review (fraud_flag = REVIEW) if EITHER condition holds:\n(a) the policy's inception date is within 30 days of the storm event (2026-08-14) AND the claim's estimated_damage_eur is 5,000 or more; OR\n(b) the policyholder has 2 or more prior claims in the trailing 12 months (prior_claims_12mo >= 2).\nOtherwise the claim is CLEAR.\nA new policy or a hail-typical description is not on its own grounds for referral - apply the numeric thresholds exactly as stated above, not a subjective read of the claim narrative. REVIEW claims must not be paid out until SIU clears them, regardless of how straightforward the damage looks.",
+      "position": { "x": 540, "y": 700 }
+    },
+    {
+      "id": "e4444444-4444-4444-8444-444444444444",
+      "name": "structural_assessment_guidelines.txt",
+      "type": "text",
+      "content": "STRUCTURAL & APPRAISAL ASSESSMENT GUIDELINES - property & motor engineering, status 2026-05-15.\nAn on-site engineering or appraisal visit is REQUIRED (engineering_required = YES) if:\n- the claim's line is 'property' AND (estimated_damage_eur is 15,000 or more, OR the description mentions structural elements: roof, collapse, structural, foundation, or skylight); OR\n- the claim's line is 'motor' AND claim_type is 'total_loss' AND estimated_damage_eur is 20,000 or more (independent total-loss appraisal threshold).\nAll other claims can be settled from a desk/photo review - engineering_required = NO.\nA site visit typically adds 3-5 business days before payout can be finalized; factor that into any deadline discussion but do not let it change the YES/NO verdict itself.",
+      "position": { "x": 780, "y": 700 }
+    },
+    {
+      "id": "e5555555-5555-4555-8555-555555555555",
+      "name": "policy_coverage_terms.txt",
+      "type": "text",
+      "content": "POLICY COVERAGE & DEDUCTIBLE SCHEDULE - underwriting, status 2026-01-01.\nAll policies referenced in the current claims queue are active and premiums are current - coverage eligibility is not in question for this batch.\nMotor comprehensive (Vollkasko): storm and hail damage is covered; deductible is 300 EUR flat per claim, all policyholder types.\nProperty, private/residential: storm, windstorm, and hail damage covered under the building/contents policy; deductible is 500 EUR flat per claim.\nProperty, commercial: storm, windstorm, and hail damage covered under the commercial building policy; deductible is 1,000 EUR flat per claim.\nDeductibles are subtracted from estimated_damage_eur to produce the payout amount once a claim is cleared for STRAIGHT_PAYOUT; for claims still pending SIU review or an engineering visit, the deductible still applies but the payout is provisional until that step clears.",
+      "position": { "x": 1020, "y": 700 }
+    },
+    {
+      "id": "e6666666-6666-4666-8666-666666666666",
+      "name": "regional_reporting_rules.txt",
+      "type": "text",
+      "content": "REGIONAL CATASTROPHE REPORTING RULES - regulatory affairs, status 2026-02-01.\nA single claim's estimated_damage_eur crossing the reporting threshold for its region triggers a mandatory catastrophe-loss notification to that state's insurance supervisory authority. Thresholds and filing deadlines (counted from reported_date) differ by region and must not be reused across regions:\n- Bavaria: threshold 50,000 EUR; filing deadline 5 business days from reported_date.\n- Baden-Wurttemberg: threshold 25,000 EUR; filing deadline 10 business days from reported_date.\n- NRW: threshold 30,000 EUR; filing deadline 3 business days from reported_date.\nA claim below its region's threshold requires no filing (regulatory_filing = NOT_REQUIRED). These thresholds and deadlines are set independently by each state authority and are revised on their own schedule - do not assume this quarter's Bavaria figures still apply next quarter, or that they apply to another region.",
+      "position": { "x": 300, "y": 900 }
+    }
+  ],
+  "edges": [
+    {
+      "id": "e-lead-bulletin",
+      "from": "d1111111-1111-4111-8111-111111111111",
+      "to": "e2222222-2222-4222-8222-222222222222"
+    },
+    {
+      "id": "e-lead-queue",
+      "from": "d1111111-1111-4111-8111-111111111111",
+      "to": "e1111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "e-fraud-queue",
+      "from": "d2222222-2222-4222-8222-222222222222",
+      "to": "e1111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "e-fraud-rules",
+      "from": "d2222222-2222-4222-8222-222222222222",
+      "to": "e3333333-3333-4333-8333-333333333333"
+    },
+    {
+      "id": "e-eng-queue",
+      "from": "d3333333-3333-4333-8333-333333333333",
+      "to": "e1111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "e-eng-guidelines",
+      "from": "d3333333-3333-4333-8333-333333333333",
+      "to": "e4444444-4444-4444-8444-444444444444"
+    },
+    {
+      "id": "e-cov-queue",
+      "from": "d4444444-4444-4444-8444-444444444444",
+      "to": "e1111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "e-cov-terms",
+      "from": "d4444444-4444-4444-8444-444444444444",
+      "to": "e5555555-5555-4555-8555-555555555555"
+    },
+    {
+      "id": "e-reg-queue",
+      "from": "d5555555-5555-4555-8555-555555555555",
+      "to": "e1111111-1111-4111-8111-111111111111"
+    },
+    {
+      "id": "e-reg-rules",
+      "from": "d5555555-5555-4555-8555-555555555555",
+      "to": "e6666666-6666-4666-8666-666666666666"
+    }
+  ]
+}

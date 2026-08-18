@@ -72,4 +72,10 @@ class Tool(ABC):
             validated = self.input_model(**raw_args)
         except ValidationError as exc:
             return f"Tool input validation error: {exc}"
-        return await self.execute(validated, context)
+        try:
+            return await self.execute(validated, context)
+        except KeyError as exc:
+            return (
+                f"Tool error: '{self.name}' requires {exc} in the execution context, "
+                "which isn't available here (e.g. blackboard tools only run inside a Swarm run)."
+            )
