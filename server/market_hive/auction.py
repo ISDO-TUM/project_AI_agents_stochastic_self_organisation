@@ -311,9 +311,10 @@ class AuctionEngine:
         contract_emb = self._parse_embedding(contract["contract_embedding"]) if contract else None
         trust_by_agent = await self._trust_scores(task_type, contract_emb)
 
-        thread_clause = (
-            "AND thread_id = :thread_id" if thread_id is not None else "AND thread_id IS NULL"
-        )
+        # thread_id=None means "contract level": pool every bid regardless of
+        # which thread (or none) it targeted, so specialists who bid on their
+        # matching thread aren't invisible to the run's primary taker selection.
+        thread_clause = "AND thread_id = :thread_id" if thread_id is not None else ""
         params: dict[str, Any] = {"run_id": run_id, "contract_id": contract_id}
         if thread_id is not None:
             params["thread_id"] = thread_id

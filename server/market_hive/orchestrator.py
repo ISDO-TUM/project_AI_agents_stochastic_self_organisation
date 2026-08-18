@@ -2005,7 +2005,9 @@ async def _run_swarm_steps(
     # ── Thread assignment (§6.2 Phase 4, deterministic v1) ───────────────────
     # Single-thread contracts put every taker on the one thread; multi-thread
     # contracts match takers to threads by capability/thread embedding.
-    takers_by_thread = await assign_takers_to_threads(db, takers=takers, threads=threads)
+    takers_by_thread = await assign_takers_to_threads(
+        db, takers=takers, threads=threads, min_per_thread=config.min_takers
+    )
     # Same helper Blackboard.check_promotions uses, so the UI's displayed M is
     # always the exact value promotion enforces. Computed once here from the taker
     # count that stays fixed for the rest of the run, and pushed to the UI so it
