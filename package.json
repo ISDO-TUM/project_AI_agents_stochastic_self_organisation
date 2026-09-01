@@ -10,7 +10,7 @@
     "clean": "rm -rf node_modules client/node_modules server/.venv server/__pycache__"
   },
   "devDependencies": {
-    "concurrently": "^10.0.3"
+    "concurrently": "^10.0.5"
   },
   "commitlint": {
     "extends": [
